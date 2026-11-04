@@ -275,6 +275,25 @@ function checkBehavior(events: readonly Event[], expect: NonNullable<TurnExpect[
     }
   }
 
+  // I2 (Task 16 review): the EXACT expected `turn.completed.status`.
+  // `confirmation`/`clarify` above are convenience shorthands that each
+  // only pin down ONE bit of the 5-way status — neither can distinguish
+  // a genuine `'refused'` outcome from an outright `'failed'` pipeline
+  // error (both have no confirmation and aren't `'clarify'`), which is
+  // exactly the gap that let an `unsupported`-category scenario pass
+  // vacuously against a turn that silently crashed instead of actually
+  // refusing. Use `status` whenever a scenario cares which EXACT outcome
+  // occurred.
+  if (expect.status !== undefined) {
+    const actualStatus = findTurnCompleted(events)?.status;
+    if (actualStatus !== expect.status) {
+      failures.push({
+        kind: 'behavior',
+        detail: `expected turn status '${expect.status}', got '${actualStatus ?? '(no turn.completed)'}'`,
+      });
+    }
+  }
+
   if (expect.mustNotAsk && expect.mustNotAsk.length > 0) {
     const question = (clarifyQuestionOf(events) ?? '').toLowerCase();
     const reasked = expect.mustNotAsk.filter((term) => question.includes(term.toLowerCase()));
@@ -287,6 +306,32 @@ function checkBehavior(events: readonly Event[], expect: NonNullable<TurnExpect[
   }
 
   return failures;
+}
+
+// --- global backstop (I3, Task 16 review) ------------------------------------
+
+/**
+ * Runs UNCONDITIONALLY, regardless of what `expect` declares (even a
+ * turn with NO `behavior` block at all): `turn.completed.status ===
+ * 'failed'` is an automatic failure unless the scenario explicitly wrote
+ * `behavior.status: 'failed'` to say "yes, I expect this turn to fail
+ * outright." Without this, a scenario whose assertions happen to still be
+ * satisfiable against a crashed/failed turn (e.g. a `response.mustMention`
+ * that trivially matches empty text, or no `response`/`behavior` checks
+ * at all) would silently "pass" on a pipeline bug that has nothing to do
+ * with what the scenario was actually testing.
+ */
+function checkFailedStatusBackstop(events: readonly Event[], expect: TurnExpect): AssertFailure[] {
+  const completed = findTurnCompleted(events);
+  if (completed?.status === 'failed' && expect.behavior?.status !== 'failed') {
+    return [
+      {
+        kind: 'behavior',
+        detail: "turn.completed.status === 'failed' — an unexpected pipeline failure (a scenario that genuinely expects this must assert behavior.status:'failed' explicitly)",
+      },
+    ];
+  }
+  return [];
 }
 
 // --- public entry point ------------------------------------------------------
@@ -302,7 +347,7 @@ export function assertTurn(
   db: SqlDb,
   before: readonly (number | undefined)[] = [],
 ): AssertResult {
-  const failures: AssertFailure[] = [];
+  const failures: AssertFailure[] = [...checkFailedStatusBackstop(events, expect)];
 
   if (expect.planActions) failures.push(...checkPlanActions(events, expect.planActions));
   if (expect.paramChecks) failures.push(...checkParamChecks(events, expect.paramChecks));

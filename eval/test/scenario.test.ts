@@ -7,8 +7,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { loadScenarios } from '../runner-tuples';
-import { parseScenario, scenarioSchema } from '../types';
+import { loadScenarios } from '../runner-tuples.js';
+import { parseScenario, scenarioSchema } from '../types.js';
 
 const scenarios = loadScenarios(new URL('../scenarios', import.meta.url).pathname);
 
@@ -74,5 +74,27 @@ describe('seed scenario corpus', () => {
       expect(scenario.turns.length).toBeGreaterThan(0);
       expect(scenario.profile).toBe('standard');
     }
+  });
+
+  it('the unsupported seed asserts the EXACT refused status (I2, Task 16 review)', () => {
+    const unsupported = scenarios.find((s) => s.category === 'unsupported');
+    expect(unsupported?.turns[0]?.expect.behavior?.status).toBe('refused');
+  });
+
+  // --- I3 (Task 16 review): schema-level empty-expect rejection -------------
+
+  it('rejects a turn whose expect is completely empty', () => {
+    const empty = { ...scenarios[0], turns: [{ user: 'hi', expect: {} }] };
+    expect(scenarioSchema.safeParse(empty).success).toBe(false);
+  });
+
+  it('rejects a turn whose expect only has an all-empty sub-object', () => {
+    const vacuous = { ...scenarios[0], turns: [{ user: 'hi', expect: { behavior: {} } }] };
+    expect(scenarioSchema.safeParse(vacuous).success).toBe(false);
+  });
+
+  it('accepts a turn with a single real assertion field', () => {
+    const minimal = { ...scenarios[0], turns: [{ user: 'hi', expect: { behavior: { confirmation: false } } }] };
+    expect(scenarioSchema.safeParse(minimal).success).toBe(true);
   });
 });

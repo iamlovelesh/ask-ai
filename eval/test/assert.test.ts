@@ -5,13 +5,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { assertTurn, isComplexTurn, snapshotStateChecks } from '../assert';
-import type { SqlDb } from '../db';
-import type { Event } from '../../server/src/events/types';
+import { assertTurn, isComplexTurn, snapshotStateChecks } from '../assert.js';
+import type { SqlDb } from '../db.js';
+import type { Event, Value } from '../../server/src/events/types.js';
 
 // --- fixture builders ---------------------------------------------------------
 
-function planReady(action: string, params: Record<string, unknown> = {}, extraSteps: { action: string; params?: Record<string, unknown> }[] = []): Event {
+function planReady(action: string, params: Record<string, Value> = {}, extraSteps: { action: string; params?: Record<string, Value> }[] = []): Event {
   const steps = [
     { id: 's1', action, params, dependsOn: [] },
     ...extraSteps.map((s, i) => ({ id: `s${i + 2}`, action: s.action, params: s.params ?? {}, dependsOn: [] })),
@@ -249,6 +249,50 @@ describe('assertTurn — behavior', () => {
   it('mustNotAsk passes when the clarify question avoids known fields', () => {
     const events = [clarifyReady('Which channel should we use — email or SMS?')];
     const result = assertTurn(events, { behavior: { mustNotAsk: ['industry'] } }, fakeDb(undefined));
+    expect(result.pass).toBe(true);
+  });
+
+  // --- I2 (Task 16 review): behavior.status — the EXACT turn.completed.status ---
+
+  it('status:"refused" passes against a genuinely refused (unsupported) turn', () => {
+    const events = [turnCompleted('refused')];
+    const result = assertTurn(events, { behavior: { status: 'refused' } }, fakeDb(undefined));
+    expect(result.pass).toBe(true);
+  });
+
+  it('status:"refused" fails against a turn that silently failed instead of refusing — THE I2 gap', () => {
+    // Before I2: an `unsupported` scenario asserting only confirmation:false
+    // + clarify:false would vacuously pass against an outright pipeline
+    // failure, because 'failed' also has no confirmation and isn't
+    // 'clarify'. `status` closes that gap.
+    const events = [turnCompleted('failed')];
+    const confirmClarifyOnly = assertTurn(events, { behavior: { confirmation: false, clarify: false } }, fakeDb(undefined));
+    expect(confirmClarifyOnly.pass).toBe(false); // caught by the I3 backstop below, not by this check alone
+    const withStatus = assertTurn(events, { behavior: { confirmation: false, status: 'refused' } }, fakeDb(undefined));
+    expect(withStatus.pass).toBe(false);
+    expect(withStatus.failures.some((f) => f.detail.includes("expected turn status 'refused'"))).toBe(true);
+  });
+});
+
+// --- I3 (Task 16 review): global "status:'failed' is automatic failure" backstop --
+
+describe('assertTurn — failed-status backstop (I3)', () => {
+  it('an unexpected failed turn fails even when no behavior block is declared at all', () => {
+    const events = [turnCompleted('failed'), answerFinal('Unexpected error: something broke')];
+    const result = assertTurn(events, { response: { mustMention: ['error'] } }, fakeDb(undefined));
+    expect(result.pass).toBe(false);
+    expect(result.failures.some((f) => f.kind === 'behavior' && f.detail.includes("status === 'failed'"))).toBe(true);
+  });
+
+  it('is suppressed when the scenario explicitly expects behavior.status:"failed"', () => {
+    const events = [turnCompleted('failed')];
+    const result = assertTurn(events, { behavior: { status: 'failed' } }, fakeDb(undefined));
+    expect(result.pass).toBe(true);
+  });
+
+  it('does not fire for a non-failed status', () => {
+    const events = [turnCompleted('done'), answerFinal('leads.search_leads: 3 record(s)')];
+    const result = assertTurn(events, { response: { mustMention: ['leads.search_leads'] } }, fakeDb(undefined));
     expect(result.pass).toBe(true);
   });
 });

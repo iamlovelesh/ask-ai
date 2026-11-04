@@ -112,28 +112,69 @@ export const responseExpectSchema = z.strictObject({
 });
 export type ResponseExpect = z.infer<typeof responseExpectSchema>;
 
+/** `turn.completed.status` (mirrors `server/src/events/types.ts`'s
+ * `TurnStatus` — duplicated, not imported, same "schema stays
+ * import-free" rationale as `actionErrorCodeSchema` above). */
+export const turnStatusSchema = z.enum(['done', 'clarify', 'refused', 'failed', 'cancelled']);
+export type TurnStatusExpect = z.infer<typeof turnStatusSchema>;
+
 /**
- * `confirmation`/`clarify`: exact presence/absence expectations.
- * `mustNotAsk` (LLD §9.1 v1.1 `no_repeat` subtype): terms that must NOT
- * appear in a `clarify` turn's question — the scenario is asserting the
- * planner did not re-ask for information already present in working
- * state.
+ * `confirmation`/`clarify`: exact presence/absence expectations. `status`
+ * (I2, Task 16 review): the EXACT `turn.completed.status` expected —
+ * needed because `confirmation:false`+`clarify:false` alone cannot
+ * distinguish a genuine `'refused'` outcome (e.g. `unsupported`) from a
+ * turn that silently `'failed'` outright; both have no confirmation and
+ * aren't `'clarify'`, so without `status` an `unsupported` scenario is
+ * vacuously satisfied by an outright pipeline failure. `mustNotAsk` (LLD
+ * §9.1 v1.1 `no_repeat` subtype): terms that must NOT appear in a
+ * `clarify` turn's question — the scenario is asserting the planner did
+ * not re-ask for information already present in working state.
  */
 export const behaviorExpectSchema = z.strictObject({
   confirmation: z.boolean().optional(),
   clarify: z.boolean().optional(),
+  status: turnStatusSchema.optional(),
   mustNotAsk: z.array(z.string()).optional(),
 });
 export type BehaviorExpect = z.infer<typeof behaviorExpectSchema>;
 
-export const turnExpectSchema = z.strictObject({
+const turnExpectObjectSchema = z.strictObject({
   planActions: planActionsExpectSchema.optional(),
   paramChecks: z.array(paramCheckSchema).optional(),
   state: z.array(stateCheckSchema).optional(),
   response: responseExpectSchema.optional(),
   behavior: behaviorExpectSchema.optional(),
 });
-export type TurnExpect = z.infer<typeof turnExpectSchema>;
+/** Inferred from the UNREFINED object schema on purpose — `.refine()`
+ * (below) only adds a runtime check, it never changes the inferred
+ * shape, but defining `TurnExpect` from the refined schema directly would
+ * make `hasRealAssertion`'s own parameter type depend on a `const`
+ * (`turnExpectSchema`) declared AFTER it, which is a value/declaration-
+ * order problem `z.infer` on a type ALIAS doesn't have when pointed at
+ * the base schema instead. */
+export type TurnExpect = z.infer<typeof turnExpectObjectSchema>;
+
+/** I3 (Task 16 review): `true` iff `expect` declares at least one REAL,
+ * non-vacuous assertion — not merely a present-but-empty sub-object (e.g.
+ * `behavior: {}` has a key but asserts nothing). Shared between the
+ * schema `.refine()` below and `eval/lint.ts`'s "every turn has >=1
+ * assertion" coverage check, so the two can never drift apart. */
+export function hasRealAssertion(expect: TurnExpect): boolean {
+  const pa = expect.planActions;
+  if (pa && ((pa.mustInclude?.length ?? 0) > 0 || (pa.mustNotInclude?.length ?? 0) > 0)) return true;
+  if ((expect.paramChecks?.length ?? 0) > 0) return true;
+  if ((expect.state?.length ?? 0) > 0) return true;
+  const r = expect.response;
+  if (r && ((r.mustMention?.length ?? 0) > 0 || (r.mustNotClaim?.length ?? 0) > 0)) return true;
+  const b = expect.behavior;
+  if (b && (b.confirmation !== undefined || b.clarify !== undefined || b.status !== undefined || (b.mustNotAsk?.length ?? 0) > 0)) return true;
+  return false;
+}
+
+export const turnExpectSchema = turnExpectObjectSchema.refine(hasRealAssertion, {
+  message:
+    'turn.expect must declare at least one real assertion (planActions/paramChecks/state/response/behavior) — an empty (or all-empty-sub-object) expect vacuously passes every turn (I3, Task 16 review)',
+});
 
 export const turnSchema = z.strictObject({
   user: z.string().min(1),

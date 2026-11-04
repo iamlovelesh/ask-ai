@@ -14,8 +14,8 @@ import {
   pass3Rate,
   percentile,
   repairRateComplex,
-} from '../report-math';
-import type { ResultRow, TurnResultRow } from '../runner-tuples';
+} from '../report-math.js';
+import type { ResultRow, TurnResultRow } from '../runner-tuples.js';
 
 function turn(partial: Partial<TurnResultRow> = {}): TurnResultRow {
   return {
@@ -114,24 +114,38 @@ describe('latencyBucket', () => {
 // --- cost / tokens -------------------------------------------------------
 
 describe('costStats', () => {
-  it('cost-per-successful-task includes the cost of retries inside a PASSING trial', () => {
-    // Trial 'a' passed overall but its turn's cost already reflects a
-    // repair/replan retry baked into costUsd (that's how the real pipeline
-    // reports it — repairs/replans are extra llmCalls inside the SAME
-    // turn's TurnMetrics.costUsd, not separate turns).
+  // I1 (Task 16 review — CONTROLLER RULING): the PRIMARY cost-per-
+  // successful-task metric must include EVERY trial's cost, pass or
+  // fail, in the numerator — "including retries" per the brief means a
+  // failed attempt's real spend still counts toward the eventual
+  // success. The (looser) "only passing trials' own cost" reading is now
+  // the SECONDARY `costAmongSuccessfulOnlyUsd` figure.
+  it('PRIMARY cost-per-successful-task includes a FAILED trial\'s cost in the numerator', () => {
     const rows: ResultRow[] = [
+      // Trial 'a' passed; its own turn cost already reflects an in-trial
+      // repair/replan retry (repairs/replans are extra llmCalls folded
+      // into the SAME turn's TurnMetrics.costUsd, not separate turns).
       row({ scenarioId: 'a', agent: 'optimized', trial: 1, pass: true, turns: [turn({ costUsd: 0.02, repairs: 1 })] }),
-      // Trial 'b' FAILED — its cost must be excluded from the ratio.
+      // Trial 'b' FAILED outright — a wasted $5 attempt at a DIFFERENT
+      // scenario. Per the I1 ruling this is STILL part of the primary
+      // ratio's numerator (one passing trial exists for this agent/run),
+      // even though it didn't contribute to trial 'a's own success.
       row({ scenarioId: 'b', agent: 'optimized', trial: 1, pass: false, turns: [turn({ costUsd: 5.0 })] }),
     ];
     const stats = costStats(rows, 'optimized');
-    expect(stats.costPerSuccessfulTaskUsd).toBeCloseTo(0.02, 6);
+    // PRIMARY: (0.02 + 5.0 total cost) / 1 passing trial.
+    expect(stats.costPerSuccessfulTaskUsd).toBeCloseTo(5.02, 6);
+    // SECONDARY ("cost among successful runs only"): just the passing
+    // trial's own cost / 1 passing trial — the OLD (now superseded) reading.
+    expect(stats.costAmongSuccessfulOnlyUsd).toBeCloseTo(0.02, 6);
     expect(stats.avgCostPerRequestUsd).toBeCloseTo((0.02 + 5.0) / 2, 6); // per-request average DOES include the failure
   });
 
-  it('is undefined when nothing passed', () => {
+  it('is undefined (both primary and secondary) when nothing passed', () => {
     const rows: ResultRow[] = [row({ scenarioId: 'a', agent: 'optimized', trial: 1, pass: false })];
-    expect(costStats(rows, 'optimized').costPerSuccessfulTaskUsd).toBeUndefined();
+    const stats = costStats(rows, 'optimized');
+    expect(stats.costPerSuccessfulTaskUsd).toBeUndefined();
+    expect(stats.costAmongSuccessfulOnlyUsd).toBeUndefined();
   });
 
   it('averages tokens per request', () => {

@@ -113,9 +113,31 @@ export interface CostStats {
   avgTokensInPerRequest: number;
   avgTokensOutPerRequest: number;
   avgCostPerRequestUsd: number;
-  /** `undefined` when no trial for this agent passed — "no successful
-   * task" rather than a divide-by-zero `0`. */
+  /**
+   * PRIMARY metric (I1, Task 16 review — CONTROLLER RULING, overturning
+   * this file's original "only a passing trial's own cost" reading):
+   * sum of cost across EVERY recorded trial for this agent — passing AND
+   * FAILING — divided by the count of PASSING trials. "Cost per
+   * successful task, including retries" (the brief's own wording) means
+   * a failed attempt's real spend still counts toward the eventual
+   * success it took to get there; it is NOT excluded just because that
+   * particular attempt didn't pan out. `undefined` when nothing passed
+   * (no successful task to divide by — a run with zero passes has no
+   * meaningful "cost per success", strict or otherwise).
+   */
   costPerSuccessfulTaskUsd: number | undefined;
+  /**
+   * SECONDARY metric, reported alongside the primary one in
+   * `BENCHMARK.md` under a clearly-labeled "cost among successful runs
+   * only" line (per the ruling) — answers the DIFFERENT question "once a
+   * trial succeeds, how much did that specific trial itself cost"
+   * (excludes both the numerator and denominator contribution of every
+   * failing trial). This is what `costPerSuccessfulTaskUsd` used to mean
+   * before I1's correction; kept because it's still a legitimately useful
+   * number, just not the one `docs/TARGETS.md`'s <$0.01 target is graded
+   * against anymore.
+   */
+  costAmongSuccessfulOnlyUsd: number | undefined;
 }
 
 export function costStats(rows: readonly ResultRow[], agent: Agent): CostStats {
@@ -126,21 +148,19 @@ export function costStats(rows: readonly ResultRow[], agent: Agent): CostStats {
   const totalTokensOut = turns.reduce((s, t) => s + t.tokensOut, 0);
   const totalCost = turns.reduce((s, t) => s + t.costUsd, 0);
 
-  // Cost per SUCCESSFUL task (docs/TARGETS.md §2): sum of every passing
-  // trial's turn costs (which already includes the cost of any
-  // repair/replan/search retries inside that trial — "including retries"
-  // per the brief) divided by the count of passing trials. Failed trials'
-  // cost is deliberately excluded from this ratio's numerator AND
-  // denominator — it's reported separately as `avgCostPerRequestUsd`.
   const passingRows = agentRows.filter((r) => r.pass);
-  const successfulCost = passingRows.reduce((s, r) => s + r.turns.reduce((ts, t) => ts + t.costUsd, 0), 0);
+  const passingCount = passingRows.length;
+  const successfulOnlyCost = passingRows.reduce((s, r) => s + r.turns.reduce((ts, t) => ts + t.costUsd, 0), 0);
 
   return {
     requests,
     avgTokensInPerRequest: requests === 0 ? 0 : totalTokensIn / requests,
     avgTokensOutPerRequest: requests === 0 ? 0 : totalTokensOut / requests,
     avgCostPerRequestUsd: requests === 0 ? 0 : totalCost / requests,
-    costPerSuccessfulTaskUsd: passingRows.length === 0 ? undefined : successfulCost / passingRows.length,
+    // PRIMARY (strict, I1): ALL trials' cost (pass + fail) / passing count.
+    costPerSuccessfulTaskUsd: passingCount === 0 ? undefined : totalCost / passingCount,
+    // SECONDARY: only-passing-trials' cost / passing count.
+    costAmongSuccessfulOnlyUsd: passingCount === 0 ? undefined : successfulOnlyCost / passingCount,
   };
 }
 

@@ -24,7 +24,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Event, TurnMetrics } from '../server/src/events/types.js';
-import { assertTurn, isComplexTurn } from './assert.js';
+import { assertTurn, isComplexTurn, snapshotStateChecks } from './assert.js';
 import { openReadOnly, type SqlDb } from './db.js';
 import type { Scenario } from './types.js';
 import {
@@ -219,11 +219,13 @@ export async function runTuple(ctx: HttpCtx, tuple: Tuple): Promise<ResultRow> {
   const turnsOut: TurnResultRow[] = [];
   for (let i = 0; i < tuple.scenario.turns.length; i += 1) {
     const turn = tuple.scenario.turns[i] as Scenario['turns'][number];
-    const before = turn.expect.state
-      ? turn.expect.state.map((c) =>
-          c.countDelta === undefined ? undefined : Number(Object.values(ctx.db.get(c.query) ?? {})[0] ?? 0),
-        )
-      : [];
+    // Minor (Task 16 review): use the SAME `snapshotStateChecks` helper
+    // `assert.ts`'s own doc comment says callers must use — this used to
+    // be an inline reimplementation that (a) duplicated the logic and
+    // (b) coerced every `equals`/`gte`/`lte` check's "before" slot to a
+    // number too, which `snapshotStateChecks` deliberately does NOT do
+    // (only `countDelta` checks need a pre-turn snapshot at all).
+    const before = snapshotStateChecks(ctx.db, turn.expect.state);
 
     const { events, unexpectedConfirmation } = await driveTurn(ctx, sessionId, tuple.agent, turn);
     const assertion = assertTurn(events, turn.expect, ctx.db, before);

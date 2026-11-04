@@ -18,9 +18,9 @@ import {
   sumResultCost,
   tupleKey,
   type ResultRow,
-} from '../runner-tuples';
-import { parseArgs, shardProfileName } from '../runner';
-import type { Scenario } from '../types';
+} from '../runner-tuples.js';
+import { parseArgs, shardProfileName } from '../runner.js';
+import type { Scenario } from '../types.js';
 
 function scenario(id: string, category: Scenario['category'] = 'direct'): Scenario {
   return { id, category, profile: 'standard', turns: [{ user: 'hi', expect: {} }] };

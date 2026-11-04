@@ -13,6 +13,10 @@
  *     scenario's `user` text or `paramChecks`/`state` values that are NOT
  *     `2026-11-04` or `2026-11-05`, the two dates already in play for the
  *     pinned clock and "yesterday" offsets most scenarios will want)
+ *   - every turn declares at least one REAL assertion (I3, Task 16
+ *     review) — belt-and-suspenders alongside `eval/types.ts`'s own
+ *     schema `.refine()`, for any scenario value that reached this
+ *     linter without going through `parseScenario`
  *
  * This task (16) ships 6 SEED scenarios purely to validate the machinery
  * — they do NOT and are not expected to pass this gate (6 scenarios can't
@@ -25,10 +29,10 @@
 
 import { pathToFileURL } from 'node:url';
 import { loadScenarios } from './runner-tuples.js';
-import { actionSlugsTouchedBy, type Scenario } from './types.js';
+import { actionSlugsTouchedBy, hasRealAssertion, type Scenario } from './types.js';
 
 export interface LintIssue {
-  kind: 'module-coverage' | 'category-coverage' | 'subtype-coverage' | 'absolute-date';
+  kind: 'module-coverage' | 'category-coverage' | 'subtype-coverage' | 'absolute-date' | 'empty-expect';
   detail: string;
 }
 
@@ -133,6 +137,26 @@ function checkAbsoluteDates(scenarios: readonly Scenario[]): LintIssue[] {
   return issues;
 }
 
+// --- empty-expect (I3, Task 16 review — defense in depth alongside the
+// schema's own `.refine()`: a scenario loaded from a source that bypassed
+// `parseScenario` — e.g. hand-built in a test fixture — would otherwise
+// slip an all-empty `expect` past this linter undetected) -----------------
+
+function checkEmptyExpect(scenarios: readonly Scenario[]): LintIssue[] {
+  const issues: LintIssue[] = [];
+  for (const scenario of scenarios) {
+    scenario.turns.forEach((turn, i) => {
+      if (!hasRealAssertion(turn.expect)) {
+        issues.push({
+          kind: 'empty-expect',
+          detail: `scenario '${scenario.id}' turn #${i + 1} declares no real assertion — every turn must assert at least one of planActions/paramChecks/state/response/behavior`,
+        });
+      }
+    });
+  }
+  return issues;
+}
+
 // --- public entry point -----------------------------------------------------
 
 export function lintScenarios(scenarios: readonly Scenario[], opts: LintOptions = {}): LintIssue[] {
@@ -140,7 +164,7 @@ export function lintScenarios(scenarios: readonly Scenario[], opts: LintOptions 
   const minPerCategory = opts.minPerCategory ?? DEFAULTS.minPerCategory;
   const minPerSubtype = opts.minPerSubtype ?? DEFAULTS.minPerSubtype;
 
-  const issues: LintIssue[] = [...checkAbsoluteDates(scenarios)];
+  const issues: LintIssue[] = [...checkAbsoluteDates(scenarios), ...checkEmptyExpect(scenarios)];
   if (!opts.allowPartialCoverage) {
     issues.push(
       ...checkModuleCoverage(scenarios, minPerModule),

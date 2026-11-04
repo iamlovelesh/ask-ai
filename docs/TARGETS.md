@@ -2,11 +2,19 @@
 
 **Status: COMMITTED 2026-11-05, before any benchmark run (quick or full) was executed
 against the real matrix.** These numbers are pre-registered pass/fail bars, not numbers
-backed into after seeing results. `eval/benchmark-report.ts` renders a table of these
+backed into after seeing results. `eval/report.ts` renders a table of these
 EXACT values next to what the final run actually measured, with a MET/MISSED column —
 whatever that table says, this file is never edited retroactively to make a miss look
 like a hit. Any change to a number below after a benchmark run has started must be
 called out explicitly in `docs/BENCHMARK.md`'s own notes, with a reason.
+
+**Changelog (both entries predate any benchmark run — legitimate pre-benchmark
+clarifications, not post-hoc adjustments):**
+- 2026-11-05: Task 16 review (I1) tightened §2's cost-per-successful-task wording to the
+  STRICT reading of "including retries" — a failed trial's cost is now explicitly part of
+  the numerator for EVERY successful trial in the same agent/run, not excluded from the
+  ratio entirely. `eval/report.ts`'s BENCHMARK.md output also reports the looser
+  "cost among successful runs only" figure as a clearly labeled secondary line.
 
 Source: LLD §9.2 ("Runner") and the Task 16 brief. Field names match
 `eval/types.ts`'s `Scenario.expect` / `eval/runner.ts`'s result rows so the report's
@@ -36,7 +44,7 @@ and the report calls out any such mismatch as a note.
 |---|---|
 | Task success rate, optimized agent | **≥ 85%** (pass^1, across the full scenario corpus, optimized agent) |
 | Optimized vs baseline success delta | **optimized ≥ baseline + 15 points** (percentage points of pass^1) |
-| Cost per **successful** task, optimized agent | **< $0.01** (numerator includes the cost of every failed attempt/retry that preceded the eventual success within the same trial — "including retries" per the brief; a task that never succeeds contributes its cost to the denominator-excluded failure bucket, not to this ratio) |
+| Cost per **successful** task, optimized agent | **< $0.01** — STRICT definition: `sum(cost of EVERY recorded trial — passing AND failing) / count(passing trials)`. "Including retries" (the brief's own wording) means a failed attempt's real spend counts toward the eventual success it took to get there — it is NOT excluded from the ratio just because that particular attempt didn't pan out. `eval/report.ts` also reports a secondary, clearly-labeled "cost among successful runs only" figure (`sum(cost of ONLY passing trials) / count(passing trials)`) for reference — that looser figure is NOT what this target is graded against. |
 | Repair-rate assumption, complex scenarios | **< 35%** of complex-category turns trigger at least one `repair`/`replan`/`search` round (an ASSUMPTION pre-registered for sanity-checking the planner/validator loop's stability, not a hard pass/fail gate the way the above rows are) |
 
 ## 3. TTFUR definitions, per outcome (normative — LLD §9.2)

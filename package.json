@@ -26,7 +26,7 @@
     "benchmark:report": "tsx eval/report.ts",
     "build": "npm -w server run build && npm -w web run build",
     "test": "vitest run",
-    "typecheck": "npm -w server run typecheck"
+    "typecheck": "npm -w server run typecheck && npm -w eval run typecheck"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

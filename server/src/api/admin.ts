@@ -10,7 +10,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { crmDbPath } from '../store/db.js';
 import { resetCrm } from '../store/reset.js';
-import { registerFailureInjection } from '../catalog/inject-failures.js';
+import { clearFailureInjections, registerFailureInjection } from '../catalog/inject-failures.js';
 import type { ActionErrorCode } from '../catalog/types.js';
 import type { AppDeps } from './types.js';
 
@@ -93,6 +93,19 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
     // than through `RefStore.markAllStale(sessionId)`, which only ever
     // targets a single session.
     sessionsDb.run(`UPDATE refs SET stale = 1`);
+
+    // C1 (Task 16 review, CRITICAL): clear every pending test-only failure
+    // injection on every reset. Without this, an UNDER-consumed injection
+    // (e.g. `times:2` registered but the scenario's plan only dispatched
+    // the action once before the turn ended) silently carries into the
+    // NEXT tuple's run — which resets the CRM data but, before this fix,
+    // left the injection map untouched — making a later scenario's
+    // completely unrelated call to the same action slug fail for a reason
+    // that has nothing to do with that scenario. `/admin/reset` already is
+    // "start this tuple over from a known-clean state" for the CRM; the
+    // injection map is exactly the same kind of per-tuple state and must
+    // be reset alongside it.
+    clearFailureInjections();
 
     const ms = performance.now() - startedAtMs;
     reply.send({ ms });

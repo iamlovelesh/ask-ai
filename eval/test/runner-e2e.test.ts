@@ -13,13 +13,13 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openReadOnly, type SqlDb } from '../db';
-import { runTuple } from '../runner';
-import { SERVER_DIR, spawnServer, waitForHealth, type SpawnedServer } from '../runner-process';
-import { loadScenarios, planTuples } from '../runner-tuples';
+import { openReadOnly, type SqlDb } from '../db.js';
+import { runTuple, shardProfileName } from '../runner.js';
+import { SERVER_DIR, spawnServer, waitForHealth, type SpawnedServer } from '../runner-process.js';
+import { loadScenarios, planTuples } from '../runner-tuples.js';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const EVAL_DIR = resolve(here, '..');
@@ -28,7 +28,11 @@ const MOCK_SCRIPT = resolve(EVAL_DIR, 'mock-scripts/direct-search-leads.json');
 // this file concurrently (unlikely — it's one file — but also across an
 // accidental re-run) don't collide on the same port.
 const PORT = 3800 + (process.pid % 400);
-const PROFILE = `e2e-test-${process.pid}`;
+// The SAME naming convention the real CLI uses (`eval/runner.ts`'s
+// `shardProfileName`) — not an ad hoc test-only name — so this test
+// exercises (and I4's cleanup assertion below targets) the exact
+// `evalrun-*` file pattern a real run produces.
+const PROFILE = shardProfileName(`e2e-test-${process.pid}`, undefined);
 
 describe('runner E2E — direct seed scenario, real spawned server, MockLLM', () => {
   let server: SpawnedServer;
@@ -41,15 +45,11 @@ describe('runner E2E — direct seed scenario, real spawned server, MockLLM', ()
 
   afterAll(async () => {
     db?.close();
+    // I4 (Task 16 review): `stop()` itself now deletes this shard's CRM
+    // file + shard-local template copy (`runner-process.ts`'s
+    // `cleanupShardFiles`) — no manual cleanup needed here anymore. The
+    // assertion in the test body below is what actually proves it worked.
     await server?.stop();
-    // `.gitignore` un-ignores `*.template.db` (the committed artifact needs
-    // to be trackable) — this test's shard-local copy + working db must
-    // not linger as an untracked file some later `git add -A` could sweep
-    // up, so delete every file this test's profile created.
-    for (const suffix of ['.db', '.db-wal', '.db-shm', '.db-journal', '.template.db']) {
-      const path = resolve(SERVER_DIR, `data/crm-${PROFILE}${suffix}`);
-      if (existsSync(path)) rmSync(path, { force: true });
-    }
   });
 
   it('spawn -> reset -> SSE -> assert -> JSONL row, fully offline', async () => {
@@ -84,4 +84,15 @@ describe('runner E2E — direct seed scenario, real spawned server, MockLLM', ()
     const line = JSON.stringify(row);
     expect(JSON.parse(line)).toEqual(row);
   }, 30_000);
+
+  it('I4 (Task 16 review): stop() leaves no evalrun-* files behind', async () => {
+    db?.close();
+    db = undefined;
+    await server.stop(); // idempotent — afterAll's call below becomes a no-op.
+
+    for (const suffix of ['.db', '.db-wal', '.db-shm', '.db-journal', '.template.db']) {
+      const path = resolve(SERVER_DIR, `data/crm-${PROFILE}${suffix}`);
+      expect(existsSync(path)).toBe(false);
+    }
+  }, 10_000);
 });

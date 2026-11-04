@@ -35,6 +35,7 @@ import { VirtualClock } from '../src/store/clock';
 import { createRefStore } from '../src/agent/refs';
 import { buildRegistry, type Registry } from '../src/catalog/registry';
 import { coreOps } from '../src/catalog/core-ops';
+import { clearFailureInjections, withFailureInjection } from '../src/catalog/inject-failures';
 import type { ActionDef, ActionContext, Risk } from '../src/catalog/types';
 import type { Crm, StoreTx } from '../src/store/db';
 import { crmDbPath, openCrm, getCrm, closeRegistered } from '../src/store/db';
@@ -100,6 +101,7 @@ beforeEach(() => {
   costMeter.__resetForTest();
   delete process.env['EVAL_BUDGET_USD'];
   __setTestBackoffOptions({ baseMs: 1 });
+  clearFailureInjections(); // module-level state (catalog/inject-failures.ts) — isolate per test.
   const dbPath = tmpDbPath();
   eventLog = openEventLog(dbPath);
   sessionsDb = openSessions(dbPath);
@@ -112,6 +114,7 @@ afterEach(async () => {
   __setTestFetch(undefined);
   __setTestBackoffOptions(undefined);
   __setTestSpans(undefined);
+  clearFailureInjections();
   for (const app of apps) await app.close();
   eventLog.close();
   sessionsDb.close();
@@ -862,6 +865,62 @@ describe('POST /admin/reset', () => {
     const body = res.json() as { modules: { module: string; actions: { slug: string }[] }[] };
     const leadsModule = body.modules.find((m) => m.module === 'leads');
     expect(leadsModule?.actions.some((a) => a.slug === 'leads.search_leads')).toBe(true);
+  });
+
+  it('C1 (Task 16 review, CRITICAL): clears an UNDER-consumed injection, so the NEXT tuple is unaffected', async () => {
+    const profile = `apitest_${randomUUID().slice(0, 8)}`;
+    const dataDir = dirname(crmDbPath('standard'));
+    const committedTemplate = join(dataDir, 'crm-standard.template.db');
+    const tempTemplate = join(dataDir, `crm-${profile}.template.db`);
+    copyFileSync(committedTemplate, tempTemplate);
+
+    try {
+      let realCalls = 0;
+      const baseRegistry = buildRegistry(
+        [[
+          action('leads.search_leads', 'read', async () => {
+            realCalls += 1;
+            return { items: [], total: 0 };
+          }),
+        ]],
+        coreOps,
+      );
+      // The same wrap `index.ts` applies at boot (Task 16) — admin.ts's
+      // `registry.get(action)` 404-check and this dispatch-time wrapper
+      // must be the SAME registry instance for the scenario to be real.
+      const registry = withFailureInjection(baseRegistry);
+      const app = buildApp({ registry, getCrm: () => getCrm(profile), profile });
+      openCrm(profile);
+
+      const ctx: ActionContext = { db: noopTx, clock: new VirtualClock(), idempotencyKey: 'x:0:s1:0', format: 'concise' };
+
+      // Register an injection good for 2 calls — the FIRST scenario/tuple
+      // only ever dispatches this action ONCE (e.g. its plan hit a
+      // repair/replan path that never reached the gated step a second
+      // time), leaving 1 of 2 scripted failures unconsumed.
+      const injectRes = await app.inject({
+        method: 'POST',
+        url: '/admin/inject-failure',
+        payload: { action: 'leads.search_leads', code: 'TRANSIENT', times: 2 },
+      });
+      expect(injectRes.statusCode).toBe(204);
+
+      await expect(registry.get('leads.search_leads')?.handler({}, ctx)).rejects.toMatchObject({ code: 'TRANSIENT' });
+      expect(realCalls).toBe(0);
+
+      // `/admin/reset` — the NEXT tuple's setup step.
+      const resetRes = await app.inject({ method: 'POST', url: `/admin/reset?profile=${profile}` });
+      expect(resetRes.statusCode).toBe(200);
+
+      // The next tuple's dispatch of the SAME action slug must succeed —
+      // not inherit the first tuple's leftover scripted failure.
+      const result = await registry.get('leads.search_leads')?.handler({}, ctx);
+      expect(result).toEqual({ items: [], total: 0 });
+      expect(realCalls).toBe(1);
+    } finally {
+      closeRegistered(profile);
+      for (const base of [crmDbPath(profile), tempTemplate]) cleanupFile(base);
+    }
   });
 });
 

@@ -13,7 +13,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -49,6 +49,26 @@ export function prepareShardTemplate(profile: string): string {
   mkdirSync(dirname(dest), { recursive: true });
   copyFileSync(COMMITTED_TEMPLATE, dest);
   return dest;
+}
+
+/**
+ * I4 (Task 16 review): deletes every shard-local CRM file this module
+ * ever creates for `profile` — `.db`, its WAL/SHM/journal sidecars, AND
+ * the shard-local `.template.db` copy (`prepareShardTemplate`). Safe to
+ * call even if some/none of these exist. `.gitignore` un-ignores
+ * `*.template.db` (so the COMMITTED artifact stays trackable) — which
+ * means a shard-local template copy left on disk after a run would show
+ * up as an untracked file a broad `git add -A` could sweep in; this is
+ * what keeps a real eval run from leaking those into the working tree.
+ * Never touches `crm-standard.*` — only ever called with the shard's own
+ * generated profile name, never `'standard'`.
+ */
+export function cleanupShardFiles(profile: string): void {
+  const base = resolve(SERVER_DIR, `data/crm-${profile}`);
+  for (const suffix of ['.db', '.db-wal', '.db-shm', '.db-journal', '.template.db']) {
+    const path = `${base}${suffix}`;
+    if (existsSync(path)) rmSync(path, { force: true });
+  }
 }
 
 export async function waitForHealth(baseUrl: string, timeoutMs = 20_000): Promise<void> {
@@ -118,6 +138,12 @@ export function spawnServer(opts: SpawnServerOptions): SpawnedServer {
         res();
       });
     });
+    // I4 (Task 16 review): clean up this shard's CRM file + its
+    // shard-local template copy now that the server holding the sqlite
+    // handle has actually exited (deleting while it's still open risks a
+    // race on some platforms; waiting for 'exit' above already blocks
+    // until the process is gone, or the 5s grace timer fires).
+    cleanupShardFiles(opts.profile);
   }
 
   return { baseUrl: `http://127.0.0.1:${opts.port}`, profile: opts.profile, stop };

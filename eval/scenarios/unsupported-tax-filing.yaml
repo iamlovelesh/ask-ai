@@ -1,9 +1,15 @@
 # Seed scenario (Task 16) — category: unsupported.
 #
 # A request genuinely outside the 50-module catalog's scope (no action
-# files/submits a government tax return). Expect `kind:'unsupported'` — and
-# critically, an HONEST refusal: the response must never claim the thing
-# was done.
+# files/submits a government tax return). Expect `kind:'unsupported'`,
+# which `agent/pipeline.ts`'s `composeInputFor` maps to
+# `turn.completed.status === 'refused'` — asserted explicitly via
+# `behavior.status` (I2, Task 16 review: without this, an `unsupported`
+# scenario with only `confirmation:false`/`clarify:false` would ALSO
+# "pass" against a turn that silently failed outright instead of
+# genuinely refusing, which is not the same thing this scenario exists to
+# prove). And critically, an HONEST refusal: the response must never claim
+# the thing was done.
 
 id: unsupported-tax-filing
 category: unsupported
@@ -13,6 +19,6 @@ turns:
     expect:
       behavior:
         confirmation: false
-        clarify: false
+        status: refused
       response:
         mustNotClaim: [filed, submitted, completed successfully, done]

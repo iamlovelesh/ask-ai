@@ -5,14 +5,18 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { lintScenarios } from '../lint';
-import { loadScenarios } from '../runner-tuples';
-import type { Scenario } from '../types';
+import { lintScenarios } from '../lint.js';
+import { loadScenarios } from '../runner-tuples.js';
+import type { Scenario } from '../types.js';
 
+/** Default `turns` carries a real (if trivial) assertion — `expect: {}`
+ * would itself now trip the `empty-expect` check (I3, Task 16 review),
+ * which would bleed into every test in this file that doesn't care about
+ * that specific check and only overrides `turns` when it does. */
 function scenario(overrides: Partial<Scenario> & Pick<Scenario, 'id' | 'category'>): Scenario {
   return {
     profile: 'standard',
-    turns: [{ user: 'hi', expect: {} }],
+    turns: [{ user: 'hi', expect: { response: { mustMention: ['x'] } } }],
     ...overrides,
   };
 }
@@ -65,13 +69,17 @@ describe('lintScenarios — category/subtype coverage', () => {
 
 describe('lintScenarios — absolute-date hygiene', () => {
   it('flags a non-pinned absolute date in the user text', () => {
-    const scenarios = [scenario({ id: 'a', category: 'direct', turns: [{ user: 'Find leads created on 2025-01-01', expect: {} }] })];
+    const scenarios = [
+      scenario({ id: 'a', category: 'direct', turns: [{ user: 'Find leads created on 2025-01-01', expect: { response: { mustMention: ['x'] } } }] }),
+    ];
     const issues = lintScenarios(scenarios, { allowPartialCoverage: true });
     expect(issues.some((i) => i.kind === 'absolute-date' && i.detail.includes('2025-01-01'))).toBe(true);
   });
 
   it('allows the pinned VIRTUAL_NOW dates', () => {
-    const scenarios = [scenario({ id: 'a', category: 'direct', turns: [{ user: 'As of 2026-11-04, find leads', expect: {} }] })];
+    const scenarios = [
+      scenario({ id: 'a', category: 'direct', turns: [{ user: 'As of 2026-11-04, find leads', expect: { response: { mustMention: ['x'] } } }] }),
+    ];
     const issues = lintScenarios(scenarios, { allowPartialCoverage: true });
     expect(issues.filter((i) => i.kind === 'absolute-date')).toHaveLength(0);
   });
@@ -86,6 +94,20 @@ describe('lintScenarios — absolute-date hygiene', () => {
     ];
     const issues = lintScenarios(scenarios, { allowPartialCoverage: true });
     expect(issues.some((i) => i.kind === 'absolute-date')).toBe(true);
+  });
+});
+
+describe('lintScenarios — empty-expect (I3, Task 16 review)', () => {
+  it('flags a turn with an all-empty sub-object expect, even under --allow-partial', () => {
+    const scenarios = [scenario({ id: 'a', category: 'direct', turns: [{ user: 'x', expect: { behavior: {} } }] })];
+    const issues = lintScenarios(scenarios, { allowPartialCoverage: true });
+    expect(issues.some((i) => i.kind === 'empty-expect')).toBe(true);
+  });
+
+  it('does not flag a turn with a real assertion', () => {
+    const scenarios = [scenario({ id: 'a', category: 'direct', turns: [{ user: 'x', expect: { behavior: { confirmation: false } } }] })];
+    const issues = lintScenarios(scenarios, { allowPartialCoverage: true });
+    expect(issues.filter((i) => i.kind === 'empty-expect')).toHaveLength(0);
   });
 });
 

@@ -119,10 +119,16 @@ function renderLatencyTable(rows: readonly ResultRow[], agent: Agent): string {
 
 function renderCostTable(rows: readonly ResultRow[], agent: Agent): string {
   const stats = costStats(rows, agent);
+  // I1 (Task 16 review, controller ruling): the PRIMARY "cost/successful
+  // task" column now includes every FAILED trial's cost in the numerator
+  // ("including retries" per the brief) — a secondary, clearly-labeled
+  // column reports the (looser) "among successful runs only" figure this
+  // used to mean, kept because it still answers a legitimately different
+  // question.
   return (
-    '| Requests | avg tokens in | avg tokens out | avg cost/request | cost/successful task |\n' +
-    '|---|---|---|---|---|\n' +
-    `| ${stats.requests} | ${stats.avgTokensInPerRequest.toFixed(0)} | ${stats.avgTokensOutPerRequest.toFixed(0)} | ${fmtUsd(stats.avgCostPerRequestUsd)} | ${fmtUsd(stats.costPerSuccessfulTaskUsd)} |\n`
+    '| Requests | avg tokens in | avg tokens out | avg cost/request | cost/successful task (incl. failed attempts) | cost among successful runs only |\n' +
+    '|---|---|---|---|---|---|\n' +
+    `| ${stats.requests} | ${stats.avgTokensInPerRequest.toFixed(0)} | ${stats.avgTokensOutPerRequest.toFixed(0)} | ${fmtUsd(stats.avgCostPerRequestUsd)} | ${fmtUsd(stats.costPerSuccessfulTaskUsd)} | ${fmtUsd(stats.costAmongSuccessfulOnlyUsd)} |\n`
   );
 }
 
@@ -150,7 +156,7 @@ function renderTargetsTable(rows: readonly ResultRow[]): string {
     `| Complex E2E p95 | < ${TARGETS.complexE2eP95Ms}ms | ${fmtMs(complexLat.p95E2eMs)} | ${met(complexLat.p95E2eMs < TARGETS.complexE2eP95Ms)} |`,
     `| Optimized task success (pass^1) | >= ${fmtPct(TARGETS.optimizedSuccessRateMin)} | ${fmtPct(optSuccess.rate)} | ${met(optSuccess.rate >= TARGETS.optimizedSuccessRateMin)} |`,
     `| Optimized vs baseline delta | >= +${TARGETS.baselineDeltaPointsMin}pp | ${deltaPts >= 0 ? '+' : ''}${deltaPts.toFixed(1)}pp | ${met(deltaPts >= TARGETS.baselineDeltaPointsMin)} |`,
-    `| Cost per successful task (optimized) | < ${fmtUsd(TARGETS.costPerSuccessfulTaskMaxUsd)} | ${fmtUsd(costStatsOpt.costPerSuccessfulTaskUsd)} | ${met(costPerSuccessOk)} |`,
+    `| Cost per successful task, incl. failed attempts (optimized) | < ${fmtUsd(TARGETS.costPerSuccessfulTaskMaxUsd)} | ${fmtUsd(costStatsOpt.costPerSuccessfulTaskUsd)} | ${met(costPerSuccessOk)} |`,
     `| Repair-rate on complex turns (assumption, not a gate) | < ${fmtPct(TARGETS.repairRateComplexAssumptionMax)} | ${fmtPct(repair.rate)} | ${met(repair.rate < TARGETS.repairRateComplexAssumptionMax)} |`,
   ];
   return lines.join('\n') + '\n';
