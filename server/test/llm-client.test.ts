@@ -81,7 +81,7 @@ let spansPath: string;
 let spans: Spans;
 
 beforeEach(() => {
-  costMeter.reset();
+  costMeter.__resetForTest();
   delete process.env['EVAL_BUDGET_USD'];
   spansPath = join(tmpdir(), `ask-ai-llm-client-spans-${randomUUID()}.db`);
   spans = openSpans(spansPath);
@@ -275,11 +275,36 @@ describe('llmCall — retry/backoff', () => {
 });
 
 describe('llmCall — budget guard', () => {
+  // `costMeter.add` is not public (controller ruling: only `llmCall` may
+  // mutate the process-wide meter), so these tests build up real spend
+  // through `llmCall` itself rather than poking the meter directly.
+  async function spend(costUsd: number): Promise<void> {
+    const { fetch: spendFetch } = sequenceFetch([
+      {
+        status: 200,
+        body: chatSuccessBody({ usage: { prompt_tokens: 1, completion_tokens: 1, cost: costUsd } }),
+      },
+    ]);
+    __setTestFetch(spendFetch);
+    await llmCall({
+      stage: 'compose',
+      model: 'anthropic/claude-haiku-4.5',
+      system: 'sys',
+      prompt: 'p',
+      turnId: `turn_${randomUUID()}`,
+    });
+  }
+
   it('throws typed BudgetExceededError once cumulative cost reaches EVAL_BUDGET_USD, without calling fetch', async () => {
     process.env['EVAL_BUDGET_USD'] = '1';
-    costMeter.reset();
-    costMeter.add(2); // simulate prior spend already over budget
+    costMeter.__resetForTest();
 
+    // This call is allowed through (cumulative starts at 0 < budget 1) and
+    // pushes cumulative spend to 2 — now over the $1 budget.
+    await spend(2);
+    expect(costMeter.total()).toBeCloseTo(2);
+
+    // The next call must be refused BEFORE any network call.
     let fetchCalls = 0;
     __setTestFetch((async () => {
       fetchCalls++;
@@ -300,8 +325,9 @@ describe('llmCall — budget guard', () => {
 
   it('BudgetExceededError carries the cumulative and limit figures', async () => {
     process.env['EVAL_BUDGET_USD'] = '0.5';
-    costMeter.reset();
-    costMeter.add(0.5);
+    costMeter.__resetForTest();
+
+    await spend(0.5);
 
     try {
       await llmCall({
@@ -349,6 +375,30 @@ describe('withBackoff (unit)', () => {
       ),
     ).rejects.toThrow('nope');
     expect(calls).toBe(1);
+  });
+
+  it('defaults to maxAttempts=6 (5 retries) so the documented 16s cap is reachable', async () => {
+    const delays: number[] = [];
+    const fakeSleep = async (ms: number): Promise<void> => {
+      delays.push(ms);
+    };
+    let calls = 0;
+    await expect(
+      withBackoff(
+        async () => {
+          calls++;
+          throw Object.assign(new Error('boom'), { status: 503 });
+        },
+        { baseMs: 1000, sleep: fakeSleep }, // no maxAttempts override — exercise the default
+      ),
+    ).rejects.toThrow('boom');
+
+    // 6 attempts total: 5 retry delays, doubling from 1s, capped at 16s.
+    // The delay recorded immediately before the 6th (final) attempt is
+    // exactly 16_000ms — the reviewer-mandated boundary assertion.
+    expect(calls).toBe(6);
+    expect(delays).toEqual([1000, 2000, 4000, 8000, 16000]);
+    expect(delays[4]).toBe(16_000);
   });
 
   it('isRetryableError recognizes 429/5xx and rejects 4xx (except 429)', () => {

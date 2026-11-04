@@ -48,25 +48,38 @@ export class BudgetExceededError extends Error {
   }
 }
 
-/** Module-level, in-process cumulative cost tracker. `reset()` is for tests. */
-class CostMeter {
-  private cumulativeUsd = 0;
+// Module-level, process-wide cumulative cost tracker.
+//
+// INTENTIONALLY global-per-process, not per-session: this is the hard $
+// ceiling (EVAL_BUDGET_USD) across ALL usage sharing this OpenRouter key —
+// eval runs, live demo traffic, everything in this process — because a
+// halted server is a far better failure mode than an overspent API key.
+//
+// This is NOT where per-session spend lives. Per-session accounting is
+// `sessions.cost_usd`, maintained via `EventLog.touchSession` (events/log.ts)
+// — api/ and pipeline code should read/display cost from there, not from
+// this meter. This meter only answers "are we still allowed to spend?".
+//
+// Mutation is deliberately NOT public: only `llmCall` (below, in this file)
+// may add to it, via the module-private `addCost`. The exported `costMeter`
+// object exposes just `total()` (read) and `__resetForTest()` (test-only
+// reset) — no public `add`.
+let cumulativeUsd = 0;
 
-  get total(): number {
-    return this.cumulativeUsd;
-  }
-
-  add(usd: number): number {
-    this.cumulativeUsd += usd;
-    return this.cumulativeUsd;
-  }
-
-  reset(): void {
-    this.cumulativeUsd = 0;
-  }
+function addCost(usd: number): number {
+  cumulativeUsd += usd;
+  return cumulativeUsd;
 }
 
-export const costMeter = new CostMeter();
+export const costMeter = {
+  total(): number {
+    return cumulativeUsd;
+  },
+  /** Test-only: zero the process-wide meter between test cases. */
+  __resetForTest(): void {
+    cumulativeUsd = 0;
+  },
+};
 
 function budgetUsd(): number {
   const raw = Number(process.env['EVAL_BUDGET_USD'] ?? 25);
@@ -158,8 +171,8 @@ interface RawGenResult {
 
 export async function llmCall<T = string>(opts: LlmCallOptions<T>): Promise<LlmCallResult<T>> {
   const limitUsd = budgetUsd();
-  if (costMeter.total >= limitUsd) {
-    throw new BudgetExceededError(costMeter.total, limitUsd);
+  if (costMeter.total() >= limitUsd) {
+    throw new BudgetExceededError(costMeter.total(), limitUsd);
   }
 
   const openrouter = createOpenRouter({
@@ -209,7 +222,7 @@ export async function llmCall<T = string>(opts: LlmCallOptions<T>): Promise<LlmC
         ? nativeCost
         : tablePriceCost(opts.model, tokensIn, tokensOut, tokensCached);
 
-    costMeter.add(costUsd);
+    addCost(costUsd);
 
     const usage: LlmUsage = {
       model: opts.model,

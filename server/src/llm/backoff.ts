@@ -1,7 +1,13 @@
 /**
  * Exponential backoff for LLM calls (LLD §9.2): retries on 429/5xx/network
- * errors, 1s → 16s, max 5 attempts by default. Separate from the executor's
- * per-action TRANSIENT retry (§5.3) — this one wraps the HTTP/model call.
+ * errors, 1s → 16s, max 6 attempts (5 retries) by default. Separate from the
+ * executor's per-action TRANSIENT retry (§5.3) — this one wraps the
+ * HTTP/model call.
+ *
+ * Reviewer ruling: the brief's "max 5, 1s→16s" means delays up to 16s must be
+ * REACHABLE. With `baseMs*2^(attempt-1)` and 5 total attempts, the last
+ * computed delay (before attempt 5) is only 8s — 16s is never hit. 6 attempts
+ * (5 retry delays: 1,2,4,8,16s) makes the documented cap reachable.
  */
 
 import { APICallError } from '@ai-sdk/provider';
@@ -9,6 +15,9 @@ import { APICallError } from '@ai-sdk/provider';
 export interface BackoffOptions {
   maxAttempts?: number;
   baseMs?: number;
+  /** Test seam: replace the real timer-based sleep (e.g. to assert delay
+   * values without waiting for them). Defaults to a real `setTimeout`. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface BackoffResult<T> {
@@ -37,7 +46,7 @@ export function isRetryableError(err: unknown): boolean {
   return false;
 }
 
-function sleep(ms: number): Promise<void> {
+function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
@@ -50,8 +59,9 @@ export async function withBackoff<T>(
   fn: (attempt: number) => Promise<T>,
   opts: BackoffOptions = {},
 ): Promise<BackoffResult<T>> {
-  const maxAttempts = opts.maxAttempts ?? 5;
+  const maxAttempts = opts.maxAttempts ?? 6;
   const baseMs = opts.baseMs ?? 1000;
+  const sleep = opts.sleep ?? defaultSleep;
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
