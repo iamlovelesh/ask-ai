@@ -21,6 +21,13 @@
  * discount yet); `apply_quote_discount` is the only action that sets the
  * `discount` key, and does so via the SAME sidecar so a human note set at
  * creation is preserved alongside it.
+ *
+ * FIX ROUND 2 (reviewer IMPORTANT, task-9-b4): `add_quote_line_item`/
+ * `update_quote_line_item` now CONFLICT unless `status='draft'` (matching
+ * M28 Invoices' `add_invoice_line_item`/`update_draft_invoice` pattern) —
+ * previously an already-SENT or ACCEPTED quote could be silently mutated,
+ * letting `total_cents` drift away from the total the customer actually
+ * agreed to/was invoiced from `convert_accepted_quote_to_invoice`.
  */
 
 import { z } from 'zod';
@@ -336,7 +343,10 @@ const addQuoteLineItem: ActionDef<z.infer<typeof addQuoteLineItemInput>, QuoteLi
     examplePhrasings: ['Add 2 of this product to the quote'],
   },
   handler: withIdempotentWrite(async (input, ctx) => {
-    getQuoteRow(ctx.db, input.id);
+    const quote = getQuoteRow(ctx.db, input.id);
+    if (quote['status'] !== 'draft') {
+      throw new ActionError('CONFLICT', `Quote '${input.id}' is not in 'draft' status — line items are fixed once sent.`);
+    }
     const product = ctx.db.get(`SELECT default_price_cents FROM products WHERE id = ?`, [input.product_id]);
     if (!product) throw new ActionError('NOT_FOUND', `Product '${input.product_id}' does not exist.`);
     const unitPrice = input.unit_price_cents ?? (product['default_price_cents'] as number | null) ?? 0;
@@ -379,7 +389,10 @@ const updateQuoteLineItem: ActionDef<z.infer<typeof updateQuoteLineItemInput>, Q
     examplePhrasings: ['Change the quantity on this quote line item'],
   },
   handler: withIdempotentWrite(async (input, ctx) => {
-    getQuoteRow(ctx.db, input.id);
+    const quote = getQuoteRow(ctx.db, input.id);
+    if (quote['status'] !== 'draft') {
+      throw new ActionError('CONFLICT', `Quote '${input.id}' is not in 'draft' status — line items are fixed once sent.`);
+    }
     getOwnedLineItemRow(ctx.db, 'quote', input.id, input.line_item_id, 'quote');
     const now = ctx.clock.now();
     patchLineItemQuantityOrPrice(ctx.db, input.line_item_id, input.patch, now);

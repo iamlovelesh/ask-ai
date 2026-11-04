@@ -276,6 +276,7 @@ export const ENTITY_MODEL: readonly TableDef[] = [
     col('source', 'TEXT', { indexed: true }),
     col('fulfilled_at', 'INT'),
     col('currency', 'TEXT'),
+    col('shipping_address', 'TEXT'), // added task 9 batch 4 fix round 2 (controller ruling)
   ]),
 
   // M27/M28/M32 line items (merged child)

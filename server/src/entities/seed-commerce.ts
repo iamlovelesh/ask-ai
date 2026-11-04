@@ -8,7 +8,7 @@
 
 import type { SeedCtx } from './seed-context.js';
 import { insert, nextId, pastTimestamp, pick, chance, weightedPick } from './seed-context.js';
-import { PRODUCT_WORDS } from './seed-data.js';
+import { PRODUCT_WORDS, CITIES } from './seed-data.js';
 
 const DAY_MS = 1000 * 60 * 60 * 24;
 
@@ -203,6 +203,9 @@ export function generateOrders(
       source: pick(ctx, ['web', 'app', 'pos', 'marketplace']),
       fulfilled_at: status === 'fulfilled' || status === 'refunded' ? createdAt + 3 * DAY_MS : null,
       currency: 'USD',
+      // ~30% of orders carry a real shipping address (task 9 batch 4 fix
+      // round 2 — controller ruling adding `orders.shipping_address`).
+      shipping_address: chance(ctx, 0.3) ? `${1 + ctx.rng.int(9999)} Shipping Ln, ${pick(ctx, CITIES).city}` : null,
     });
     ids.push(id);
   }

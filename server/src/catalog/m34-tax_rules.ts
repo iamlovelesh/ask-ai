@@ -421,14 +421,26 @@ const calculateTaxForOrder: ActionDef<z.infer<typeof calculateTaxForOrderInput>,
       if (ruleRow['status'] !== 'active') {
         throw new ActionError('VALIDATION', `Tax rule '${input.tax_rule_id}' is not active.`);
       }
-    } else if (input.region) {
-      ruleRow =
-        ctx.db.get(`SELECT * FROM structures WHERE kind = 'tax_rule' AND status = 'active' AND archived = 0 AND config LIKE ?`, [
-          `%"region":"${input.region}"%`,
-        ]) ??
-        ctx.db.get(`SELECT * FROM structures WHERE kind = 'tax_rule' AND status = 'active' AND archived = 0 AND config LIKE ?`, [
-          `%"region":null%`,
-        ]);
+    } else {
+      // Fix round 2 (reviewer IMPORTANT): matching via `config LIKE
+      // '%"region":...%'` on the raw JSON string silently matched NOTHING
+      // against the real template — every seeded tax_rule row's `config`
+      // is the generic placeholder `{seeded:true,kind:'tax_rule'}` (no
+      // `region` key at all), so neither LIKE pattern (`"region":"<val>"`
+      // nor the literal `"region":null`) ever matched a seeded row, and
+      // the natural no-tax_rule_id call path always fell through to the
+      // (correct-looking but wrong-for-this-data) zero-tax branch. The
+      // active universe here is small (≤~20 rows per
+      // `entities/seed-core.ts#STRUCTURE_COUNTS.tax_rule`), so fetch all
+      // active rows and match in application code via
+      // `readTaxRuleConfig` (which already normalizes an absent `region`
+      // key to `null`) instead of pattern-matching raw JSON.
+      const activeRules = ctx.db
+        .all(`SELECT * FROM structures WHERE kind = 'tax_rule' AND status = 'active' AND archived = 0`)
+        .map((r) => ({ row: r, config: readTaxRuleConfig(r) }));
+      const exactMatch = input.region ? activeRules.find((r) => r.config.region === input.region) : undefined;
+      const globalMatch = activeRules.find((r) => r.config.region === null);
+      ruleRow = (exactMatch ?? globalMatch)?.row;
     }
 
     const lineRows = ctx.db.all(

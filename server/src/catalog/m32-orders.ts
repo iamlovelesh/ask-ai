@@ -11,16 +11,15 @@
  * time and reapplies its discount — same "always recompute, never
  * incrementally patch" MONEY RULE as quotes' `notes`-sidecar discount.
  *
- * DESIGN NOTE — `set_order_shipping_address`: `orders` has no
- * `shipping_address` column in `entities/model.ts` (adding one is out of
- * scope for this task) and no free-text/JSON column suitable to
- * repurpose without breaking an existing semantic use (`source` is a
- * real enum, `number` is the display identifier). This action does a
- * real existence check + validation and stamps `updated_at` (so it has a
- * genuine, detectable state delta) but cannot persist the address
- * anywhere retrievable — documented degenerate implementation, same
- * category as M07's `view_note_revision_history` / M16-M17's execution-
- * history actions. Flagged for controller review as a schema gap.
+ * DESIGN NOTE — `set_order_shipping_address`: fix round 2 (controller
+ * ruling, reviewer-recommended) added a real `orders.shipping_address
+ * TEXT` column to `entities/model.ts` — this action now persists the
+ * address for real and `get_order_details`/`toView` read it back. The
+ * seed generator (`entities/seed-commerce.ts#generateOrders`) populates
+ * it on ~30% of seeded orders so `get_order_details` has real pre-seeded
+ * data to read even before any fresh `set_order_shipping_address` call.
+ * (Originally shipped as a documented degenerate no-persist action in
+ * the first submission; superseded by this fix.)
  *
  * DESIGN NOTE — `submit_order`: the `status` enum has no intermediate
  * "awaiting payment" state, and this catalog's whole commerce surface is
@@ -103,6 +102,7 @@ interface OrderView {
   source: string | null;
   fulfilled_at: number | null;
   currency: string | null;
+  shipping_address: string | null;
   archived: boolean;
   created_at: number;
   updated_at: number;
@@ -120,6 +120,7 @@ function toView(row: Row): OrderView {
     source: (row['source'] as string | null) ?? null,
     fulfilled_at: (row['fulfilled_at'] as number | null) ?? null,
     currency: (row['currency'] as string | null) ?? null,
+    shipping_address: (row['shipping_address'] as string | null) ?? null,
     archived: row['archived'] === 1,
     created_at: row['created_at'] as number,
     updated_at: row['updated_at'] as number,
@@ -149,6 +150,7 @@ const orderView = z.object({
   source: z.string().nullable(),
   fulfilled_at: z.number().nullable(),
   currency: z.string().nullable(),
+  shipping_address: z.string().nullable(),
   archived: z.boolean(),
   created_at: z.number(),
   updated_at: z.number(),
@@ -182,8 +184,8 @@ const createDraftOrder: ActionDef<z.infer<typeof createDraftOrderInput>, OrderVi
     const number = nextDocNumber(ctx.db, 'orders', 'O');
     ctx.db.run(
       `INSERT INTO orders (id, created_at, updated_at, archived, number, contact_id, status,
-        total_cents, placed_at, coupon_id, source, fulfilled_at, currency)
-       VALUES (?, ?, ?, 0, ?, ?, 'pending', 0, ?, NULL, ?, NULL, ?)`,
+        total_cents, placed_at, coupon_id, source, fulfilled_at, currency, shipping_address)
+       VALUES (?, ?, ?, 0, ?, ?, 'pending', 0, ?, NULL, ?, NULL, ?, NULL)`,
       [id, now, now, number, input.contact_id, now, input.source ?? 'web', input.currency ?? 'USD'],
     );
     return toView(getOrderRow(ctx.db, id));
@@ -351,15 +353,14 @@ const updateOrderQuantity: ActionDef<z.infer<typeof updateOrderQuantityInput>, z
 // --- A06 set_order_shipping_address -----------------------------------------------
 
 const setOrderShippingAddressInput = z.strictObject({ id: z.string(), address: z.string().min(1) });
-const shippingAddressOutput = z.object({ id: z.string(), number: z.string(), acknowledged: z.literal(true) });
+const shippingAddressOutput = z.object({ id: z.string(), number: z.string(), shipping_address: z.string() });
 
 const setOrderShippingAddress: ActionDef<z.infer<typeof setOrderShippingAddressInput>, z.infer<typeof shippingAddressOutput>> = {
   id: 'M32.A06',
   slug: 'orders.set_order_shipping_address',
   module: MODULE,
   name: 'Set order shipping address',
-  description:
-    'Validate and acknowledge a shipping address for an order. NOTE: orders has no shipping_address column in entities/model.ts — this cannot persist the address (documented schema gap); it validates and stamps the order as touched.',
+  description: "Set an order's shipping address (persisted — readable back via get_order_details).",
   risk: 'write',
   entities: ['orders'],
   inputSchema: setOrderShippingAddressInput,
@@ -370,8 +371,12 @@ const setOrderShippingAddress: ActionDef<z.infer<typeof setOrderShippingAddressI
   },
   handler: withIdempotentWrite(async (input, ctx) => {
     const order = getOrderRow(ctx.db, input.id);
-    ctx.db.run(`UPDATE orders SET updated_at = ? WHERE id = ?`, [ctx.clock.now(), input.id]);
-    return { id: input.id, number: order['number'] as string, acknowledged: true as const };
+    ctx.db.run(`UPDATE orders SET shipping_address = ?, updated_at = ? WHERE id = ?`, [
+      input.address,
+      ctx.clock.now(),
+      input.id,
+    ]);
+    return { id: input.id, number: order['number'] as string, shipping_address: input.address };
   }),
 };
 
