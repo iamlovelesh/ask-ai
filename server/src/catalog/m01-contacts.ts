@@ -1,9 +1,17 @@
 /**
- * M01 Contacts — sample catalog module (LLD §2.1 ActionDef shape).
- *
- * Serves as the reference implementation + registry-loading proof for Task
- * 7. Modules M02-M50 land in later tasks; each follows this same pattern —
- * `ActionDef[]` exported, one line added to `module-index.ts`.
+ * M01 Contacts — the Task-8 REFERENCE module. Every handler convention that
+ * M02-M50 (later tasks) copy verbatim lives here:
+ *   - idempotent writes: `withIdempotentWrite` (idempotency.ts) wraps every
+ *     write/destructive handler; a retried call with the same
+ *     `ctx.idempotencyKey` replays the stored result instead of re-mutating.
+ *   - list outputs cap at 50 inline rows, spilling to the `{__spill:true,
+ *     total, sample}` marker beyond that (list-output.ts).
+ *   - `jit` guidance strings on `create_contact`/`search_contacts`.
+ *   - every output carries `id` + a display name.
+ *   - `ActionError('NOT_FOUND', …)` on missing ids; `ActionError('CONFLICT',
+ *     …)` on self-referential inputs (merge/relate a contact with itself).
+ *   - `discriminationChecks` export (discrimination.ts) for Tier-A
+ *     filter-discrimination smoke coverage on `search_contacts`.
  *
  * ID generation: contacts use the `con_{n}` convention (entities/model.ts).
  * Runtime handlers (unlike the seed generators) don't have a shared counter,
@@ -15,6 +23,9 @@ import { z } from 'zod';
 import type { ActionDef, ActionContext } from './types.js';
 import { ActionError } from './types.js';
 import type { StoreTx, Row } from '../store/db.js';
+import { withIdempotentWrite } from './idempotency.js';
+import { listOutputSchema, toListOrSpill, type ListOrSpill } from './list-output.js';
+import type { DiscriminationCheck } from './discrimination.js';
 
 const MODULE = 'contacts';
 
@@ -154,7 +165,8 @@ const createContact: ActionDef<CreateContactInput, CreateContactOutput> = {
     synonyms: ['add contact', 'new contact'],
     examplePhrasings: ['Create a contact for Jane Doe', 'Add a new contact'],
   },
-  handler: async (input, ctx: ActionContext) => {
+  jit: 'If you only have an email/phone and no confirmed new-person intent, try search_contacts first to avoid creating a duplicate.',
+  handler: withIdempotentWrite(async (input, ctx: ActionContext) => {
     const name = input.name ?? [input.first_name, input.last_name].filter(Boolean).join(' ');
     if (name.length === 0) {
       throw new ActionError('VALIDATION', 'A contact needs either `name` or `first_name`/`last_name`.');
@@ -187,7 +199,7 @@ const createContact: ActionDef<CreateContactInput, CreateContactOutput> = {
       ],
     );
     return toView(getContactRow(ctx.db, id));
-  },
+  }),
 };
 
 // --- A02 get_contact_details -------------------------------------------------
@@ -222,8 +234,8 @@ const searchContactsInput = z.strictObject({
   limit: z.number().int().min(1).max(50).optional(),
 });
 type SearchContactsInput = z.infer<typeof searchContactsInput>;
-const searchContactsOutput = z.object({ items: z.array(contactView), total: z.number() });
-type SearchContactsOutput = z.infer<typeof searchContactsOutput>;
+const searchContactsOutput = listOutputSchema(contactView);
+type SearchContactsOutput = ListOrSpill<ContactView>;
 
 const searchContacts: ActionDef<SearchContactsInput, SearchContactsOutput> = {
   id: 'M01.A03',
@@ -239,6 +251,7 @@ const searchContacts: ActionDef<SearchContactsInput, SearchContactsOutput> = {
     synonyms: ['find contacts', 'list contacts'],
     examplePhrasings: ['Find contacts owned by Dana', 'Search contacts named Smith'],
   },
+  jit: 'Results cap at 50 inline rows; beyond that you get {__spill:true,total,sample}. Narrow with owner_id/company_id/lifecycle_stage before relying on the sample.',
   handler: async (input, ctx) => {
     const where: string[] = ['archived = 0'];
     const params: unknown[] = [];
@@ -267,7 +280,7 @@ const searchContacts: ActionDef<SearchContactsInput, SearchContactsOutput> = {
       `SELECT * FROM contacts WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`,
       [...params, limit],
     );
-    return { items: rows.map(toView), total };
+    return toListOrSpill(rows.map(toView), total);
   },
 };
 
@@ -307,7 +320,7 @@ const updateContactDetails: ActionDef<UpdateContactDetailsInput, ContactView> = 
     synonyms: ['edit contact', 'update contact'],
     examplePhrasings: ["Update Jane's email", "Change this contact's city"],
   },
-  handler: async (input, ctx) => {
+  handler: withIdempotentWrite(async (input, ctx) => {
     getContactRow(ctx.db, input.id); // existence check
     const fields = Object.entries(input.patch);
     const setSql = fields.map(([k]) => `${k} = ?`).join(', ');
@@ -318,7 +331,7 @@ const updateContactDetails: ActionDef<UpdateContactDetailsInput, ContactView> = 
       input.id,
     ]);
     return toView(getContactRow(ctx.db, input.id));
-  },
+  }),
 };
 
 // --- A05 archive_contact -------------------------------------------------------
@@ -342,14 +355,14 @@ const archiveContact: ActionDef<ArchiveContactInput, ArchiveContactOutput> = {
     synonyms: ['delete contact', 'remove contact'],
     examplePhrasings: ['Archive this contact', 'Delete the duplicate contact'],
   },
-  handler: async (input, ctx) => {
+  handler: withIdempotentWrite(async (input, ctx) => {
     getContactRow(ctx.db, input.id);
     ctx.db.run(`UPDATE contacts SET archived = 1, updated_at = ? WHERE id = ?`, [
       ctx.clock.now(),
       input.id,
     ]);
     return { id: input.id, archived: true };
-  },
+  }),
 };
 
 // --- A06 merge_duplicate_contacts ----------------------------------------------
@@ -384,7 +397,7 @@ const mergeDuplicateContacts: ActionDef<
     synonyms: ['merge contacts', 'dedupe contacts'],
     examplePhrasings: ['Merge these two contacts', 'These are the same person, merge them'],
   },
-  handler: async (input, ctx) => {
+  handler: withIdempotentWrite(async (input, ctx) => {
     if (input.primary_contact_id === input.duplicate_contact_id) {
       throw new ActionError('CONFLICT', 'Cannot merge a contact into itself.');
     }
@@ -409,7 +422,7 @@ const mergeDuplicateContacts: ActionDef<
       input.duplicate_contact_id,
     ]);
     return { id: input.primary_contact_id, merged_from: input.duplicate_contact_id, tags: mergedTags };
-  },
+  }),
 };
 
 // --- A07 assign_contact_owner ---------------------------------------------------
@@ -431,7 +444,7 @@ const assignContactOwner: ActionDef<AssignContactOwnerInput, ContactView> = {
     synonyms: ['set contact owner', 'reassign contact'],
     examplePhrasings: ['Assign this contact to Dana', 'Make me the owner of this contact'],
   },
-  handler: async (input, ctx) => {
+  handler: withIdempotentWrite(async (input, ctx) => {
     getContactRow(ctx.db, input.id);
     ctx.db.run(`UPDATE contacts SET owner_id = ?, updated_at = ? WHERE id = ?`, [
       input.owner_id,
@@ -439,7 +452,7 @@ const assignContactOwner: ActionDef<AssignContactOwnerInput, ContactView> = {
       input.id,
     ]);
     return toView(getContactRow(ctx.db, input.id));
-  },
+  }),
 };
 
 // --- A08 set_communication_preferences ------------------------------------------
@@ -472,7 +485,7 @@ const setCommunicationPreferences: ActionDef<
     synonyms: ['set opt-in', 'update contact preferences'],
     examplePhrasings: ['Opt this contact out of SMS', 'Set email as the preferred channel'],
   },
-  handler: async (input, ctx) => {
+  handler: withIdempotentWrite(async (input, ctx) => {
     const row = getContactRow(ctx.db, input.id);
     const customFields = parseJsonObject(row['custom_fields']);
     const existing = (customFields['communication_preferences'] as Record<string, unknown>) ?? {};
@@ -484,7 +497,7 @@ const setCommunicationPreferences: ActionDef<
       input.id,
     ]);
     return { id: input.id, communication_preferences: merged };
-  },
+  }),
 };
 
 // --- A09 add_contact_relationship ------------------------------------------------
@@ -519,7 +532,7 @@ const addContactRelationship: ActionDef<
     synonyms: ['link contacts', 'relate contacts'],
     examplePhrasings: ['Link this contact as the spouse of another contact'],
   },
-  handler: async (input, ctx) => {
+  handler: withIdempotentWrite(async (input, ctx) => {
     if (input.id === input.related_contact_id) {
       throw new ActionError('CONFLICT', 'A contact cannot have a relationship with itself.');
     }
@@ -540,7 +553,7 @@ const addContactRelationship: ActionDef<
       input.id,
     ]);
     return { id: input.id, relationships };
-  },
+  }),
 };
 
 // --- A10 view_contact_activity_timeline --------------------------------------------
@@ -556,11 +569,8 @@ const timelineEntry = z.object({
   at: z.number(),
   summary: z.string(),
 });
-const viewContactActivityTimelineOutput = z.object({
-  items: z.array(timelineEntry),
-  total: z.number(),
-});
-type ViewContactActivityTimelineOutput = z.infer<typeof viewContactActivityTimelineOutput>;
+const viewContactActivityTimelineOutput = listOutputSchema(timelineEntry);
+type ViewContactActivityTimelineOutput = ListOrSpill<z.infer<typeof timelineEntry>>;
 
 const viewContactActivityTimeline: ActionDef<
   ViewContactActivityTimelineInput,
@@ -618,7 +628,8 @@ const viewContactActivityTimeline: ActionDef<
       })),
     ].sort((a, b) => b.at - a.at);
 
-    return { items: items.slice(0, limit), total: items.length };
+    const capped = items.slice(0, Math.min(limit, 50));
+    return toListOrSpill(capped, items.length);
   },
 };
 
@@ -633,4 +644,21 @@ export const m01Contacts: ActionDef[] = [
   setCommunicationPreferences as ActionDef,
   addContactRelationship as ActionDef,
   viewContactActivityTimeline as ActionDef,
+];
+
+/**
+ * Tier-A filter-discrimination coverage (discrimination.ts) for
+ * `search_contacts`: two `lifecycle_stage` values that MUST yield different
+ * `total` counts against the standard template (verified: 'lead' → 1682,
+ * 'customer' → 1757 — both independently > SPILL_CAP, so this also
+ * exercises the spill branch on both sides). Catches the #1 codegen bug
+ * (an accepted-but-silently-ignored filter param).
+ */
+export const m01DiscriminationChecks: DiscriminationCheck[] = [
+  {
+    action: 'contacts.search_contacts',
+    paramsA: { lifecycle_stage: 'lead' },
+    paramsB: { lifecycle_stage: 'customer' },
+    expectDifferentCounts: true,
+  },
 ];
