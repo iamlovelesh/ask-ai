@@ -44,6 +44,9 @@ export interface RefHandle {
   idList: string[];
   query?: object;
   sample: unknown[];
+  /** Set true only after `/admin/reset` marks all session handles stale
+   * (LLD §2.5). */
+  stale?: boolean;
 }
 
 export interface WorkingState {
