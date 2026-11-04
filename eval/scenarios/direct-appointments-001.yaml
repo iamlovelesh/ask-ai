@@ -1,0 +1,30 @@
+# Task 17 Batch A — category: direct, module: appointments.
+#
+# create_appointment — literal `notes`. Contact referenced by unique email
+# (see direct-notes-001); calendar/host referenced by names confirmed
+# unique in this seed (calendars: 10 distinct/10 rows; users: 'Isla Reyes'
+# COUNT=1).
+#
+# Derivation (template copy):
+#   SELECT id FROM contacts WHERE email='maya.mehta6944@gmail.com';  -> con_4
+#   SELECT id FROM structures WHERE kind='calendar' AND name='calendar 2';  -> struct_177
+#   SELECT id FROM users WHERE name='Isla Reyes';  -> user_1
+#   SELECT COUNT(*) FROM appointments;  -> 750 (before)
+
+id: direct-appointments-001
+category: direct
+profile: standard
+turns:
+  - user: "Book a discovery call with the contact at maya.mehta6944@gmail.com on calendar 2, hosted by Isla Reyes, with notes 'referred by partner program'"
+    expect:
+      planActions:
+        mustInclude: [appointments.create_appointment]
+      paramChecks:
+        - action: appointments.create_appointment
+          param: notes
+          contains: referred by partner
+      state:
+        - query: "SELECT COUNT(*) AS n FROM appointments"
+          countDelta: 1
+      behavior:
+        confirmation: false

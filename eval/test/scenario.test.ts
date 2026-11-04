@@ -1,9 +1,14 @@
 /**
  * Task 16 — schema round-trip for the 6 seed scenarios: every YAML file
  * under `eval/scenarios/` must parse cleanly against `scenarioSchema`,
- * survive a JSON round-trip unchanged, and cover exactly the 6 required
+ * survive a JSON round-trip unchanged, and cover at least the 6 required
  * shapes (one per: direct, multistep, followup, ambiguous+mustNotAsk,
  * unsupported, typo).
+ *
+ * Task 17 grows this directory into the full corpus (Batch A adds 40
+ * scenarios atop the 6 seeds), so checks below assert the 6 seed shapes
+ * are still PRESENT (a lower bound / subset check) rather than assuming
+ * they are the ONLY scenarios in the directory.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -13,8 +18,8 @@ import { parseScenario, scenarioSchema } from '../types.js';
 const scenarios = loadScenarios(new URL('../scenarios', import.meta.url).pathname);
 
 describe('seed scenario corpus', () => {
-  it('ships exactly 6 scenarios', () => {
-    expect(scenarios).toHaveLength(6);
+  it('ships at least the 6 seed scenarios', () => {
+    expect(scenarios.length).toBeGreaterThanOrEqual(6);
   });
 
   it('round-trips every scenario through JSON unchanged', () => {
@@ -41,7 +46,11 @@ describe('seed scenario corpus', () => {
 
   it('covers the typo subtype and the no_repeat subtype', () => {
     const subtypes = new Set(scenarios.map((s) => s.subtype).filter((s): s is NonNullable<typeof s> => s !== undefined));
-    expect(subtypes).toEqual(new Set(['typo', 'no_repeat']));
+    // Lower bound, not exact-set (see file header): Task 17 Batch A adds
+    // 'abstention'-subtype scenarios atop the 6 seeds, so this only checks
+    // the two seed subtypes are still present.
+    expect(subtypes.has('typo')).toBe(true);
+    expect(subtypes.has('no_repeat')).toBe(true);
   });
 
   it('the multistep seed is the LLD §2.2 flagship — touches every module in that example', () => {

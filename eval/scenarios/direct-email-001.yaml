@@ -1,0 +1,28 @@
+# Task 17 Batch A — category: direct, module: email.
+#
+# send_email is risk:'external' — ALWAYS gates (same rule as sms.send_sms,
+# see direct-sms-001's comment). Addressing the contact by their own email
+# address is doubly natural here since the action's own input is an email.
+#
+# Derivation (template copy):
+#   SELECT id FROM contacts WHERE email='elena.mehta430@company.com';
+#   -> con_8 (unique)
+#   SELECT COUNT(*) FROM messages WHERE channel='email';  -> 7560 (before)
+
+id: direct-email-001
+category: direct
+profile: standard
+turns:
+  - user: "Email elena.mehta430@company.com with subject 'Contract Renewal' and body 'Hi Elena, your contract renews next month, let me know if you have questions.'"
+    expect:
+      planActions:
+        mustInclude: [email.send_email]
+      paramChecks:
+        - action: email.send_email
+          param: subject
+          equals: Contract Renewal
+      state:
+        - query: "SELECT COUNT(*) AS n FROM messages WHERE channel='email'"
+          countDelta: 1
+      behavior:
+        confirmation: true

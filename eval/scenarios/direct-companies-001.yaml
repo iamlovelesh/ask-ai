@@ -1,0 +1,31 @@
+# Task 17 Batch A — category: direct, module: companies.
+#
+# Update by name — company names are effectively unique in the seed
+# generator (1298 distinct / 1300 rows; 'Cobalt Networks 618' itself is
+# COUNT=1), unlike contact names, so referencing it by display name alone
+# is unambiguous.
+#
+# Derivation (template copy):
+#   SELECT id, name, industry FROM companies WHERE name='Cobalt Networks 618';
+#   -> co_1, 'Cobalt Networks 618', 'Media'  (industry is NOT already
+#      'Technology', so the state check's pre-turn count is genuinely 0)
+#   SELECT COUNT(*) FROM companies WHERE id='co_1' AND industry='Technology';
+#   -> 0 (before)
+
+id: direct-companies-001
+category: direct
+profile: standard
+turns:
+  - user: "Update Cobalt Networks 618's industry to Technology"
+    expect:
+      planActions:
+        mustInclude: [companies.update_company_details]
+      paramChecks:
+        - action: companies.update_company_details
+          param: patch
+          contains: Technology
+      state:
+        - query: "SELECT COUNT(*) AS n FROM companies WHERE id='co_1' AND industry='Technology'"
+          countDelta: 1
+      behavior:
+        confirmation: false

@@ -1,0 +1,28 @@
+# Task 17 Batch A — category: direct, module: campaigns.
+#
+# create_campaign — literal `name`. (launch_campaign, the gated bulk
+# action, is id-only with no literal param a paramCheck could target, so
+# create is the better "direct" fit here — same reasoning as
+# direct-pipelines-001.)
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM structures WHERE kind='campaign';  -> 25 (before)
+
+id: direct-campaigns-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a new campaign called 'Spring Launch'"
+    expect:
+      planActions:
+        mustInclude: [campaigns.create_campaign]
+        mustNotInclude: [campaigns.launch_campaign]
+      paramChecks:
+        - action: campaigns.create_campaign
+          param: name
+          equals: Spring Launch
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='campaign'"
+          countDelta: 1
+      behavior:
+        confirmation: false

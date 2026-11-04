@@ -1,0 +1,26 @@
+# Task 17 Batch A — category: direct, module: smart_lists.
+#
+# create_smart_list — literal `name`. count_matching_records/
+# preview_matching_records only take {id}, no literal a paramCheck could
+# target, so create is the better "direct" fit here.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM structures WHERE kind='smart_list';  -> 20 (before)
+
+id: direct-smart_lists-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a smart list called 'Hot SQLs' for contacts at the SQL stage"
+    expect:
+      planActions:
+        mustInclude: [smart_lists.create_smart_list]
+      paramChecks:
+        - action: smart_lists.create_smart_list
+          param: name
+          equals: Hot SQLs
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='smart_list'"
+          countDelta: 1
+      behavior:
+        confirmation: false

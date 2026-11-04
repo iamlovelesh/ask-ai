@@ -1,0 +1,28 @@
+# Task 17 Batch A — category: direct, module: users.
+#
+# invite_user — literal `role` enum (['admin','sales_rep','support']).
+# (deactivate_user, the gated destructive action, is id-only with no
+# literal param a paramCheck could target — same reasoning as
+# direct-pipelines-001/direct-campaigns-001.)
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM users;  -> 40 (before)
+
+id: direct-users-001
+category: direct
+profile: standard
+turns:
+  - user: "Invite a new sales rep named Omar Castillo with email omar.castillo@company.com"
+    expect:
+      planActions:
+        mustInclude: [users.invite_user]
+        mustNotInclude: [users.deactivate_user]
+      paramChecks:
+        - action: users.invite_user
+          param: role
+          equals: sales_rep
+      state:
+        - query: "SELECT COUNT(*) AS n FROM users"
+          countDelta: 1
+      behavior:
+        confirmation: false

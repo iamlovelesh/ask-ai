@@ -1,0 +1,31 @@
+# Task 17 Batch A — category: direct, module: sms.
+#
+# send_sms is risk:'external' — ALWAYS gates per the unified confirmation
+# rule (executor.ts: risk in {destructive,bulk,external} => gate). The eval
+# runner auto-approves when `behavior.confirmation: true` is declared
+# (eval/runner.ts `driveTurn`), so the write is still expected to land.
+# Target contact referenced by unique email (contact display names collide
+# 10x in this seed — see direct-notes-001's comment).
+#
+# Derivation (template copy):
+#   SELECT id FROM contacts WHERE email='felix.lindqvist5370@company.com';
+#   -> con_5 (unique)
+#   SELECT COUNT(*) FROM messages WHERE channel='sms';  -> 7479 (before)
+
+id: direct-sms-001
+category: direct
+profile: standard
+turns:
+  - user: "Text the contact with email felix.lindqvist5370@company.com saying 'Your demo is confirmed for tomorrow at 2pm.'"
+    expect:
+      planActions:
+        mustInclude: [sms.send_sms]
+      paramChecks:
+        - action: sms.send_sms
+          param: body
+          contains: demo is confirmed
+      state:
+        - query: "SELECT COUNT(*) AS n FROM messages WHERE channel='sms'"
+          countDelta: 1
+      behavior:
+        confirmation: true

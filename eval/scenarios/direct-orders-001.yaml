@@ -1,0 +1,25 @@
+# Task 17 Batch A — category: direct, module: orders.
+#
+# Read, filtered by a literal `status` string.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM orders WHERE status='cancelled' AND archived=0;
+#   -> 136 (non-empty)
+
+id: direct-orders-001
+category: direct
+profile: standard
+turns:
+  - user: "Show me all cancelled orders"
+    expect:
+      planActions:
+        mustInclude: [orders.search_orders]
+      paramChecks:
+        - action: orders.search_orders
+          param: status
+          equals: cancelled
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [orders.search_orders]
+        mustNotClaim: [failed, error]

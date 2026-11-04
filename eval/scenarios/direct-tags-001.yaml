@@ -1,0 +1,32 @@
+# Task 17 Batch A — category: direct, module: tags.
+#
+# apply_tag_to_record (risk: write) with a literal `target_type` enum.
+# 'tag 3' is a uniquely-named tag definition (30 distinct names / 30 rows).
+# Target contact referenced by unique email (see direct-notes-001's
+# comment on why — contact display names collide 10x in this seed).
+#
+# Derivation (template copy):
+#   SELECT id, name FROM structures WHERE kind='tag' AND name='tag 3';
+#   -> struct_368, 'tag 3'
+#   SELECT tags FROM contacts WHERE id='con_1';  -> ["vip"]  (does not
+#   already contain 'tag 3')
+#   SELECT COUNT(*) FROM contacts WHERE id='con_1' AND tags LIKE '%tag 3%';
+#   -> 0 (before)
+
+id: direct-tags-001
+category: direct
+profile: standard
+turns:
+  - user: "Apply the 'tag 3' tag to the contact with email kenji.volkov2246@company.com"
+    expect:
+      planActions:
+        mustInclude: [tags.apply_tag_to_record]
+      paramChecks:
+        - action: tags.apply_tag_to_record
+          param: target_type
+          equals: contact
+      state:
+        - query: "SELECT COUNT(*) AS n FROM contacts WHERE id='con_1' AND tags LIKE '%tag 3%'"
+          countDelta: 1
+      behavior:
+        confirmation: false

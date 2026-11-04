@@ -1,0 +1,28 @@
+# Task 17 Batch A — category: unsupported, subtype: abstention, module
+# (adjacent): support_tickets.
+#
+# Adjacent-sounding: support_tickets DOES create/manage tickets, so a
+# literal reading of "open a ticket" sounds in-catalog. But the request is
+# specifically for a JIRA ticket (an external engineering tracker) — no
+# action in the catalog integrates with Jira or any external issue
+# tracker, so the planner must still abstain rather than silently
+# substitute `create_support_ticket`.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM support_tickets;  -> 370 (before)
+
+id: abstention-support_tickets-jira
+category: unsupported
+subtype: abstention
+profile: standard
+turns:
+  - user: "Open a Jira ticket for engineering about the bug this customer reported"
+    expect:
+      behavior:
+        confirmation: false
+        status: refused
+      state:
+        - query: "SELECT COUNT(*) AS n FROM support_tickets"
+          countDelta: 0
+      response:
+        mustNotClaim: [opened, created, done]

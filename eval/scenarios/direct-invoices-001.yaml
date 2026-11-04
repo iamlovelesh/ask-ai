@@ -1,0 +1,26 @@
+# Task 17 Batch A — category: direct, module: invoices.
+#
+# create_invoice — literal `currency`. Contact referenced by unique email
+# (see direct-notes-001's comment on contact-name collisions).
+#
+# Derivation (template copy):
+#   SELECT id FROM contacts WHERE email='lucia.berg3024@yahoo.com';  -> con_7
+#   SELECT COUNT(*) FROM invoices;  -> 750 (before)
+
+id: direct-invoices-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a new USD invoice for the contact at lucia.berg3024@yahoo.com"
+    expect:
+      planActions:
+        mustInclude: [invoices.create_invoice]
+      paramChecks:
+        - action: invoices.create_invoice
+          param: currency
+          equals: USD
+      state:
+        - query: "SELECT COUNT(*) AS n FROM invoices"
+          countDelta: 1
+      behavior:
+        confirmation: false

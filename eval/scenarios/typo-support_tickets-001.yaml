@@ -1,0 +1,21 @@
+# Task 17 Batch A — category: direct, subtype: typo, module: support_tickets.
+#
+# Misspelled direct request ("Shw"/"urgnet"/"pirority"/"ticekts"/"stil
+# opne") — retrieval's fuzzy matching must still surface the right action.
+# Follows the typo-search-opportunities seed's shape exactly: no paramCheck
+# required, just mustInclude + confirmation:false + response grounding.
+
+id: typo-support_tickets-001
+category: direct
+subtype: typo
+profile: standard
+turns:
+  - user: "Shw me all urgnet pirority ticekts that are stil opne"
+    expect:
+      planActions:
+        mustInclude: [support_tickets.search_tickets]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [support_tickets.search_tickets]
+        mustNotClaim: [failed, error]

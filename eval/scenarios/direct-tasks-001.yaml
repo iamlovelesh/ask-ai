@@ -1,0 +1,26 @@
+# Task 17 Batch A — category: direct, module: tasks.
+#
+# Plain create with a literal enum param (priority). Task titles collide
+# heavily in the seed (15 distinct / 1500 rows) but that's irrelevant here
+# since this creates a brand-new row rather than looking one up.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM tasks;  -> 1500 (before)
+
+id: direct-tasks-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a high priority task to follow up on the renewal, due this Friday"
+    expect:
+      planActions:
+        mustInclude: [tasks.create_task]
+      paramChecks:
+        - action: tasks.create_task
+          param: priority
+          equals: high
+      state:
+        - query: "SELECT COUNT(*) AS n FROM tasks"
+          countDelta: 1
+      behavior:
+        confirmation: false

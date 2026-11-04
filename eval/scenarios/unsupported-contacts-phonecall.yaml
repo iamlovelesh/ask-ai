@@ -1,0 +1,25 @@
+# Task 17 Batch A — category: unsupported, module (adjacent): contacts.
+#
+# No catalog action places or conducts a live phone call (contacts has a
+# `phone` field but no "call" action) — a genuinely unsupported request.
+# `tasks` is the plausible table a mis-firing planner might instead write
+# to (e.g. "create a task to call them"), so that's what countDelta:0
+# checks.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM tasks;  -> 1500 (before)
+
+id: unsupported-contacts-phonecall
+category: unsupported
+profile: standard
+turns:
+  - user: "Please call the contact at kenji.volkov2246@company.com on the phone right now and tell me what he says"
+    expect:
+      behavior:
+        confirmation: false
+        status: refused
+      state:
+        - query: "SELECT COUNT(*) AS n FROM tasks"
+          countDelta: 0
+      response:
+        mustNotClaim: [called, done, completed successfully]

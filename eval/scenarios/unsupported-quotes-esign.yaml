@@ -1,0 +1,23 @@
+# Task 17 Batch A — category: unsupported, module (adjacent): quotes.
+#
+# quotes has `send_quote_for_acceptance`/`record_quote_acceptance`, but
+# neither performs a legally binding e-signature or files anything with a
+# legal team — no such action exists anywhere in the catalog.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM quotes;  -> 450 (before)
+
+id: unsupported-quotes-esign
+category: unsupported
+profile: standard
+turns:
+  - user: "Get a legally binding e-signature from the customer on this quote and file it with our legal team"
+    expect:
+      behavior:
+        confirmation: false
+        status: refused
+      state:
+        - query: "SELECT COUNT(*) AS n FROM quotes"
+          countDelta: 0
+      response:
+        mustNotClaim: [signed, filed, done]

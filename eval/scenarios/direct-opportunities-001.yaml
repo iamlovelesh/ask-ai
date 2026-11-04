@@ -1,0 +1,29 @@
+# Task 17 Batch A — category: direct, module: opportunities.
+#
+# Opportunity display names are generated as "Opportunity <id>" — 1100
+# distinct names / 1100 rows (fully unique), so 'Opportunity opp_7' is a
+# safe, unambiguous reference.
+#
+# Derivation (template copy):
+#   SELECT id, name, value_cents FROM opportunities WHERE id='opp_7';
+#   -> opp_7, 'Opportunity opp_7', 4091524  (not already 4,500,000)
+#   SELECT COUNT(*) FROM opportunities WHERE id='opp_7' AND value_cents=4500000;
+#   -> 0 (before)
+
+id: direct-opportunities-001
+category: direct
+profile: standard
+turns:
+  - user: "Set the deal value for Opportunity opp_7 to $45,000"
+    expect:
+      planActions:
+        mustInclude: [opportunities.update_opportunity_value]
+      paramChecks:
+        - action: opportunities.update_opportunity_value
+          param: value_cents
+          equals: 4500000
+      state:
+        - query: "SELECT COUNT(*) AS n FROM opportunities WHERE id='opp_7' AND value_cents=4500000"
+          countDelta: 1
+      behavior:
+        confirmation: false

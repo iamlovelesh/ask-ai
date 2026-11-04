@@ -1,0 +1,36 @@
+# Task 17 Batch A — category: ambiguous, module: subscriptions.
+#
+# Turn 1 establishes 150 ACTIVE subscriptions as candidates — a set, not a
+# single record. Turn 2's "Change the plan" (the task brief's own
+# canonical ambiguous example, applied to subscriptions) has no identifier
+# and no target plan, so the planner must clarify which subscription and
+# to what.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM subscriptions WHERE status='active';  -> 150
+#   (turn 1's read is non-empty)
+#   SELECT COUNT(*) FROM subscriptions;  -> 260 (before, for the zero-write check)
+
+id: ambiguous-subscriptions-001
+category: ambiguous
+profile: standard
+turns:
+  - user: "Find all active subscriptions"
+    expect:
+      planActions:
+        mustInclude: [subscriptions.search_subscriptions]
+      paramChecks:
+        - action: subscriptions.search_subscriptions
+          param: status
+          equals: active
+      behavior:
+        confirmation: false
+  - user: "Change the plan"
+    expect:
+      behavior:
+        confirmation: false
+        clarify: true
+        status: clarify
+      state:
+        - query: "SELECT COUNT(*) AS n FROM subscriptions"
+          countDelta: 0

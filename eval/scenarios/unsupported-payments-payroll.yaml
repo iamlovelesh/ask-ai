@@ -1,0 +1,23 @@
+# Task 17 Batch A — category: unsupported, module (adjacent): payments.
+#
+# payments handles simulated customer payment capture/allocation, not
+# employee payroll/compensation — no HR/payroll module exists in the
+# catalog at all.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM payments;  -> 900 (before)
+
+id: unsupported-payments-payroll
+category: unsupported
+profile: standard
+turns:
+  - user: "Process this month's payroll for the Enterprise Sales team"
+    expect:
+      behavior:
+        confirmation: false
+        status: refused
+      state:
+        - query: "SELECT COUNT(*) AS n FROM payments"
+          countDelta: 0
+      response:
+        mustNotClaim: [processed, paid, done]

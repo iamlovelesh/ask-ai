@@ -1,0 +1,23 @@
+# Task 17 Batch A — category: ambiguous, module: opportunities.
+#
+# "the deal" with no identifier, and 1100 open/closed opportunities exist
+# — the planner cannot resolve a single target, so it must clarify rather
+# than guess (or worse, act on an arbitrary match).
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM opportunities;  -> 1100 (before; plenty of
+#   candidates, confirming the ambiguity is real, not a seed-data fluke)
+
+id: ambiguous-opportunities-001
+category: ambiguous
+profile: standard
+turns:
+  - user: "Update the deal we're working on"
+    expect:
+      behavior:
+        confirmation: false
+        clarify: true
+        status: clarify
+      state:
+        - query: "SELECT COUNT(*) AS n FROM opportunities"
+          countDelta: 0

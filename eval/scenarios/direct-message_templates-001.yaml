@@ -1,0 +1,24 @@
+# Task 17 Batch A — category: direct, module: message_templates.
+#
+# create_message_template — literal `channel` enum (['sms','email']).
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM structures WHERE kind='template';  -> 30 (before)
+
+id: direct-message_templates-001
+category: direct
+profile: standard
+turns:
+  - user: "Create an email template called 'Welcome Series' with the subject 'Welcome aboard!'"
+    expect:
+      planActions:
+        mustInclude: [message_templates.create_message_template]
+      paramChecks:
+        - action: message_templates.create_message_template
+          param: channel
+          equals: email
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='template'"
+          countDelta: 1
+      behavior:
+        confirmation: false

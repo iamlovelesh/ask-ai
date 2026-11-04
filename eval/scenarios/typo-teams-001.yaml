@@ -1,0 +1,20 @@
+# Task 17 Batch A — category: direct, subtype: typo, module: teams.
+#
+# Misspelled direct request ("Waht"/"detials"/"Sles"). Team names are
+# unique in this seed (6 distinct / 6 rows), so 'Enterprise Sales'
+# resolves cleanly despite the typo.
+
+id: typo-teams-001
+category: direct
+subtype: typo
+profile: standard
+turns:
+  - user: "Waht are the detials for the Enterprise Sles team?"
+    expect:
+      planActions:
+        mustInclude: [teams.get_team_details]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [teams.get_team_details]
+        mustNotClaim: [failed, error]

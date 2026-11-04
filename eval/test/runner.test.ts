@@ -3,6 +3,11 @@
  * `eval/runner.ts`'s `parseArgs` (pure CLI parsing). No HTTP, no spawned
  * server — exactly the "resume skips completed tuples" + planning-logic
  * tests the brief's Step 1 calls for.
+ *
+ * `loadScenarios` below was authored against Task 16's 6 SEED scenarios
+ * only; Task 17 grows `eval/scenarios/` into the full corpus (Batch A adds
+ * 40 more atop those 6), so the length assertion is a lower bound (the 6
+ * seeds must still be present and loadable) rather than an exact count.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -32,7 +37,7 @@ function scenario(id: string, category: Scenario['category'] = 'direct'): Scenar
 describe('loadScenarios', () => {
   it('loads and validates every seed scenario YAML', () => {
     const scenarios = loadScenarios(new URL('../scenarios', import.meta.url).pathname);
-    expect(scenarios.length).toBe(6);
+    expect(scenarios.length).toBeGreaterThanOrEqual(6);
     expect(scenarios.map((s) => s.id)).toContain('multistep-lead-sweep');
     // sorted by id
     const ids = scenarios.map((s) => s.id);

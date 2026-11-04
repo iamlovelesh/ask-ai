@@ -1,0 +1,21 @@
+# Task 17 Batch A — category: ambiguous, module: tasks.
+#
+# "the task" with no identifier — 1500 tasks exist, 845 of them not yet
+# completed, so there is no single obvious target.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM tasks WHERE status='completed';  -> 655 (before)
+
+id: ambiguous-tasks-001
+category: ambiguous
+profile: standard
+turns:
+  - user: "Mark the task as complete"
+    expect:
+      behavior:
+        confirmation: false
+        clarify: true
+        status: clarify
+      state:
+        - query: "SELECT COUNT(*) AS n FROM tasks WHERE status='completed'"
+          countDelta: 0

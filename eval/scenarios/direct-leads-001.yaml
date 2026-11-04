@@ -1,0 +1,29 @@
+# Task 17 Batch A — category: direct, module: leads.
+#
+# Plain create — no lookup/disambiguation needed, so a brand-new literal
+# name is safe even though contact names in this seed collide heavily.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM leads;  -> 5000 (before)
+
+id: direct-leads-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a new lead named Priya Shah, sourced from our website"
+    expect:
+      planActions:
+        mustInclude: [leads.create_lead]
+        mustNotInclude: [leads.search_leads]
+      paramChecks:
+        - action: leads.create_lead
+          param: source
+          equals: website
+        - action: leads.create_lead
+          param: name
+          contains: Priya Shah
+      state:
+        - query: "SELECT COUNT(*) AS n FROM leads"
+          countDelta: 1
+      behavior:
+        confirmation: false

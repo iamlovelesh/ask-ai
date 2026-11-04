@@ -1,0 +1,30 @@
+# Task 17 Batch A — category: direct, module: availability.
+#
+# block_time_range — literal `reason`, stored inside the calendar's
+# `structures.config` JSON (no dedicated row/table), so the state check
+# greps `config` directly.
+#
+# Derivation (template copy):
+#   SELECT id, name, config FROM structures WHERE kind='calendar' AND name='calendar 4';
+#   -> struct_179, 'calendar 4', {"seeded":true,"kind":"calendar"}  (no
+#      'team offsite' block already present)
+#   SELECT COUNT(*) FROM structures WHERE id='struct_179' AND config LIKE '%team offsite%';
+#   -> 0 (before)
+
+id: direct-availability-001
+category: direct
+profile: standard
+turns:
+  - user: "Block out time on calendar 4 for a reason of 'team offsite'"
+    expect:
+      planActions:
+        mustInclude: [availability.block_time_range]
+      paramChecks:
+        - action: availability.block_time_range
+          param: reason
+          equals: team offsite
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE id='struct_179' AND config LIKE '%team offsite%'"
+          countDelta: 1
+      behavior:
+        confirmation: false

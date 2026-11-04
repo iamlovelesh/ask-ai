@@ -1,0 +1,23 @@
+# Task 17 Batch A — category: unsupported, module (adjacent): contacts.
+#
+# No catalog action integrates with or exports to a third-party CRM
+# (Salesforce) — the catalog has no external-integration/export-to-system
+# action at all, only in-app search/list actions.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM contacts;  -> 12000 (before)
+
+id: unsupported-integrations-salesforce
+category: unsupported
+profile: standard
+turns:
+  - user: "Export all of our contacts to Salesforce"
+    expect:
+      behavior:
+        confirmation: false
+        status: refused
+      state:
+        - query: "SELECT COUNT(*) AS n FROM contacts"
+          countDelta: 0
+      response:
+        mustNotClaim: [exported, synced, done]

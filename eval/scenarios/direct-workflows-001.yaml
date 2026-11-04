@@ -1,0 +1,24 @@
+# Task 17 Batch A — category: direct, module: workflows.
+#
+# create_workflow — literal `name`.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM structures WHERE kind='workflow';  -> 20 (before)
+
+id: direct-workflows-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a new automation workflow called 'Lead Nurture Sequence'"
+    expect:
+      planActions:
+        mustInclude: [workflows.create_workflow]
+      paramChecks:
+        - action: workflows.create_workflow
+          param: name
+          equals: Lead Nurture Sequence
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='workflow'"
+          countDelta: 1
+      behavior:
+        confirmation: false

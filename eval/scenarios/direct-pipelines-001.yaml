@@ -1,0 +1,32 @@
+# Task 17 Batch A — category: direct, module: pipelines.
+#
+# add_pipeline_stage (risk: write, NOT gated) rather than archive_pipeline —
+# archive/remove-stage actions here are id-only inputs with no literal
+# param a paramCheck could target; add_pipeline_stage's `stage` name IS a
+# plain literal the planner must copy from the prompt. Pipeline names are
+# fully unique (10 distinct / 10 rows).
+#
+# Derivation (template copy):
+#   SELECT id, name, config FROM structures WHERE kind='pipeline' AND name='pipeline 2';
+#   -> struct_167, 'pipeline 2', {"seeded":true,"kind":"pipeline"}  (no
+#      'contract sent' stage already present)
+#   SELECT COUNT(*) FROM structures WHERE id='struct_167' AND config LIKE '%contract sent%';
+#   -> 0 (before)
+
+id: direct-pipelines-001
+category: direct
+profile: standard
+turns:
+  - user: "Add a 'contract sent' stage to the pipeline 2 sales pipeline"
+    expect:
+      planActions:
+        mustInclude: [pipelines.add_pipeline_stage]
+      paramChecks:
+        - action: pipelines.add_pipeline_stage
+          param: stage
+          equals: contract sent
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE id='struct_167' AND config LIKE '%contract sent%'"
+          countDelta: 1
+      behavior:
+        confirmation: false

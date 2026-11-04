@@ -1,0 +1,30 @@
+# Task 17 Batch A — category: direct, module: notes.
+#
+# Contact names collide heavily in the seed (1200 distinct / 12000 rows —
+# every name appears ~10x), so this scenario references the target contact
+# by EMAIL (unique: `SELECT COUNT(*) FROM contacts WHERE email=...` = 1)
+# rather than by display name, to keep the resolution genuinely
+# unambiguous.
+#
+# Derivation (template copy):
+#   SELECT id, name, email FROM contacts WHERE email='kenji.volkov2246@company.com';
+#   -> con_1, 'Kenji Volkov'  (unique)
+#   SELECT COUNT(*) FROM notes;  -> 1100 (before)
+
+id: direct-notes-001
+category: direct
+profile: standard
+turns:
+  - user: "Add a note on the contact with email kenji.volkov2246@company.com saying he's ready to sign this week"
+    expect:
+      planActions:
+        mustInclude: [notes.create_note]
+      paramChecks:
+        - action: notes.create_note
+          param: body
+          contains: ready to sign
+      state:
+        - query: "SELECT COUNT(*) AS n FROM notes"
+          countDelta: 1
+      behavior:
+        confirmation: false

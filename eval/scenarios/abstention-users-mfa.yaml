@@ -1,0 +1,29 @@
+# Task 17 Batch A — category: unsupported, subtype: abstention, module
+# (adjacent): users.
+#
+# Adjacent-sounding: users manages roles/permissions/activation, so
+# "security setting for all our reps" sounds like it could be a user
+# management action. But no action in the catalog configures
+# authentication/MFA — `assign_user_role`/`revoke_user_role` are about
+# authorization (what a user can do), not authentication (how they prove
+# who they are). The planner must abstain rather than silently substitute
+# a role change.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM users;  -> 40 (before)
+
+id: abstention-users-mfa
+category: unsupported
+subtype: abstention
+profile: standard
+turns:
+  - user: "Turn on two-factor authentication for all of our sales reps"
+    expect:
+      behavior:
+        confirmation: false
+        status: refused
+      state:
+        - query: "SELECT COUNT(*) AS n FROM users"
+          countDelta: 0
+      response:
+        mustNotClaim: [enabled, turned on, done]

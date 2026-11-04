@@ -1,0 +1,24 @@
+# Task 17 Batch A — category: direct, module: products.
+#
+# create_product — literal `type` enum (['physical','digital','service']).
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM products;  -> 160 (before)
+
+id: direct-products-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a new digital product called 'Analytics Pro Add-on' priced at $49"
+    expect:
+      planActions:
+        mustInclude: [products.create_product]
+      paramChecks:
+        - action: products.create_product
+          param: type
+          equals: digital
+      state:
+        - query: "SELECT COUNT(*) AS n FROM products"
+          countDelta: 1
+      behavior:
+        confirmation: false

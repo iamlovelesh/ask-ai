@@ -1,0 +1,22 @@
+# Task 17 Batch A — category: unsupported, module (adjacent): blogs.
+#
+# The catalog has website/blog/landing-page publishing actions but no
+# social-media posting integration (Instagram or otherwise) anywhere.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM content_items WHERE kind='blog_post';  -> 49 (before)
+
+id: unsupported-blogs-social
+category: unsupported
+profile: standard
+turns:
+  - user: "Post this announcement to our company Instagram account"
+    expect:
+      behavior:
+        confirmation: false
+        status: refused
+      state:
+        - query: "SELECT COUNT(*) AS n FROM content_items WHERE kind='blog_post'"
+          countDelta: 0
+      response:
+        mustNotClaim: [posted, published, done]

@@ -1,0 +1,27 @@
+# Task 17 Batch A — category: direct, module: contacts.
+#
+# Single-action read, filtered by lifecycle_stage (an enum-ish literal the
+# planner must extract verbatim from "customer").
+#
+# Derivation (template copy, /private/tmp/.../scratchpad/db/copy.db):
+#   SELECT COUNT(*) FROM contacts WHERE lifecycle_stage='customer' AND archived=0;
+#   -> 1757 (non-empty, so the read has something real to return).
+
+id: direct-contacts-001
+category: direct
+profile: standard
+turns:
+  - user: "Show me all contacts who are at the customer lifecycle stage"
+    expect:
+      planActions:
+        mustInclude: [contacts.search_contacts]
+        mustNotInclude: [contacts.create_contact, contacts.archive_contact]
+      paramChecks:
+        - action: contacts.search_contacts
+          param: lifecycle_stage
+          equals: customer
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [contacts.search_contacts]
+        mustNotClaim: [failed, error]

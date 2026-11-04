@@ -1,0 +1,19 @@
+# Task 17 Batch A — category: direct, subtype: typo, module: quotes.
+#
+# Misspelled direct request ("Creat"/"qoute"). Contact referenced by
+# unique email (see direct-notes-001's comment on contact-name collisions).
+
+id: typo-quotes-001
+category: direct
+subtype: typo
+profile: standard
+turns:
+  - user: "Creat a new qoute for the contact at lucia.berg3024@yahoo.com"
+    expect:
+      planActions:
+        mustInclude: [quotes.create_quote]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [quotes.create_quote]
+        mustNotClaim: [failed, error]

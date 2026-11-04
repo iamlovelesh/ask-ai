@@ -1,0 +1,23 @@
+# Task 17 Batch A — category: unsupported, module (adjacent): orders.
+#
+# orders tracks fulfillment status (`mark_order_fulfilled`) but has no
+# carrier integration — no action prints a physical shipping label or
+# books a FedEx pickup anywhere in the catalog.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM orders;  -> 750 (before)
+
+id: unsupported-orders-shipping
+category: unsupported
+profile: standard
+turns:
+  - user: "Print a shipping label and schedule a FedEx pickup for order O-3006"
+    expect:
+      behavior:
+        confirmation: false
+        status: refused
+      state:
+        - query: "SELECT COUNT(*) AS n FROM orders"
+          countDelta: 0
+      response:
+        mustNotClaim: [printed, scheduled, done]

@@ -1,0 +1,21 @@
+# Task 17 Batch A — category: ambiguous, module: appointments.
+#
+# "the appointment" with no identifier — 750 appointments exist (390
+# booked), so there's no single obvious target to reschedule.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM appointments;  -> 750 (before)
+
+id: ambiguous-appointments-001
+category: ambiguous
+profile: standard
+turns:
+  - user: "Reschedule the appointment"
+    expect:
+      behavior:
+        confirmation: false
+        clarify: true
+        status: clarify
+      state:
+        - query: "SELECT COUNT(*) AS n FROM appointments"
+          countDelta: 0

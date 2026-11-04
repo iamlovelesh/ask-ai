@@ -1,0 +1,19 @@
+# Task 17 Batch A — category: direct, subtype: typo, module: calendars.
+#
+# Misspelled direct request ("calender"/"too"). Calendar names are unique
+# in this seed (10 distinct / 10 rows), so 'calendar 5' resolves cleanly.
+
+id: typo-calendars-001
+category: direct
+subtype: typo
+profile: standard
+turns:
+  - user: "Rename calender 'calendar 5' too 'Enterprise Demos'"
+    expect:
+      planActions:
+        mustInclude: [calendars.update_calendar_details]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [calendars.update_calendar_details]
+        mustNotClaim: [failed, error]

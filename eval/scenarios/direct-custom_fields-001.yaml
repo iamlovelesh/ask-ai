@@ -1,0 +1,25 @@
+# Task 17 Batch A — category: direct, module: custom_fields.
+#
+# create_custom_field — literal `field_type` enum (one of
+# ['text','number','date','dropdown','boolean']).
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM structures WHERE kind='custom_field';  -> 20 (before)
+
+id: direct-custom_fields-001
+category: direct
+profile: standard
+turns:
+  - user: "Add a dropdown custom field called 'Renewal Risk' to the opportunities module"
+    expect:
+      planActions:
+        mustInclude: [custom_fields.create_custom_field]
+      paramChecks:
+        - action: custom_fields.create_custom_field
+          param: field_type
+          equals: dropdown
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='custom_field'"
+          countDelta: 1
+      behavior:
+        confirmation: false

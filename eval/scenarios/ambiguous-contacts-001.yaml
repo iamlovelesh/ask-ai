@@ -1,0 +1,22 @@
+# Task 17 Batch A — category: ambiguous, module: contacts.
+#
+# "their email address" with no antecedent at all (no prior turn in this
+# session established who "they" are) — the planner must ask who, not
+# guess among 12000 contacts.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM contacts;  -> 12000 (before)
+
+id: ambiguous-contacts-001
+category: ambiguous
+profile: standard
+turns:
+  - user: "Change their email address"
+    expect:
+      behavior:
+        confirmation: false
+        clarify: true
+        status: clarify
+      state:
+        - query: "SELECT COUNT(*) AS n FROM contacts"
+          countDelta: 0

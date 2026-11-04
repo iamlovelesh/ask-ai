@@ -1,0 +1,28 @@
+# Task 17 Batch A — category: direct, module: conversations.
+#
+# Read, filtered by two literal enums (channel, status).
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM conversations WHERE channel='sms' AND status='open' AND archived=0;
+#   -> 189 (non-empty)
+
+id: direct-conversations-001
+category: direct
+profile: standard
+turns:
+  - user: "Show me all open SMS conversations"
+    expect:
+      planActions:
+        mustInclude: [conversations.search_conversations]
+      paramChecks:
+        - action: conversations.search_conversations
+          param: channel
+          equals: sms
+        - action: conversations.search_conversations
+          param: status
+          equals: open
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [conversations.search_conversations]
+        mustNotClaim: [failed, error]

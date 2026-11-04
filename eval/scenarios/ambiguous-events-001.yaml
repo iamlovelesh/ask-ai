@@ -1,0 +1,35 @@
+# Task 17 Batch A — category: ambiguous, module: events.
+#
+# Turn 1 establishes a SET of candidate events (18 published), not a
+# single one. Turn 2's "Register them for it" is ambiguous on BOTH axes —
+# which event ("it"), and who ("them") — so the planner must clarify
+# rather than pick an arbitrary event/attendee pairing.
+#
+# Derivation (template copy):
+#   SELECT status, COUNT(*) FROM events GROUP BY status;
+#   -> published|18 (turn 1's read is non-empty)
+#   SELECT COUNT(*) FROM participations WHERE kind='event_registration';
+#   -> 300 (before)
+
+id: ambiguous-events-001
+category: ambiguous
+profile: standard
+turns:
+  - user: "Show me upcoming published events"
+    expect:
+      planActions:
+        mustInclude: [events.search_events]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [events.search_events]
+        mustNotClaim: [failed, error]
+  - user: "Register them for it"
+    expect:
+      behavior:
+        confirmation: false
+        clarify: true
+        status: clarify
+      state:
+        - query: "SELECT COUNT(*) AS n FROM participations WHERE kind='event_registration'"
+          countDelta: 0
