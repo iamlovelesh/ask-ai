@@ -29,6 +29,9 @@ export type ValidationErrorCode =
   | 'FOREACH_NOT_REF'
   | 'UNKNOWN_DEP'
   | 'UNKNOWN_HANDLE'
+  | 'UNKNOWN_STEP_REF'
+  | 'DUPLICATE_STEP_ID'
+  | 'MISSING_DEPENDENCY'
   | 'CYCLE';
 
 export interface ValidationError {
@@ -195,6 +198,26 @@ function topoSort(steps: readonly Step[]): { ok: true; order: string[] } | { ok:
   return { ok: true, order };
 }
 
+/** All step ids transitively reachable from `stepId` via `dependsOn` edges
+ * (direct + indirect). Safe against cycles (bounded by a visited set — a
+ * cyclic graph is ALSO reported via `CYCLE` separately, so precise
+ * behavior here doesn't matter for the overall `ok` verdict, only that it
+ * terminates). Ignores `dependsOn` entries that aren't real step ids
+ * (those are already reported via `UNKNOWN_DEP`). */
+function transitiveDeps(stepId: string, dependsOnById: ReadonlyMap<string, readonly string[]>): Set<string> {
+  const visited = new Set<string>();
+  const queue: string[] = [...(dependsOnById.get(stepId) ?? [])];
+  while (queue.length > 0) {
+    const id = queue.shift() as string;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    for (const dep of dependsOnById.get(id) ?? []) {
+      if (!visited.has(dep)) queue.push(dep);
+    }
+  }
+  return visited;
+}
+
 // --- plan hash (sha256 of sorted-keys JSON) ---------------------------------
 
 function sortKeysDeep(value: unknown): unknown {
@@ -260,10 +283,34 @@ export function validate(
 
   const { plan } = parsedOutcome;
   const errors: ValidationError[] = [];
+
+  // 0. duplicate step ids. The executor keys results/idempotency by
+  //    stepId (LLD §5.3 `idempotencyKey = turnId:planRev:stepId:itemIndex`)
+  //    — a silent `Set`-dedup here would let two different steps collide
+  //    on the same key downstream. Reported but non-fatal to the rest of
+  //    this pass (everything below still runs; `errors.length > 0` already
+  //    guarantees `ok:false`).
+  const idCounts = new Map<string, number>();
+  for (const s of plan.steps) idCounts.set(s.id, (idCounts.get(s.id) ?? 0) + 1);
+  for (const [id, count] of idCounts) {
+    if (count > 1) {
+      errors.push({
+        code: 'DUPLICATE_STEP_ID',
+        stepId: id,
+        message: `Step id '${id}' is used by ${count} different steps — step ids must be unique within a plan.`,
+      });
+    }
+  }
+
   const stepIds = new Set(plan.steps.map((s) => s.id));
   const handleIds = new Set(handles.map((h) => h.ref));
+  const dependsOnById = new Map<string, readonly string[]>(plan.steps.map((s) => [s.id, s.dependsOn]));
 
-  function checkRef(ref: string, step: Step, context: string): void {
+  /** Grammar + handle + dependency-closure checks for a single ref string,
+   * shared by params and `when.ref`. `reachable` = every step id this
+   * `step` can see via `dependsOn` (direct or transitive) — see
+   * `transitiveDeps`. */
+  function checkRef(ref: string, step: Step, context: string, reachable: ReadonlySet<string>): void {
     const parsed = parseRefGrammar(ref);
     if (!parsed) {
       errors.push({
@@ -287,9 +334,36 @@ export function validate(
         message: `${context}: '${ref}' references unknown cross-turn handle '${parsed.handleId}' (not in WorkingState).`,
       });
     }
+    if (parsed.form === 'step') {
+      if (!stepIds.has(parsed.stepId)) {
+        // CRITICAL fix: a dangling intra-plan ref (no step with this id
+        // exists AT ALL) previously passed silently — `checkRef` only
+        // branched on item/crossTurn forms, never checking a 'step' form
+        // ref against the plan's own step ids.
+        errors.push({
+          code: 'UNKNOWN_STEP_REF',
+          stepId: step.id,
+          message: `${context}: '${ref}' references step '${parsed.stepId}', which does not exist in this plan.`,
+        });
+      } else if (!reachable.has(parsed.stepId)) {
+        // The step exists, but this step never declared a (transitive)
+        // dependency on it. Strata are scheduled from `dependsOn` alone,
+        // never by ref-scanning params — so without this, the executor
+        // could schedule this step before/alongside its ref target and
+        // hit an unresolved-ref failure AT RUN TIME instead of here,
+        // before execution ever starts.
+        errors.push({
+          code: 'MISSING_DEPENDENCY',
+          stepId: step.id,
+          message: `${context}: '${ref}' references step '${parsed.stepId}', but step '${step.id}' does not depend on '${parsed.stepId}' (directly or transitively) — add '${parsed.stepId}' to step '${step.id}'s dependsOn.`,
+        });
+      }
+    }
   }
 
   for (const step of plan.steps) {
+    const reachable = transitiveDeps(step.id, dependsOnById);
+
     // 1. unknown slug (catalog, not shortlist) — never throws, always a
     //    repairable error.
     const action = registry.get(step.action);
@@ -324,32 +398,52 @@ export function validate(
       }
     }
 
-    // 3. ref grammar over params + when.
+    // 3. ref grammar + dependency-closure over params.
     for (const ref of collectRefStrings(step.params)) {
-      checkRef(ref, step, `Step '${step.id}' params`);
+      checkRef(ref, step, `Step '${step.id}' params`, reachable);
     }
+    // `when`: grammar/handle/dependency enforcement is scoped to
+    // `when.ref` ONLY. `when.value` is an opaque literal comparison value
+    // (e.g. `{ref:'$s1.total', op:'gt', value:'$100'}` — "$100" is a
+    // perfectly plausible dollar-amount literal in this CRM, not a
+    // malformed ref) — sweeping the whole `when` object previously made
+    // that a spurious REF_GRAMMAR failure.
     if (step.when) {
-      for (const ref of collectRefStrings(step.when)) {
-        checkRef(ref, step, `Step '${step.id}' when`);
-      }
+      checkRef(step.when.ref, step, `Step '${step.id}' when.ref`, reachable);
     }
 
     // 4. forEach target must itself be a ref (and not $item — you cannot
-    //    fan out over the current item of a fan-out you're declaring).
+    //    fan out over the current item of a fan-out you're declaring),
+    //    subject to the same handle/dependency-closure rules as any other
+    //    step ref.
     if (step.forEach !== undefined) {
-      const parsed = parseRefGrammar(step.forEach);
-      if (!parsed || parsed.form === 'item') {
+      const parsedForEach = parseRefGrammar(step.forEach);
+      if (!parsedForEach || parsedForEach.form === 'item') {
         errors.push({
           code: 'FOREACH_NOT_REF',
           stepId: step.id,
           message: `Step '${step.id}': forEach target '${step.forEach}' must be a $sN or $r_t<T>_s<N> ref.`,
         });
-      } else if (parsed.form === 'crossTurn' && !handleIds.has(parsed.handleId)) {
+      } else if (parsedForEach.form === 'crossTurn' && !handleIds.has(parsedForEach.handleId)) {
         errors.push({
           code: 'UNKNOWN_HANDLE',
           stepId: step.id,
-          message: `Step '${step.id}': forEach '${step.forEach}' references unknown cross-turn handle '${parsed.handleId}'.`,
+          message: `Step '${step.id}': forEach '${step.forEach}' references unknown cross-turn handle '${parsedForEach.handleId}'.`,
         });
+      } else if (parsedForEach.form === 'step') {
+        if (!stepIds.has(parsedForEach.stepId)) {
+          errors.push({
+            code: 'UNKNOWN_STEP_REF',
+            stepId: step.id,
+            message: `Step '${step.id}': forEach '${step.forEach}' references step '${parsedForEach.stepId}', which does not exist in this plan.`,
+          });
+        } else if (!reachable.has(parsedForEach.stepId)) {
+          errors.push({
+            code: 'MISSING_DEPENDENCY',
+            stepId: step.id,
+            message: `Step '${step.id}': forEach '${step.forEach}' references step '${parsedForEach.stepId}', but does not depend on it (directly or transitively) — add '${parsedForEach.stepId}' to dependsOn.`,
+          });
+        }
       }
     }
 

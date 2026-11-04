@@ -217,6 +217,190 @@ describe('validator — cycle detection', () => {
     const result = validate(outcome, new Set(), noHandles(), conformanceRegistry);
     expect(result.ok).toBe(true);
   });
+
+  it('errors with CYCLE on a self-reference (a step depending on itself)', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: { goal: 'g', steps: [{ id: 's1', action: 'users.list_users', params: {}, dependsOn: ['s1'] }] },
+    };
+    const result = validate(outcome, new Set(), noHandles(), conformanceRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'CYCLE')).toBe(true);
+    }
+  });
+});
+
+describe('validator — dangling step ref (Review Focus: CRITICAL)', () => {
+  it('a $sN ref to a step id that does not exist anywhere in the plan is UNKNOWN_STEP_REF', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          {
+            id: 's1',
+            action: 'leads.search_leads',
+            params: { created_after: '$s99.value' },
+            dependsOn: [],
+          },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), conformanceRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'UNKNOWN_STEP_REF')).toBe(true);
+      // must NOT also silently pass through as ok:true — this was the bug.
+      expect(result.errors.some((e) => e.code === 'REF_GRAMMAR')).toBe(false);
+    }
+  });
+
+  it('a forEach target pointing at a nonexistent step id is also UNKNOWN_STEP_REF', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [{ id: 's1', action: 'tasks.create_task', params: {}, dependsOn: [], forEach: '$s99.items' }],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), conformanceRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'UNKNOWN_STEP_REF')).toBe(true);
+    }
+  });
+});
+
+describe('validator — duplicate step ids (Review Focus: Important)', () => {
+  it('two steps sharing the same id is DUPLICATE_STEP_ID, not a silent collapse', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'users.list_users', params: {}, dependsOn: [] },
+          { id: 's1', action: 'users.list_users', params: {}, dependsOn: [] },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), conformanceRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'DUPLICATE_STEP_ID')).toBe(true);
+    }
+  });
+});
+
+describe('validator — ref must be within the referencing step\'s dependsOn closure (Review Focus: Important)', () => {
+  it('a ref to a step that exists but is not in dependsOn (directly or transitively) is MISSING_DEPENDENCY', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'users.list_users', params: {}, dependsOn: [] },
+          {
+            id: 's2',
+            action: 'leads.search_leads',
+            params: { created_after: '$s1.now' },
+            dependsOn: [], // BUG: refs $s1 but never declares the dependency
+          },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), conformanceRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'MISSING_DEPENDENCY')).toBe(true);
+    }
+  });
+
+  it('a ref satisfied via a TRANSITIVE dependency (s3 deps s2 deps s1, s3 refs $s1) is VALID', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'users.list_users', params: {}, dependsOn: [] },
+          { id: 's2', action: 'users.list_users', params: {}, dependsOn: ['s1'] },
+          {
+            id: 's3',
+            action: 'leads.search_leads',
+            params: { created_after: '$s1.now' },
+            dependsOn: ['s2'],
+          },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), conformanceRegistry);
+    expect(result.ok).toBe(true);
+  });
+
+  it('the same rule applies to a forEach target, not just params', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'users.list_users', params: {}, dependsOn: [] },
+          { id: 's2', action: 'tasks.create_task', params: {}, dependsOn: [], forEach: '$s1.items' },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), conformanceRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'MISSING_DEPENDENCY')).toBe(true);
+    }
+  });
+});
+
+describe('validator — when.value is an opaque literal (Review Focus: Important)', () => {
+  it('a dollar-amount literal in when.value ("$100") is NOT treated as a malformed ref', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'users.list_users', params: {}, dependsOn: [] },
+          {
+            id: 's2',
+            action: 'users.list_users',
+            params: {},
+            dependsOn: ['s1'],
+            when: { ref: '$s1.total', op: 'gt', value: '$100' },
+          },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), conformanceRegistry);
+    expect(result.ok).toBe(true);
+  });
+
+  it('when.ref itself is still grammar-checked', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'users.list_users', params: {}, dependsOn: [] },
+          {
+            id: 's2',
+            action: 'users.list_users',
+            params: {},
+            dependsOn: ['s1'],
+            when: { ref: '$turn1.s1', op: 'nonempty' },
+          },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), conformanceRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'REF_GRAMMAR')).toBe(true);
+    }
+  });
 });
 
 describe('validator — other outcome kinds pass through without plan-shaped checks', () => {
