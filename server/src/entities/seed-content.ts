@@ -93,6 +93,7 @@ export function generateParticipations(
   eventIds: string[],
   courseIds: string[],
   communityIds: string[],
+  membershipPlanIds: string[],
   countPerKind: { eventRegistration: number; enrollment: number; membership: number; communityMember: number },
 ): void {
   for (let i = 0; i < countPerKind.eventRegistration; i++) {
@@ -151,8 +152,8 @@ export function generateParticipations(
       archived: 0,
       kind: 'membership',
       contact_id: pick(ctx, contactIds),
-      parent_type: 'community',
-      parent_id: pick(ctx, communityIds),
+      parent_type: 'membership_plan',
+      parent_id: pick(ctx, membershipPlanIds),
       status,
       waitlisted: 0,
       role: null,

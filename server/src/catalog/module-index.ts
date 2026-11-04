@@ -56,6 +56,22 @@ import { m31Coupons, m31DiscriminationChecks, m31SynthHints } from './m31-coupon
 import { m32Orders, m32DiscriminationChecks, m32SynthHints } from './m32-orders.js';
 import { m33Refunds, m33DiscriminationChecks, m33SynthHints } from './m33-refunds.js';
 import { m34TaxRules, m34DiscriminationChecks, m34SynthHints } from './m34-tax_rules.js';
+import { m35Websites, m35DiscriminationChecks, m35SynthHints } from './m35-websites.js';
+import { m36Funnels, m36DiscriminationChecks, m36SynthHints } from './m36-funnels.js';
+import { m37LandingPages, m37DiscriminationChecks, m37SynthHints } from './m37-landing_pages.js';
+import { m38Blogs, m38DiscriminationChecks, m38SynthHints } from './m38-blogs.js';
+import { m39MediaAssets, m39DiscriminationChecks, m39SynthHints } from './m39-media_assets.js';
+import { m40Courses, m40DiscriminationChecks, m40SynthHints } from './m40-courses.js';
+import { m41Lessons, m41DiscriminationChecks, m41SynthHints } from './m41-lessons.js';
+import { m42Enrollments, m42DiscriminationChecks, m42SynthHints } from './m42-enrollments.js';
+import { m43Communities, m43DiscriminationChecks, m43SynthHints } from './m43-communities.js';
+import { m44Memberships, m44DiscriminationChecks, m44SynthHints } from './m44-memberships.js';
+import { m45Reviews, m45DiscriminationChecks, m45SynthHints } from './m45-reviews.js';
+import { m46BusinessListings, m46DiscriminationChecks, m46SynthHints } from './m46-business_listings.js';
+import { m47SupportTickets, m47DiscriminationChecks, m47SynthHints } from './m47-support_tickets.js';
+import { m48Users, m48DiscriminationChecks, m48SynthHints } from './m48-users.js';
+import { m49Teams, m49DiscriminationChecks, m49SynthHints } from './m49-teams.js';
+import { m50Reports, m50DiscriminationChecks, m50SynthHints } from './m50-reports.js';
 
 /** One entry per module file, in M01…M50 order. */
 export const MODULE_ACTION_ARRAYS: readonly ActionDef[][] = [
@@ -93,6 +109,22 @@ export const MODULE_ACTION_ARRAYS: readonly ActionDef[][] = [
   m32Orders,
   m33Refunds,
   m34TaxRules,
+  m35Websites,
+  m36Funnels,
+  m37LandingPages,
+  m38Blogs,
+  m39MediaAssets,
+  m40Courses,
+  m41Lessons,
+  m42Enrollments,
+  m43Communities,
+  m44Memberships,
+  m45Reviews,
+  m46BusinessListings,
+  m47SupportTickets,
+  m48Users,
+  m49Teams,
+  m50Reports,
 ];
 
 /** One entry per module file's `discriminationChecks` export, flattened. */
@@ -131,6 +163,22 @@ export const MODULE_DISCRIMINATION_CHECKS: readonly DiscriminationCheck[] = [
   ...m32DiscriminationChecks,
   ...m33DiscriminationChecks,
   ...m34DiscriminationChecks,
+  ...m35DiscriminationChecks,
+  ...m36DiscriminationChecks,
+  ...m37DiscriminationChecks,
+  ...m38DiscriminationChecks,
+  ...m39DiscriminationChecks,
+  ...m40DiscriminationChecks,
+  ...m41DiscriminationChecks,
+  ...m42DiscriminationChecks,
+  ...m43DiscriminationChecks,
+  ...m44DiscriminationChecks,
+  ...m45DiscriminationChecks,
+  ...m46DiscriminationChecks,
+  ...m47DiscriminationChecks,
+  ...m48DiscriminationChecks,
+  ...m49DiscriminationChecks,
+  ...m50DiscriminationChecks,
 ];
 
 /**
@@ -176,4 +224,20 @@ export const MODULE_SYNTH_HINTS: Readonly<SynthHints> = {
   ...m32SynthHints,
   ...m33SynthHints,
   ...m34SynthHints,
+  ...m35SynthHints,
+  ...m36SynthHints,
+  ...m37SynthHints,
+  ...m38SynthHints,
+  ...m39SynthHints,
+  ...m40SynthHints,
+  ...m41SynthHints,
+  ...m42SynthHints,
+  ...m43SynthHints,
+  ...m44SynthHints,
+  ...m45SynthHints,
+  ...m46SynthHints,
+  ...m47SynthHints,
+  ...m48SynthHints,
+  ...m49SynthHints,
+  ...m50SynthHints,
 };

@@ -111,6 +111,7 @@ export function seedStandard(crm: Crm, seed = 42): SeedSummary {
     const websiteIds = structures.byKind.get('website') ?? [];
     const funnelIds = structures.byKind.get('funnel') ?? [];
     const communityIds = structures.byKind.get('community') ?? [];
+    const membershipPlanIds = structures.byKind.get('membership_plan') ?? [];
     const businessListingIds = structures.byKind.get('business_listing') ?? [];
 
     generateLeads(ctx, contactIds, users.salesRepIds, campaignIds, COUNTS.leads, COUNTS.leadsLastWeek);
@@ -148,7 +149,7 @@ export function seedStandard(crm: Crm, seed = 42): SeedSummary {
     generateContentItems(ctx, staffIds, websiteIds, funnelIds, COUNTS.contentItems);
     const courses = generateCourses(ctx, staffIds, COUNTS.courses);
     const courseIds = courses.map((c) => c.id);
-    generateParticipations(ctx, contactIds, eventIds, courseIds, communityIds, COUNTS.participations);
+    generateParticipations(ctx, contactIds, eventIds, courseIds, communityIds, membershipPlanIds, COUNTS.participations);
     generateReviews(ctx, contactIds, productIds, businessListingIds, courseIds, companyIds, COUNTS.reviews);
     generateSupportTickets(ctx, contactIds, [...users.supportIds, ...users.salesRepIds], teamIds, COUNTS.supportTickets);
 

@@ -467,6 +467,7 @@ export const STRUCTURE_KINDS = [
   'funnel', // M36
   'media_asset', // M39
   'community', // M43 container
+  'membership_plan', // M44 (task-9 batch-5 addition — see MODULE_MAP note below)
   'business_listing', // M46
   'report', // M50
   'tag', // M08
@@ -517,7 +518,17 @@ export const MODULE_MAP: Record<string, string> = {
   M41: 'courses.lessons + records(lesson_completion)',
   M42: 'participations(enrollment)',
   M43: 'structures(community) + participations(community_member)',
-  M44: 'participations(membership)',
+  // task-9 batch-5 fix: the original note ('participations(membership)' only)
+  // omitted the plan DEFINITION's data home, inconsistent with every other
+  // "definition + per-member relationship" module (M05/pipeline,
+  // M31/coupon, M43/community all pair a `structures` kind with a
+  // relationship table). A membership PLAN (name/price/interval/
+  // entitlements) has nowhere to live without it. Added `membership_plan`
+  // to STRUCTURE_KINDS/STRUCTURE_COUNTS/STATUS_BY_KIND (seed-core.ts) and
+  // repointed `participations(membership)`'s `parent_id` at a real
+  // `structures(membership_plan)` row (was, by seed-content.ts oversight,
+  // pointing at a `community` row — fixed in the same change).
+  M44: 'structures(membership_plan) + participations(membership)',
   M45: 'reviews',
   M46: 'structures(business_listing)',
   M47: 'support_tickets',
