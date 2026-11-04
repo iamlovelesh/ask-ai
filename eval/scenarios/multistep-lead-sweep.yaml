@@ -1,0 +1,39 @@
+# Seed scenario (Task 16) — category: multistep.
+#
+# THE LLD §2.2 "DSL conformance" flagship, VERBATIM: "Find leads created
+# last week who have not replied, exclude anyone with a booked appointment,
+# assign the remaining leads to available sales reps, and create follow-up
+# tasks." The LLD ships this exact 9-step plan as a unit test fixture for
+# `agent/plan-schema.ts`/`agent/validator.ts`; this scenario is the SAME
+# conformance check at the eval-corpus level — a real planner call must
+# independently arrive at (approximately) the same action sequence.
+#
+# `mustInclude` intentionally does not also assert exact param wiring
+# (anti_join/distribute shapes, etc.) — that level of DSL-shape conformance
+# already has a dedicated unit test in `server/test/plan-schema.test.ts`;
+# this scenario's job is to confirm retrieval+planner+validator can produce
+# a plan touching every expected module end-to-end against the real model.
+
+id: multistep-lead-sweep
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      Find leads created last week who have not replied, exclude anyone with
+      a booked appointment, assign the remaining leads to available sales
+      reps, and create follow-up tasks for each of them.
+    expect:
+      planActions:
+        mustInclude:
+          - leads.search_leads
+          - conversations.search_conversations
+          - core.anti_join
+          - appointments.search_appointments
+          - users.list_users
+          - core.distribute
+          - leads.assign_lead_owner
+          - tasks.create_task
+        mustNotInclude: [leads.create_lead]
+        orderFree: true
+      response:
+        mustNotClaim: [failed, error]

@@ -1,0 +1,20 @@
+# Seed scenario (Task 16) — category: direct, subtype: typo.
+#
+# Misspelled direct request — retrieval's `fuzzy: 0.2` + prefix matching
+# (LLD §4) must still surface the right action despite "Serach"/
+# "oppurtunities"/"pipeilne".
+
+id: typo-search-opportunities
+category: direct
+subtype: typo
+profile: standard
+turns:
+  - user: "Serach my oppurtunities pipeilne for anything over 10k"
+    expect:
+      planActions:
+        mustInclude: [opportunities.search_opportunities]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [opportunities.search_opportunities]
+        mustNotClaim: [failed, error]

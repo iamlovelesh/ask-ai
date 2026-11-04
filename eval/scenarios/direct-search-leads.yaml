@@ -1,0 +1,24 @@
+# Seed scenario (Task 16) — category: direct.
+#
+# A single-turn, single-action read: the simplest possible shape, used both
+# to sanity-check the machinery end-to-end and as the scripted scenario for
+# `eval/test/runner-e2e.test.ts` (the one offline, real-spawned-server,
+# MockLLM proof of the full loop).
+
+id: direct-search-leads
+category: direct
+profile: standard
+turns:
+  - user: "Show me leads created in the last week"
+    expect:
+      planActions:
+        mustInclude: [leads.search_leads]
+        mustNotInclude: [leads.create_lead, leads.update_lead_details]
+      behavior:
+        confirmation: false
+      response:
+        # composer.ts is pure-template (LLD §5: "no LLM call, ever") and
+        # always renders a done step as "<action>: <N> record(s)" — this is
+        # a GROUNDED assertion, not a guess about model wording.
+        mustMention: [leads.search_leads]
+        mustNotClaim: [failed, error]

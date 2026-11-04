@@ -1,0 +1,124 @@
+/**
+ * Spawns/manages a REAL `server/src/index.ts` process for `eval/runner.ts`
+ * (Task 16, LLD §9.2: "drives the REAL HTTP server (spawn `tsx
+ * server/src/index.ts` on a per-shard port ... or accept --server-url)").
+ *
+ * Shard-local template handling (binding, from the brief): `/admin/reset`
+ * (server/src/api/admin.ts) restores a profile's CRM db from
+ * `server/data/crm-{profile}.template.db`. This module NEVER opens the
+ * COMMITTED `crm-standard.template.db` for writing — it copies it ONCE,
+ * at spawn time, to a shard-local template path keyed by that shard's own
+ * profile name, so every `/admin/reset` call during the run restores from
+ * the shard-local copy, never the committed artifact.
+ */
+
+import { spawn, type ChildProcess } from 'node:child_process';
+import { copyFileSync, mkdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
+export const REPO_ROOT = resolve(here, '..');
+export const SERVER_DIR = resolve(REPO_ROOT, 'server');
+export const COMMITTED_TEMPLATE = resolve(SERVER_DIR, 'data/crm-standard.template.db');
+const TSX_BIN = resolve(REPO_ROOT, 'node_modules/.bin/tsx');
+
+export interface SpawnedServer {
+  baseUrl: string;
+  profile: string;
+  stop(): Promise<void>;
+}
+
+export interface SpawnServerOptions {
+  port: number;
+  /** Shard-local CRM profile name (e.g. `evalrun-<runId>-s1`) — NEVER
+   * `'standard'` for a real run, so the committed template/db are never
+   * touched. */
+  profile: string;
+  /** Set only for the offline MockLLM E2E proof (`eval/test/runner-
+   * e2e.test.ts`) — wires `server/src/llm/mock-fetch.ts`'s boot hook. */
+  mockLlmScript?: string;
+  extraEnv?: Record<string, string>;
+}
+
+/** Copies the COMMITTED template to a shard-local template path matching
+ * `profile` (`server/src/api/admin.ts`'s `templatePathFor` convention:
+ * `server/data/crm-{profile}.template.db`). Returns the copy's path. */
+export function prepareShardTemplate(profile: string): string {
+  const dest = resolve(SERVER_DIR, `data/crm-${profile}.template.db`);
+  mkdirSync(dirname(dest), { recursive: true });
+  copyFileSync(COMMITTED_TEMPLATE, dest);
+  return dest;
+}
+
+export async function waitForHealth(baseUrl: string, timeoutMs = 20_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const res = await fetch(`${baseUrl}/api/health`);
+      if (res.ok) return;
+    } catch {
+      // Not accepting connections yet — retry until the deadline.
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`eval server at ${baseUrl} did not become healthy within ${timeoutMs}ms`);
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
+/** Spawns `tsx server/src/index.ts` with the given port/profile/env and
+ * returns a handle once the process has been started (NOT once it's
+ * healthy — call `waitForHealth(baseUrl)` separately so callers can decide
+ * their own timeout/retry policy). */
+export function spawnServer(opts: SpawnServerOptions): SpawnedServer {
+  prepareShardTemplate(opts.profile);
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PORT: String(opts.port),
+    PROFILE: opts.profile,
+    VIRTUAL_NOW: process.env['VIRTUAL_NOW'] ?? '2026-11-04T10:00:00Z',
+    // Never 'production' — this is what keeps the `/admin/inject-failure`
+    // test-only route and the `MOCK_LLM_SCRIPT` boot hook reachable.
+    NODE_ENV: process.env['NODE_ENV'] === 'production' ? 'development' : (process.env['NODE_ENV'] ?? 'development'),
+    ADMIN_TEST_HOOKS: '1',
+    ...opts.extraEnv,
+  };
+  if (opts.mockLlmScript) env['MOCK_LLM_SCRIPT'] = opts.mockLlmScript;
+
+  const child: ChildProcess = spawn(TSX_BIN, ['src/index.ts'], {
+    cwd: SERVER_DIR,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let stderrTail = '';
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString('utf8')).slice(-4000);
+  });
+
+  let stopped = false;
+  child.on('exit', (code) => {
+    if (!stopped && code !== 0) {
+      process.stderr.write(
+        `\n[eval] server process for profile '${opts.profile}' exited early (code ${code}):\n${stderrTail}\n`,
+      );
+    }
+  });
+
+  async function stop(): Promise<void> {
+    if (stopped) return;
+    stopped = true;
+    child.kill('SIGTERM');
+    await new Promise<void>((res) => {
+      const timer = setTimeout(() => res(), 5000);
+      child.once('exit', () => {
+        clearTimeout(timer);
+        res();
+      });
+    });
+  }
+
+  return { baseUrl: `http://127.0.0.1:${opts.port}`, profile: opts.profile, stop };
+}

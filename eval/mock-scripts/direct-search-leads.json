@@ -1,0 +1,11 @@
+[
+  {
+    "kind": "plan",
+    "plan": {
+      "goal": "Find leads created in the last week",
+      "steps": [
+        { "id": "s1", "action": "leads.search_leads", "params": {}, "dependsOn": [] }
+      ]
+    }
+  }
+]

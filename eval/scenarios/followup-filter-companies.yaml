@@ -1,0 +1,29 @@
+# Seed scenario (Task 16) — category: followup.
+#
+# Turn 2 builds on turn 1's result/context within the SAME session
+# (`eval/runner.ts` keeps one session per scenario across all its turns) —
+# exercising working memory (`agent/memory.ts`'s WorkingState fold) rather
+# than treating each turn as independent.
+
+id: followup-filter-companies
+category: followup
+profile: standard
+turns:
+  - user: "Find companies in the software industry"
+    expect:
+      planActions:
+        mustInclude: [companies.search_companies]
+      paramChecks:
+        - action: companies.search_companies
+          param: industry
+          contains: software
+      behavior:
+        confirmation: false
+  - user: "Of those, which ones are based in the US?"
+    expect:
+      planActions:
+        mustInclude: [companies.search_companies]
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

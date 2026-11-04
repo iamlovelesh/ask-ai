@@ -1,0 +1,25 @@
+# Seed scenario (Task 16) — category: ambiguous, subtype: no_repeat.
+#
+# Turn 2's request ("reach out to them") is genuinely ambiguous — channel
+# (email/SMS?) and message content are unspecified — so the planner should
+# emit `kind:'clarify'`. The `mustNotAsk` check is the whole point of this
+# scenario (LLD §9.1 v1.1 `no_repeat` subtype): the clarifying question
+# must NOT re-ask which companies/industry are meant — that's already in
+# working state from turn 1.
+
+id: ambiguous-no-repeat
+category: ambiguous
+subtype: no_repeat
+profile: standard
+turns:
+  - user: "Find companies in the software industry"
+    expect:
+      planActions:
+        mustInclude: [companies.search_companies]
+      behavior:
+        confirmation: false
+  - user: "Reach out to them"
+    expect:
+      behavior:
+        clarify: true
+        mustNotAsk: [industry, software]
