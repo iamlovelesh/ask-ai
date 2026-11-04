@@ -2,14 +2,15 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ENTITY_MODEL, ddl } from '../src/entities/model';
-import { openCrm, crmDbPath } from '../src/store/db';
+import { ENTITY_MODEL, ddl, RECORD_KINDS } from '../src/entities/model';
+import { openCrm, getCrm, crmDbPath, closeRegistered } from '../src/store/db';
 import { resetCrm } from '../src/store/reset';
 
 // Throwaway profiles so we never touch the committed template or runtime DBs.
 const DDL_PROFILE = 'test-ddl';
 const RT_PROFILE = 'test-roundtrip';
 const RESET_PROFILE = 'test-reset';
+const ACCESSOR_PROFILE = 'test-accessor';
 const TEMPLATE_PATH = join(tmpdir(), `crm-${RESET_PROFILE}.template.db`);
 
 function cleanup(profile: string): void {
@@ -23,13 +24,36 @@ afterAll(() => {
   cleanup(DDL_PROFILE);
   cleanup(RT_PROFILE);
   cleanup(RESET_PROFILE);
+  cleanup(ACCESSOR_PROFILE);
   if (existsSync(TEMPLATE_PATH)) rmSync(TEMPLATE_PATH, { force: true });
 });
 
 describe('entity model', () => {
-  it('declares between 22 and 25 tables', () => {
+  it('declares between 22 and 26 tables', () => {
+    // 24 typed + structures + records = 26 (ledger allows ≤25 ±; records added
+    // per reviewer finding #2 for transactional sub-records).
     expect(ENTITY_MODEL.length).toBeGreaterThanOrEqual(22);
-    expect(ENTITY_MODEL.length).toBeLessThanOrEqual(25);
+    expect(ENTITY_MODEL.length).toBeLessThanOrEqual(26);
+  });
+
+  it('includes a typed `records` table for transactional sub-records', () => {
+    const t = ENTITY_MODEL.find((x) => x.name === 'records');
+    expect(t, 'records table must exist').toBeDefined();
+    const have = t!.columns.map((c) => c.name);
+    for (const c of ['kind', 'parent_id', 'contact_id', 'user_id', 'data', 'occurred_at']) {
+      expect(have, `records.${c}`).toContain(c);
+    }
+    // kind/parent_id/contact_id/occurred_at must be indexed (searchable).
+    for (const c of ['kind', 'parent_id', 'contact_id', 'occurred_at']) {
+      expect(t!.columns.find((x) => x.name === c)?.indexed, `records.${c} indexed`).toBe(true);
+    }
+    expect(RECORD_KINDS).toEqual([
+      'form_submission',
+      'survey_response',
+      'coupon_redemption',
+      'lesson_completion',
+      'team_membership',
+    ]);
   });
 
   it('gives every table id PK + created_at + updated_at', () => {
@@ -171,6 +195,63 @@ describe('store round-trip', () => {
       expect(row).toBeUndefined();
     } finally {
       crm.close();
+    }
+  });
+});
+
+describe('getCrm accessor', () => {
+  afterAll(() => closeRegistered(ACCESSOR_PROFILE));
+
+  it('returns the same live handle on repeated calls (no reopen)', () => {
+    const a = getCrm(ACCESSOR_PROFILE);
+    // Write through the first reference...
+    a.tx((db) =>
+      db.run(
+        'INSERT INTO contacts (id, created_at, updated_at, archived, name) VALUES (?,?,?,?,?)',
+        ['con_live', 1, 1, 0, 'Live'],
+      ),
+    );
+    const b = getCrm(ACCESSOR_PROFILE);
+    // ...and it is visible + usable through the second reference (not a stale,
+    // closed handle). A reopen would have thrown "is closed" on `a` below.
+    const row = b.tx((db) => db.get('SELECT name FROM contacts WHERE id = ?', ['con_live']));
+    expect(row!['name']).toBe('Live');
+    // Original reference is still usable — getCrm did not close it.
+    expect(() => a.tx((db) => db.get('SELECT 1 AS one'))).not.toThrow();
+  });
+
+  it('after resetCrm, getCrm returns a WORKING handle (pre-reset handle closed)', async () => {
+    // Snapshot the current accessor DB as a template.
+    const crm = getCrm(ACCESSOR_PROFILE);
+    crm.close();
+    const dbFile = crmDbPath(ACCESSOR_PROFILE);
+    const { copyFileSync } = await import('node:fs');
+    const tpl = join(tmpdir(), `crm-${ACCESSOR_PROFILE}.template.db`);
+    copyFileSync(dbFile, tpl);
+
+    try {
+      // Mutate AFTER snapshot, holding a reference that reset will close.
+      const stale = getCrm(ACCESSOR_PROFILE);
+      stale.tx((db) =>
+        db.run(
+          'INSERT INTO contacts (id, created_at, updated_at, archived, name) VALUES (?,?,?,?,?)',
+          ['con_post_snapshot', 1, 1, 0, 'Gone'],
+        ),
+      );
+
+      await resetCrm(ACCESSOR_PROFILE, tpl);
+
+      // Documented: the pre-reset handle is now closed.
+      expect(() => stale.tx((db) => db.get('SELECT 1 AS one'))).toThrow();
+
+      // getCrm hands back a fresh, working handle with the mutation reverted.
+      const after = getCrm(ACCESSOR_PROFILE);
+      const gone = after.tx((db) =>
+        db.get('SELECT id FROM contacts WHERE id = ?', ['con_post_snapshot']),
+      );
+      expect(gone).toBeUndefined();
+    } finally {
+      if (existsSync(tpl)) rmSync(tpl, { force: true });
     }
   });
 });

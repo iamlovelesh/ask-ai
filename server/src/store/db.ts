@@ -81,6 +81,10 @@ class CrmImpl implements Crm {
     return { changes: Number(r.changes) };
   }
 
+  // INVARIANT: `tx` opens a single BEGIN/COMMIT. Action handlers receive the
+  // `StoreTx` passed into their `fn` and MUST NOT call `crm.tx()` themselves —
+  // a nested BEGIN throws ("cannot start a transaction within a transaction").
+  // Handlers compose by issuing all/get/run on the StoreTx they were given.
   tx<T>(fn: (db: StoreTx) => T): T {
     if (this.closed) throw new Error(`CRM handle for '${this.profile}' is closed`);
     this.db.exec('BEGIN');
@@ -92,6 +96,10 @@ class CrmImpl implements Crm {
       this.db.exec('ROLLBACK');
       throw err;
     }
+  }
+
+  isClosed(): boolean {
+    return this.closed;
   }
 
   close(): void {
@@ -111,9 +119,11 @@ class CrmImpl implements Crm {
 }
 
 /**
- * Open (or re-open) the CRM store for a profile. Any previously open handle for
- * the same profile is closed first, so there is exactly one live connection per
- * profile — the invariant `resetCrm` depends on.
+ * FORCE-(re)open the CRM store for a profile. Any previously open handle for the
+ * same profile is closed first, so there is exactly one live connection per
+ * profile — the invariant `resetCrm` depends on. Prefer `getCrm` in application
+ * code; use `openCrm` only when you deliberately want a fresh connection (first
+ * boot, reset, tests).
  */
 export function openCrm(profile: string = 'standard'): Crm {
   mkdirSync(DATA_DIR, { recursive: true });
@@ -122,6 +132,21 @@ export function openCrm(profile: string = 'standard'): Crm {
   const crm = new CrmImpl(profile, crmDbPath(profile));
   registry.set(profile, crm);
   return crm;
+}
+
+/**
+ * ACCESSOR for the live CRM handle. Returns the registered connection for the
+ * profile, opening one on first use. Never closes or reopens an existing
+ * handle, so repeated calls hand back the same working connection — this is the
+ * call application code (handlers, API, pipeline) should use.
+ *
+ * NOTE: a handle obtained before `resetCrm`/`openCrm` is closed by that call;
+ * always re-fetch via `getCrm` after a reset rather than caching a `Crm`.
+ */
+export function getCrm(profile: string = 'standard'): Crm {
+  const existing = registry.get(profile);
+  if (existing && !existing.isClosed()) return existing;
+  return openCrm(profile);
 }
 
 /** Internal: close and drop the registered handle for a profile, if any. */

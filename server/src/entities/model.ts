@@ -1,10 +1,12 @@
 /**
  * ENTITY_MODEL — the canonical CRM data model for Ask AI (LLD §3.2).
  *
- * 50 product modules (M01–M50) collapse into 25 physical tables: 24 typed
- * business tables plus one generic `structures` table that holds the
- * definition/config-shaped entities (workflows, forms, pipelines, …) behind a
- * `kind` discriminator. The four merges mandated by the LLD are present as
+ * 50 product modules (M01–M50) collapse into 26 physical tables: 24 typed
+ * business tables, one generic `structures` table for definition/config-shaped
+ * entities (workflows, forms, pipelines, …) behind a `kind` discriminator, and
+ * one typed `records` table for transactional sub-records (form submissions,
+ * survey responses, coupon redemptions, lesson progress, team membership) that
+ * are events/ledger rows rather than config. The four merges mandated by the LLD are present as
  * dedicated tables with explicit discriminator columns:
  *   - messages        channel     : 'sms' | 'email'
  *   - line_items      parent_type : 'quote' | 'invoice' | 'order'
@@ -409,6 +411,19 @@ export const ENTITY_MODEL: readonly TableDef[] = [
     col('description', 'TEXT'),
   ]),
 
+  // Transactional sub-records that are NOT config: form submissions (M18),
+  // survey responses (M19), coupon redemptions (M31), per-lesson progress
+  // (M41), team membership M:N (M49). The `structures` ruling covers only
+  // definition/config rows; these are events/ledger rows and live here.
+  table('records', 'record', [
+    col('kind', 'TEXT', { indexed: true }), // form_submission|survey_response|coupon_redemption|lesson_completion|team_membership
+    col('parent_id', 'TEXT', { indexed: true }), // form/survey/coupon/lesson(course)/team id
+    col('contact_id', 'TEXT', { indexed: true }), // nullable
+    col('user_id', 'TEXT', { indexed: true }), // nullable (e.g. team membership)
+    col('occurred_at', 'INT', { indexed: true }),
+    col('data', 'TEXT'), // JSON — kind-specific payload
+  ], [{ name: 'kind_parent', columns: ['kind', 'parent_id'] }]),
+
   // Generic definition/config table — one `kind` per module (see STRUCTURE_KINDS)
   table('structures', 'struct', [
     col('kind', 'TEXT', { indexed: true }),
@@ -421,6 +436,15 @@ export const ENTITY_MODEL: readonly TableDef[] = [
     col('config', 'TEXT'), // JSON — kind-specific payload
     col('description', 'TEXT'),
   ], [{ name: 'kind_status', columns: ['kind', 'status'] }]),
+] as const;
+
+/** Discriminator values the transactional `records` table carries. */
+export const RECORD_KINDS = [
+  'form_submission', // M18
+  'survey_response', // M19
+  'coupon_redemption', // M31
+  'lesson_completion', // M41
+  'team_membership', // M49
 ] as const;
 
 /** Discriminator values the generic `structures` table carries. */
@@ -466,8 +490,8 @@ export const MODULE_MAP: Record<string, string> = {
   M15: 'structures(campaign)',
   M16: 'structures(workflow)',
   M17: 'structures(trigger)',
-  M18: 'structures(form)',
-  M19: 'structures(survey)',
+  M18: 'structures(form) + records(form_submission)',
+  M19: 'structures(survey) + records(survey_response)',
   M20: 'structures(calendar)',
   M21: 'appointments',
   M22: 'structures(calendar).config.availability',
@@ -479,7 +503,7 @@ export const MODULE_MAP: Record<string, string> = {
   M28: 'invoices (+line_items)',
   M29: 'payments',
   M30: 'subscriptions',
-  M31: 'structures(coupon)',
+  M31: 'structures(coupon) + records(coupon_redemption)',
   M32: 'orders (+line_items)',
   M33: 'payments(kind=refund)',
   M34: 'structures(tax_rule)',
@@ -489,7 +513,7 @@ export const MODULE_MAP: Record<string, string> = {
   M38: 'content_items(blog_post)',
   M39: 'structures(media_asset)',
   M40: 'courses',
-  M41: 'courses.lessons',
+  M41: 'courses.lessons + records(lesson_completion)',
   M42: 'participations(enrollment)',
   M43: 'structures(community) + participations(community_member)',
   M44: 'participations(membership)',
@@ -497,7 +521,7 @@ export const MODULE_MAP: Record<string, string> = {
   M46: 'structures(business_listing)',
   M47: 'support_tickets',
   M48: 'users',
-  M49: 'teams',
+  M49: 'teams (+ records(team_membership) for M:N)',
   M50: 'structures(report)',
 };
 
