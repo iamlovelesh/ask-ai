@@ -2,14 +2,13 @@
  * Event log types (LLD §2.3) + the LLM usage/metrics shapes referenced by
  * events and by `llm/client.ts`.
  *
- * `PlanOutcome`/`Plan`/`Step` (LLD §2.2) are owned by `agent/plan-schema.ts`
- * — re-exported below so this file's `Event` union can reference them
- * without a second definition to drift out of sync. `WorkingState` (LLD
- * §2.5) is owned by `agent/memory.ts` (later task); that file does not exist
- * yet, so a minimal verbatim-field copy lives here ONLY so the `Event` union
- * below type-checks today. When `agent/memory.ts` lands it should either
- * re-export these names or this file should be updated to import from it —
- * do not let the two definitions drift.
+ * `PlanOutcome`/`Plan`/`Step` (LLD §2.2) are owned by `agent/plan-schema.ts`;
+ * `WorkingState`/`TaskFrame`/`EntityRef`/`RefHandle` (LLD §2.5) are owned by
+ * `agent/memory.ts`. Both are re-exported below (type-only — erased at
+ * compile time by `verbatimModuleSyntax`, so `agent/memory.ts` importing
+ * `Event` from THIS file back creates no runtime import cycle) so the
+ * `Event` union can reference them without a second definition to drift out
+ * of sync.
  */
 
 // --- agent/plan-schema.ts (LLD §2.2) — re-exported, not re-defined --------
@@ -17,43 +16,10 @@
 import type { PlanOutcome } from '../agent/plan-schema.js';
 export type { Value, Step, Plan, PlanOutcome } from '../agent/plan-schema.js';
 
-// --- agent/memory.ts (LLD §2.5) — minimal copy, field names verbatim -------
+// --- agent/memory.ts (LLD §2.5) — re-exported, not re-defined --------------
 
-export interface TaskFrame {
-  intent: string;
-  status: 'active' | 'completed';
-  filters: Record<string, unknown>;
-  missingParams: string[];
-  planHash?: string;
-}
-
-export interface EntityRef {
-  id: string;
-  type: string;
-  name: string;
-  source: string;
-  turn: string;
-}
-
-export interface RefHandle {
-  ref: string;
-  action: string;
-  turnId: string;
-  entityType: string;
-  total: number;
-  idList: string[];
-  query?: object;
-  sample: unknown[];
-  /** Set true only after `/admin/reset` marks all session handles stale
-   * (LLD §2.5). */
-  stale?: boolean;
-}
-
-export interface WorkingState {
-  frame: TaskFrame | null;
-  entities: Record<string, EntityRef>;
-  handles: RefHandle[];
-}
+import type { WorkingState } from '../agent/memory.js';
+export type { TaskFrame, EntityRef, RefHandle, WorkingState } from '../agent/memory.js';
 
 // --- llm/client.ts ----------------------------------------------------------
 
