@@ -15,7 +15,7 @@
   "scripts": {
     "dev": "npm -w server run dev",
     "dev:web": "npm -w web run dev",
-    "seed": "tsx server/src/scripts/seed.ts",
+    "seed": "tsx scripts/seed-standard.ts",
     "smoke": "tsx eval/smoke.ts",
     "probe": "tsx eval/probe.ts",
     "eval": "tsx eval/run.ts",
