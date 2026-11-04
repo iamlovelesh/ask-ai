@@ -1,10 +1,12 @@
 import Fastify from 'fastify';
 import { createRegistry } from './catalog/registry.js';
+import { withFailureInjection } from './catalog/inject-failures.js';
 import { getCrm } from './store/db.js';
 import { openEventLog } from './events/log.js';
 import { openSessions, sessionsDbPath } from './store/sessions-db.js';
 import { openSpans } from './events/trace.js';
 import { loadPlaybooks } from './playbooks/loader.js';
+import { installMockLlmFromEnv } from './llm/mock-fetch.js';
 import { SessionRuntime } from './api/turn-runtime.js';
 import { registerSessionsRoutes } from './api/sessions.js';
 import { registerStreamRoutes } from './api/stream.js';
@@ -29,9 +31,19 @@ app.get('/api/health', async () => {
 
 async function start(): Promise<void> {
   try {
+    // Task 16 (eval/runner.ts) offline E2E hook: MOCK_LLM_SCRIPT + non-prod
+    // NODE_ENV wires a scripted fetch into every llmCall for this process's
+    // lifetime. No-op when unset — see llm/mock-fetch.ts's header.
+    installMockLlmFromEnv();
+
     // --- boot wiring (LLD §6/§11): open stores, load playbooks, build
     // deps, register routes.
-    const registry = createRegistry();
+    //
+    // `withFailureInjection` wraps the registry unconditionally (Task 16):
+    // it is a no-op pass-through when nothing has been injected, and what's
+    // actually gated behind NODE_ENV/ADMIN_TEST_HOOKS is the HTTP endpoint
+    // that populates the injection map (api/admin.ts), not this wrap.
+    const registry = withFailureInjection(createRegistry());
     const playbooks = loadPlaybooks(registry);
     const eventLog = openEventLog();
     const sessionsDb = openSessions(sessionsDbPath());

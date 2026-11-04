@@ -1,7 +1,8 @@
 /**
  * Admin routes (LLD §6): `POST /admin/reset?profile&seed` (CRM
  * template-restore + session-wide ref staleness) and `GET /admin/catalog`
- * (module/action listing).
+ * (module/action listing). Also (Task 16, TEST-ONLY): `POST
+ * /admin/inject-failure` — see the route below for the guard.
  */
 
 import { dirname, join } from 'node:path';
@@ -9,7 +10,35 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { crmDbPath } from '../store/db.js';
 import { resetCrm } from '../store/reset.js';
+import { registerFailureInjection } from '../catalog/inject-failures.js';
+import type { ActionErrorCode } from '../catalog/types.js';
 import type { AppDeps } from './types.js';
+
+const ACTION_ERROR_CODES: readonly ActionErrorCode[] = [
+  'VALIDATION',
+  'NOT_FOUND',
+  'CONFLICT',
+  'TRANSIENT',
+  'FORBIDDEN',
+  'LIMIT_EXCEEDED',
+];
+
+/** `eval/runner.ts`'s `injectFailures` scenario field (LLD §9.1 / Task 16)
+ * needs a way to force a named action to fail deterministically — a real
+ * production deployment must NEVER expose this (it lets any caller make
+ * arbitrary actions throw). Mirrors the brief's own guard wording: enabled
+ * when either NODE_ENV isn't 'production', or the operator opted in
+ * explicitly via ADMIN_TEST_HOOKS=1 (e.g. a prod-like staging box running
+ * the eval matrix). */
+function adminTestHooksEnabled(): boolean {
+  return process.env['NODE_ENV'] !== 'production' || process.env['ADMIN_TEST_HOOKS'] === '1';
+}
+
+const injectFailureBodySchema = z.object({
+  action: z.string().min(1),
+  code: z.enum(ACTION_ERROR_CODES as [ActionErrorCode, ...ActionErrorCode[]]),
+  times: z.number().int().positive(),
+});
 
 const resetQuerySchema = z.object({
   profile: z.string().min(1).optional(),
@@ -92,4 +121,22 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
       .map(([module, actions]) => ({ module, actions: actions.sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0)) }));
     reply.send({ modules });
   });
+
+  // --- POST /admin/inject-failure (TEST-ONLY — see adminTestHooksEnabled) ---
+
+  if (adminTestHooksEnabled()) {
+    app.post('/admin/inject-failure', async (req, reply) => {
+      const parsed = injectFailureBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        reply.code(400).send({ error: 'invalid_body', details: parsed.error.issues });
+        return;
+      }
+      if (!registry.get(parsed.data.action)) {
+        reply.code(404).send({ error: 'action_not_found', action: parsed.data.action });
+        return;
+      }
+      registerFailureInjection(parsed.data.action, parsed.data.code, parsed.data.times);
+      reply.code(204).send();
+    });
+  }
 }
