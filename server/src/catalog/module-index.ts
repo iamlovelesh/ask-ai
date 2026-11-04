@@ -46,6 +46,16 @@ import { m21Appointments, m21DiscriminationChecks, m21SynthHints } from './m21-a
 import { m22Availability, m22DiscriminationChecks, m22SynthHints } from './m22-availability.js';
 import { m23BookingPages, m23DiscriminationChecks, m23SynthHints } from './m23-booking_pages.js';
 import { m24Events, m24DiscriminationChecks, m24SynthHints } from './m24-events.js';
+import { m25Products, m25DiscriminationChecks, m25SynthHints } from './m25-products.js';
+import { m26Prices, m26DiscriminationChecks, m26SynthHints } from './m26-prices.js';
+import { m27Quotes, m27DiscriminationChecks, m27SynthHints } from './m27-quotes.js';
+import { m28Invoices, m28DiscriminationChecks, m28SynthHints } from './m28-invoices.js';
+import { m29Payments, m29DiscriminationChecks, m29SynthHints } from './m29-payments.js';
+import { m30Subscriptions, m30DiscriminationChecks, m30SynthHints } from './m30-subscriptions.js';
+import { m31Coupons, m31DiscriminationChecks, m31SynthHints } from './m31-coupons.js';
+import { m32Orders, m32DiscriminationChecks, m32SynthHints } from './m32-orders.js';
+import { m33Refunds, m33DiscriminationChecks, m33SynthHints } from './m33-refunds.js';
+import { m34TaxRules, m34DiscriminationChecks, m34SynthHints } from './m34-tax_rules.js';
 
 /** One entry per module file, in M01…M50 order. */
 export const MODULE_ACTION_ARRAYS: readonly ActionDef[][] = [
@@ -73,6 +83,16 @@ export const MODULE_ACTION_ARRAYS: readonly ActionDef[][] = [
   m22Availability,
   m23BookingPages,
   m24Events,
+  m25Products,
+  m26Prices,
+  m27Quotes,
+  m28Invoices,
+  m29Payments,
+  m30Subscriptions,
+  m31Coupons,
+  m32Orders,
+  m33Refunds,
+  m34TaxRules,
 ];
 
 /** One entry per module file's `discriminationChecks` export, flattened. */
@@ -101,6 +121,16 @@ export const MODULE_DISCRIMINATION_CHECKS: readonly DiscriminationCheck[] = [
   ...m22DiscriminationChecks,
   ...m23DiscriminationChecks,
   ...m24DiscriminationChecks,
+  ...m25DiscriminationChecks,
+  ...m26DiscriminationChecks,
+  ...m27DiscriminationChecks,
+  ...m28DiscriminationChecks,
+  ...m29DiscriminationChecks,
+  ...m30DiscriminationChecks,
+  ...m31DiscriminationChecks,
+  ...m32DiscriminationChecks,
+  ...m33DiscriminationChecks,
+  ...m34DiscriminationChecks,
 ];
 
 /**
@@ -136,4 +166,14 @@ export const MODULE_SYNTH_HINTS: Readonly<SynthHints> = {
   ...m22SynthHints,
   ...m23SynthHints,
   ...m24SynthHints,
+  ...m25SynthHints,
+  ...m26SynthHints,
+  ...m27SynthHints,
+  ...m28SynthHints,
+  ...m29SynthHints,
+  ...m30SynthHints,
+  ...m31SynthHints,
+  ...m32SynthHints,
+  ...m33SynthHints,
+  ...m34SynthHints,
 };
