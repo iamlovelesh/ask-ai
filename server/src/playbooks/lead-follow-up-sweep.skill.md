@@ -1,5 +1,6 @@
 ---
-name: Lead follow-up sweep
+name: lead-follow-up-sweep
+title: Lead follow-up sweep
 description: Find leads created in a recent window who have not replied and have no booked appointment, distribute the remainder across available sales reps, and create a follow-up task for each. Use when the user asks to "follow up with", "sweep", "chase", or "assign" unreplied/unbooked/stale leads from a time window (e.g. "last week's leads who haven't replied"). Triggers: follow up, sweep leads, chase leads, unreplied leads, assign leads to reps.
 ---
 

@@ -1,5 +1,6 @@
 ---
-name: Overdue invoice reminders
+name: overdue-invoice-reminders
+title: Overdue invoice reminders
 description: List invoices past their due date and send a reminder for each one. Use when the user asks to "chase", "remind", or "follow up on" overdue/unpaid/late invoices, or to collect on outstanding balances. Triggers: overdue invoices, unpaid invoices, send reminders, collections, late payment.
 ---
 

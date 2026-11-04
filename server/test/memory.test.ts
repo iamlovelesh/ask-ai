@@ -241,4 +241,18 @@ describe('rewriteQuery — deterministic anaphora rewriting (no LLM)', () => {
     const completedState: WorkingState = { ...state, frame: { ...frame, status: 'completed' } };
     expect(rewriteQuery('only the Facebook ones', completedState)).toBe('only the Facebook ones');
   });
+
+  it('is idempotent: re-applying it to its own output returns the same string', () => {
+    const once = rewriteQuery('only the Facebook ones', state);
+    const twice = rewriteQuery(once, state);
+    expect(twice).toBe(once);
+  });
+
+  it('is idempotent even though the rewritten output still contains the anaphora cue', () => {
+    const once = rewriteQuery('it is the same one', state);
+    // The anaphora signals ("it", "same") are still textually present in
+    // the tail of `once` — the guard must still prevent a second prefix.
+    expect(once).toMatch(/^follow-up tasks for last week leads/);
+    expect(rewriteQuery(once, state)).toBe(once);
+  });
 });

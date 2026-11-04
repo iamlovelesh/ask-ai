@@ -314,13 +314,29 @@ function hasAnaphoraSignal(text: string): boolean {
  * otherwise return `userText` unchanged. This feeds retrieval + the
  * planner's `<request>` block — the planner ALSO sees the full
  * `renderWorkingState` block, so this function only needs to be "good
- * enough to retrieve the right actions", not exhaustive. */
+ * enough to retrieve the right actions", not exhaustive.
+ *
+ * CONTRACT: call this exactly ONCE per turn, pre-retrieval, on the raw user
+ * message — never re-apply it to its own output. It IS idempotent against
+ * that misuse (a second call against the same `state` returns the input
+ * unchanged, since the output always starts with `frame.intent`), but a
+ * rewritten string is no longer "the user's message" and re-rewriting it
+ * against a DIFFERENT frame on a later turn is not something this guard can
+ * detect or fix — one call site, one time, is the only correct usage. */
 export function rewriteQuery(userText: string, state: WorkingState): string {
   if (!hasAnaphoraSignal(userText) || state.frame === null || state.frame.status !== 'active') {
     return userText;
   }
-
   const frame = state.frame;
+
+  // Idempotence guard: `userText` is already this frame's own rewritten
+  // output (it starts with the exact prefix a rewrite would produce) — the
+  // anaphora cues still present in the tail (e.g. "only"/"it") must NOT
+  // trigger a second, duplicated prefix.
+  if (userText.startsWith(frame.intent)) {
+    return userText;
+  }
+
   const filterParts = Object.entries(frame.filters)
     .filter(([, v]) => v !== null && v !== undefined)
     .map(([k, v]) => `${k}:${String(v)}`);

@@ -62,6 +62,30 @@ describe('compose — cancelled', () => {
     expect(text).toContain('Already completed');
     expect(text).toContain('invoices.list_overdue_invoices: 12 record(s)');
   });
+
+  it('does not drop a real step failure that happened alongside the cancellation', () => {
+    const plan: Plan = {
+      goal: 'assign leads and notify finance',
+      steps: [
+        { id: 's1', action: 'leads.search_leads', params: {}, dependsOn: [] },
+        { id: 's2', action: 'leads.assign_lead_owner', params: {}, dependsOn: ['s1'] },
+        { id: 's3', action: 'invoices.send_invoice_reminder', params: {}, dependsOn: [] },
+      ],
+    };
+    // Mixed done + failed + cancelled in one turn: s1 done, s2 (an
+    // independent branch) failed with a real error, s3 is the step that
+    // triggered the confirmation gate and got denied.
+    const stepStates: Record<string, ComposeStepState> = {
+      s1: { state: 'done', result: { items: [{ id: 'l1' }], total: 3 } },
+      s2: { state: 'failed', error: { code: 'TRANSIENT', message: 'owner lookup timed out' } },
+      s3: { state: 'cancelled' },
+    };
+
+    const text = compose({ outcome: 'cancelled', plan, stepStates, reason: 'You denied the confirmation.' });
+
+    expect(text).toContain('Failures:');
+    expect(text).toContain('leads.assign_lead_owner failed: owner lookup timed out');
+  });
 });
 
 describe('compose — clarify', () => {

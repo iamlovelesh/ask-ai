@@ -131,7 +131,7 @@ function composeDone(input: ComposeInput): string {
 
 function composeCancelled(input: ComposeInput): string {
   const goal = input.plan?.goal ?? 'the request';
-  const { doneLines, cancelledIds } = groupSteps(input.plan, input.stepStates);
+  const { doneLines, failedLines, cancelledIds } = groupSteps(input.plan, input.stepStates);
   const lines: string[] = [`Cancelled: ${goal} was not completed.`];
   if (input.reason !== undefined) lines.push(input.reason);
   if (cancelledIds.length > 0) lines.push(`Not done: ${cancelledIds.join(', ')}.`);
@@ -139,6 +139,11 @@ function composeCancelled(input: ComposeInput): string {
     lines.push('Already completed before the cancellation:');
     for (const l of doneLines) lines.push(`- ${l}`);
   }
+  // A step can fail BEFORE the one that triggers the cancellation gate
+  // (independent branches run concurrently with the gated write) — those
+  // failures must not vanish just because the overall outcome is
+  // "cancelled" rather than "failed".
+  lines.push(...renderFailuresSection(failedLines));
   return lines.join('\n');
 }
 

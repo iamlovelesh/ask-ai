@@ -1,5 +1,6 @@
 ---
-name: Pipeline review
+name: pipeline-review
+title: Pipeline review
 description: Review a sales pipeline's open opportunities and move stale ones forward or flag them with a follow-up task. Use when the user asks to "review the pipeline", "check on open deals", or "clean up stalled opportunities". Triggers: pipeline review, review deals, stale opportunities, check pipeline, clean up pipeline.
 ---
 
