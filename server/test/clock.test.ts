@@ -98,10 +98,36 @@ describe('Prng', () => {
     expect(arr).toContain(picked);
   });
 
-  it('should return chance results as boolean', () => {
+  it('should throw when picking from empty array', () => {
     const prng = new Prng(42);
-    const result = prng.chance(0.5);
-    expect(typeof result).toBe('boolean');
+    const arr: string[] = [];
+    expect(() => prng.pick(arr)).toThrow('pick from empty array');
+  });
+
+  it('should return false for chance(0) over 50 draws', () => {
+    const prng = new Prng(42);
+    for (let i = 0; i < 50; i++) {
+      expect(prng.chance(0)).toBe(false);
+    }
+  });
+
+  it('should return true for chance(1) over 50 draws', () => {
+    const prng = new Prng(42);
+    for (let i = 0; i < 50; i++) {
+      expect(prng.chance(1)).toBe(true);
+    }
+  });
+
+  it('should return deterministic count for chance(0.5) over 200 draws', () => {
+    const prng = new Prng(42);
+    let trueCount = 0;
+    for (let i = 0; i < 200; i++) {
+      if (prng.chance(0.5)) {
+        trueCount++;
+      }
+    }
+    // For seed 42, after 200 draws with chance(0.5), expect exactly 104 trues
+    expect(trueCount).toBe(104);
   });
 
   it('.int(max) should return values in range [0, max)', () => {

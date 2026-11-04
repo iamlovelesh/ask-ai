@@ -20,6 +20,9 @@ export class Prng {
   }
 
   pick<T>(arr: T[]): T {
+    if (arr.length === 0) {
+      throw new Error('pick from empty array');
+    }
     const index = this.int(arr.length);
     return arr[index] as T;
   }
