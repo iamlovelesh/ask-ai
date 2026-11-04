@@ -116,3 +116,52 @@ describe('synthesizeInput — kind-aware id resolution', () => {
     expect(input.coupon_id).toBe('struct_0');
   });
 });
+
+describe('synthesizeInput — action-scoped (`${slug}:${field}`) hint precedence (task 9 addition)', () => {
+  // Adversarial fixture: a flat `widget_id` hint and a `${slug}:widget_id`
+  // scoped hint point at DIFFERENT kinds (tag vs coupon), which resolve to
+  // DIFFERENT rows in the mixed-kind `structures` table from `beforeAll`
+  // above (struct_0/struct_2 = tag, struct_1/struct_3 = coupon). This is
+  // exactly the shape task 9 batch 1 needed for M05/M08/M09/M10, whose bare
+  // `id` field all share `entities[0] === 'structures'` but a DIFFERENT
+  // `kind` each — a flat field-name-keyed hint can't disambiguate between
+  // them once merged into one `MODULE_SYNTH_HINTS` object, so the scoped
+  // key must win for ITS OWN slug while a different slug using the same
+  // field name still falls back to the flat hint.
+  const hints = {
+    widget_id: { table: 'structures', kind: 'tag' },
+    'test.action_scoped:widget_id': { table: 'structures', kind: 'coupon' },
+  } as const;
+
+  it('(a) the action-scoped hint wins for the slug it names', () => {
+    const def = fakeDef(z.strictObject({ widget_id: z.string() }));
+    def.slug = 'test.action_scoped';
+    const input = crm.tx((db) => synthesizeInput(def, db, hints)) as { widget_id: string };
+    expect(input.widget_id).toBe('struct_1'); // kind='coupon', NOT the flat hint's 'tag'
+
+    const resolved = crm.tx((db) => db.get('SELECT kind FROM structures WHERE id = ?', [input.widget_id]));
+    expect(resolved?.['kind']).toBe('coupon');
+  });
+
+  it('(b) a DIFFERENT slug using the same field name falls back to the flat field-name hint', () => {
+    const def = fakeDef(z.strictObject({ widget_id: z.string() }));
+    def.slug = 'test.action_other'; // no scoped entry for this slug in `hints`
+    const input = crm.tx((db) => synthesizeInput(def, db, hints)) as { widget_id: string };
+    expect(input.widget_id).toBe('struct_0'); // kind='tag', per the flat hint
+
+    const resolved = crm.tx((db) => db.get('SELECT kind FROM structures WHERE id = ?', [input.widget_id]));
+    expect(resolved?.['kind']).toBe('tag');
+  });
+
+  it('(c) absence of both a scoped AND a flat hint falls back to the entities[0] guess (kind-blind)', () => {
+    // Bare `id` field, no hints at all — resolution falls all the way
+    // through to `{table: entities[0]}` with no kind filter, so it picks
+    // whatever row is lowest by id regardless of kind (the same
+    // kind-blind behavior the `beforeAll` fixture's first `it` block
+    // characterizes for the unscoped case).
+    const def = fakeDef(z.strictObject({ id: z.string() }), ['structures']);
+    def.slug = 'test.action_bare';
+    const input = crm.tx((db) => synthesizeInput(def, db, {})) as { id: string };
+    expect(input.id).toBe('struct_0');
+  });
+});

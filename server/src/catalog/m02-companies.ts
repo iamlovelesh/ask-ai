@@ -542,7 +542,11 @@ export const m02Companies: ActionDef[] = [
 /**
  * Tier-A discrimination: `size` bucket counts against the standard template
  * differ enough (verified: '1-10' → 225, '1000+' → 199) that a coincidental
- * tie is not a real risk.
+ * tie is not a real risk. Live-run note: a full `--modules m02-m10`/`npm
+ * run smoke` pass observes '1-10' → 224, not 225 — `archive_company`'s own
+ * smoke check archives the lowest-id company (which happens to be a
+ * '1-10' row), shifting this specific bucket by -1 within the same run.
+ * Still ~25x the gap needed for the check to be non-coincidental.
  */
 export const m02DiscriminationChecks: DiscriminationCheck[] = [
   {
