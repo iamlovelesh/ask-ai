@@ -206,7 +206,14 @@ function resolveValue(value: unknown, rctx: ResolveCtx): unknown {
     if (value.includes('$')) return interpolateTemplate(value, rctx);
     return value;
   }
-  if (Array.isArray(value)) return value.map((v) => resolveValue(v, rctx));
+  if (Array.isArray(value)) {
+    const arr = value.map((v) => resolveValue(v, rctx));
+    // A literal array param counts toward affectedCount exactly like a
+    // ref-resolved array (reviewer fix: a write with a literal 60-id list must
+    // gate the same way a resolved 60-id list does).
+    rctx.meta.maxArrayLen = Math.max(rctx.meta.maxArrayLen, arr.length);
+    return arr;
+  }
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
@@ -430,24 +437,39 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     return `${step.action}: ${count} ${noun}${driftNote}${refNote}`;
   };
 
-  const evalWhen = (step: Step): boolean => {
-    if (!step.when) return true;
-    const rctx = makeResolveCtx(undefined, false);
-    const val = resolveWholeRef(step.when.ref, rctx);
-    switch (step.when.op) {
+  const evalCondition = (op: NonNullable<Step['when']>['op'], val: unknown, cmp: unknown): boolean => {
+    switch (op) {
       case 'nonempty':
         return Array.isArray(val) ? val.length > 0 : val != null;
       case 'empty':
         return Array.isArray(val) ? val.length === 0 : val == null;
       case 'eq':
-        return val === step.when.value;
+        return val === cmp;
       case 'gt':
-        return typeof val === 'number' && typeof step.when.value === 'number' && val > step.when.value;
+        return typeof val === 'number' && typeof cmp === 'number' && val > cmp;
       case 'lt':
-        return typeof val === 'number' && typeof step.when.value === 'number' && val < step.when.value;
+        return typeof val === 'number' && typeof cmp === 'number' && val < cmp;
       default:
         return true;
     }
+  };
+
+  /** True when `step.when.ref` is a `$item.*` ref — such a condition can only
+   * be evaluated PER ITEM inside a forEach fan-out, never once-per-step. */
+  const whenUsesItem = (step: Step): boolean =>
+    step.when !== undefined && parseRefGrammar(step.when.ref)?.form === 'item';
+
+  /** Once-per-step `when` (no `$item`). Returns true when there is no `when`. */
+  const evalWhen = (step: Step): boolean => {
+    if (!step.when) return true;
+    const rctx = makeResolveCtx(undefined, false);
+    return evalCondition(step.when.op, resolveWholeRef(step.when.ref, rctx), step.when.value);
+  };
+
+  /** Per-item `when` for a `$item.*` condition under forEach. */
+  const evalWhenForItem = (when: NonNullable<Step['when']>, item: unknown): boolean => {
+    const rctx = makeResolveCtx(item, true);
+    return evalCondition(when.op, resolveWholeRef(when.ref, rctx), when.value);
   };
 
   /** Convert a `__spill` handler output into a RefHandle, returning the
@@ -497,7 +519,9 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     states.set(step.id, { state: 'running' });
 
     // `when` guard — false → skip (dependents will skip transitively).
-    if (!evalWhen(step)) {
+    // A `$item.*` condition under forEach is deferred to per-item filtering
+    // inside `runForEachStep` (it cannot be evaluated once-per-step).
+    if (!whenUsesItem(step) && !evalWhen(step)) {
       states.set(step.id, { state: 'skipped' });
       return;
     }
@@ -561,7 +585,13 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
   ): Promise<void> => {
     const feCtx = makeResolveCtx(undefined, false);
     const forEachResolved = resolveWholeRef(step.forEach as string, feCtx);
-    const items = Array.isArray(forEachResolved) ? forEachResolved : [];
+    const resolvedItems = Array.isArray(forEachResolved) ? forEachResolved : [];
+    // Per-item `when` (`$item.*`) filters the fan-out BEFORE the cap/gate/loop,
+    // so only qualifying items are counted and invoke the handler.
+    const items =
+      step.when !== undefined && whenUsesItem(step)
+        ? resolvedItems.filter((it) => evalWhenForItem(step.when as NonNullable<Step['when']>, it))
+        : resolvedItems;
     const drift = feCtx.meta.drift;
     const fanOut = items.length;
 

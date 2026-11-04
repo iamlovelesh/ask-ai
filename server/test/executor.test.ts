@@ -343,6 +343,23 @@ describe('executor — confirmation gate', () => {
     expect(reqs[0] && reqs[0].t === 'confirmation.required' && reqs[0].scope.affectedCount).toBe(120);
   });
 
+  it('a LITERAL array of 60 ids gates a plain write action (affectedCount 60)', async () => {
+    const registry = buildRegistry(
+      [[action('leads.bulk_update', 'write', async () => ({ ok: true }))]],
+      coreOps,
+    );
+    const ids = Array.from({ length: 60 }, (_, i) => `l${i}`);
+    const plan: Plan = {
+      goal: 'literal-array',
+      steps: [{ id: 's1', action: 'leads.bulk_update', params: { ids }, dependsOn: [] }],
+    };
+    const input = baseInput(plan, registry);
+    const result = await execute(input);
+    expect(result.status).toBe('done');
+    const req = eventsOf(input).find((e) => e.t === 'confirmation.required');
+    expect(req && req.t === 'confirmation.required' && req.scope.affectedCount).toBe(60);
+  });
+
   it('forEach fan-out of 501 is REFUSED with LIMIT_EXCEEDED and no handler calls', async () => {
     let created = 0;
     const registry = buildRegistry(
@@ -411,6 +428,50 @@ describe('executor — resilience', () => {
     expect(keys).toEqual(['1:0:s1:0', '1:0:s1:0']); // same key both attempts
     const finished = eventsOf(input).filter((e) => e.t === 'step.finished');
     expect(finished).toHaveLength(1);
+  });
+
+  it('forEach with a per-item $item.when invokes the handler only for qualifying items', async () => {
+    const createdFor: unknown[] = [];
+    const registry = buildRegistry(
+      [
+        [
+          action('leads.search_leads', 'read', async () => ({
+            items: [
+              { id: 'l1', score: 60 },
+              { id: 'l2', score: 40 },
+              { id: 'l3', score: 70 },
+            ],
+            total: 3,
+          })),
+          action('tasks.create_task', 'write', async (i) => {
+            createdFor.push(i['lead_id']);
+            return { ok: true };
+          }),
+        ],
+      ],
+      coreOps,
+    );
+    const plan: Plan = {
+      goal: 'per-item-when',
+      steps: [
+        { id: 's1', action: 'leads.search_leads', params: {}, dependsOn: [] },
+        {
+          id: 's2',
+          action: 'tasks.create_task',
+          params: { lead_id: '$item.id' },
+          forEach: '$s1.items',
+          when: { ref: '$item.score', op: 'gt', value: 50 },
+          dependsOn: ['s1'],
+        },
+      ],
+    };
+    const input = baseInput(plan, registry);
+    const result = await execute(input);
+    expect(result.status).toBe('done');
+    // only l1 (60) and l3 (70) qualify; l2 (40) is filtered out
+    expect(createdFor).toEqual(['l1', 'l3']);
+    const started = eventsOf(input).find((e) => e.t === 'step.started' && e.stepId === 's2');
+    expect(started && started.t === 'step.started' && started.itemCount).toBe(2);
   });
 
   it('identical failure ×4 halts the turn (status halted, halted stuck)', async () => {
@@ -506,6 +567,72 @@ describe('executor — cross-turn ref drift (Review Focus 4)', () => {
       closeRegistered(PROFILE);
       cleanup();
     }
+  });
+
+  /** Set up a CRM with `present` leads, a cross-turn handle of `total` ids
+   * (ref r_t3_s1), and run a single plain-write step referencing it. */
+  async function runDriftCase(
+    profile: string,
+    present: number,
+    total: number,
+  ): Promise<{ result: Awaited<ReturnType<typeof execute>>; events: Event[] }> {
+    for (const suffix of ['', '-wal', '-shm', '-journal']) {
+      const p = crmDbPath(profile) + suffix;
+      if (existsSync(p)) rmSync(p, { force: true });
+    }
+    const crm = openCrm(profile);
+    try {
+      crm.tx((db) => {
+        for (let i = 1; i <= present; i += 1) db.run('INSERT INTO leads (id) VALUES (?)', [`lead_${i}`]);
+        return null;
+      });
+      refs.put({
+        action: 'leads.search_leads',
+        turnId: '3',
+        stepId: 's1',
+        entityType: 'leads',
+        total,
+        idList: Array.from({ length: total }, (_, i) => `lead_${i + 1}`),
+        sample: [],
+      });
+      const registry = buildRegistry(
+        [[action('leads.bulk_update', 'write', async () => ({ ok: true }))]],
+        coreOps,
+      );
+      const plan: Plan = {
+        goal: 'drift-branch',
+        steps: [{ id: 'sd', action: 'leads.bulk_update', params: { lead_ids: '$r_t3_s1' }, dependsOn: [] }],
+      };
+      const input = baseInput(plan, registry, { crm, turnId: '4' });
+      const result = await execute(input);
+      return { result, events: eventsOf(input) };
+    } finally {
+      closeRegistered(profile);
+      for (const suffix of ['', '-wal', '-shm', '-journal']) {
+        const p = crmDbPath(profile) + suffix;
+        if (existsSync(p)) rmSync(p, { force: true });
+      }
+    }
+  }
+
+  it('FORCES a gate on >25% drift even when survivors ≤50 and risk is plain write', async () => {
+    // total 60, 20 missing (33% > 25%), survivors 40 (≤50) → ONLY the drift
+    // branch can gate this (not affectedCount, not risk class).
+    const { result, events } = await runDriftCase('test-exec-drift-force', 40, 60);
+    expect(result.status).toBe('done');
+    const req = events.find((e) => e.t === 'confirmation.required');
+    expect(req).toBeDefined();
+    if (req && req.t === 'confirmation.required') {
+      expect(req.scope.affectedCount).toBe(40);
+      expect(req.scope.description).toContain('40 of 60');
+    }
+  });
+
+  it('does NOT gate when drift ≤25% and survivors ≤50 (control)', async () => {
+    // total 60, 10 missing (16.7% ≤ 25%), survivors 50 (not >50) → no gate.
+    const { result, events } = await runDriftCase('test-exec-drift-control', 50, 60);
+    expect(result.status).toBe('done');
+    expect(events.some((e) => e.t === 'confirmation.required')).toBe(false);
   });
 });
 
