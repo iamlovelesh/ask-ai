@@ -1,0 +1,84 @@
+/**
+ * Admin routes (LLD §6): `POST /admin/reset?profile&seed` (CRM
+ * template-restore + session-wide ref staleness) and `GET /admin/catalog`
+ * (module/action listing).
+ */
+
+import { dirname, join } from 'node:path';
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { crmDbPath } from '../store/db.js';
+import { resetCrm } from '../store/reset.js';
+import type { AppDeps } from './types.js';
+
+const resetQuerySchema = z.object({
+  profile: z.string().min(1).optional(),
+  // Accepted for forward-compat with LLD §6's `?profile&seed` signature —
+  // NOT used: `resetCrm` is a close→copy-template→reopen restore (Task 3),
+  // not a re-seed-with-arbitrary-seed operation. The committed template
+  // (`crm-standard.template.db`) is fixed at seed 42 (Task 4). A future
+  // re-seed-on-demand feature would consume this; today it's a documented
+  // no-op so the query param doesn't 400.
+  seed: z.coerce.number().optional(),
+});
+
+/** `server/data/crm-{profile}.template.db` — sibling of `crmDbPath`'s own
+ * `crm-{profile}.db` convention (Task 3/4), derived without needing a
+ * second exported constant from `store/db.ts`. */
+function templatePathFor(profile: string): string {
+  return join(dirname(crmDbPath(profile)), `crm-${profile}.template.db`);
+}
+
+export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
+  const { sessionsDb, registry, profile: defaultProfile } = deps;
+
+  app.post('/admin/reset', async (req, reply) => {
+    const parsed = resetQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      reply.code(400).send({ error: 'invalid_query', details: parsed.error.issues });
+      return;
+    }
+    const profile = parsed.data.profile ?? defaultProfile;
+
+    const startedAtMs = performance.now();
+    try {
+      await resetCrm(profile, templatePathFor(profile));
+    } catch (err) {
+      reply.code(404).send({ error: 'template_not_found', message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+
+    // Mark EVERY session's refs stale (LLD §3.2/§5) — not just one session,
+    // so this goes straight at the shared `sessions.db` `refs` table rather
+    // than through `RefStore.markAllStale(sessionId)`, which only ever
+    // targets a single session.
+    sessionsDb.run(`UPDATE refs SET stale = 1`);
+
+    const ms = performance.now() - startedAtMs;
+    reply.send({ ms });
+  });
+
+  app.get('/admin/catalog', async (_req, reply) => {
+    const byModule = new Map<string, { id: string; slug: string; name: string; description: string; risk: string; entities: string[] }[]>();
+    for (const action of registry.all()) {
+      const bucket = byModule.get(action.module);
+      const row = {
+        id: action.id,
+        slug: action.slug,
+        name: action.name,
+        description: action.description,
+        risk: action.risk,
+        entities: action.entities,
+      };
+      if (bucket) {
+        bucket.push(row);
+      } else {
+        byModule.set(action.module, [row]);
+      }
+    }
+    const modules = [...byModule.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([module, actions]) => ({ module, actions: actions.sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0)) }));
+    reply.send({ modules });
+  });
+}
