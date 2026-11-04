@@ -1,9 +1,15 @@
 /**
  * SSE frame writer (LLD §6): every live/reconnect channel in this directory
  * hijacks the Fastify reply and writes raw `text/event-stream` frames —
- * `event: <type>` + `data: <json incl. seq>` — plus a heartbeat COMMENT
- * line (`: heartbeat`) every 15s so intermediary proxies/load balancers
- * never time out an idle connection.
+ * `id: <seq>` + `event: <type>` + `data: <json incl. seq>` — plus a
+ * heartbeat COMMENT line (`: heartbeat`) every 15s so intermediary
+ * proxies/load balancers never time out an idle connection. The `id:` line
+ * is what makes `Last-Event-ID`-based resumability real: a native browser
+ * `EventSource` against `GET .../stream` auto-populates `Last-Event-ID` on
+ * reconnect ONLY from a frame's `id:` line — without it, `stream.ts`'s
+ * `afterSeq`/`Last-Event-ID` handling would never actually fire for a
+ * plain `EventSource` client, only for a hand-rolled client that reads
+ * `data.seq` itself.
  *
  * Deliberately dumb: this module knows nothing about sessions, turns, or
  * the EventLog — it only knows how to open the raw HTTP response and push
@@ -80,7 +86,7 @@ export function openSse(reply: FastifyReply): SseConnection {
     write(seqEv: SeqEvent): void {
       if (closed) return;
       try {
-        const frame = `event: ${seqEv.event.t}\ndata: ${JSON.stringify({ seq: seqEv.seq, ...seqEv.event })}\n\n`;
+        const frame = `id: ${seqEv.seq}\nevent: ${seqEv.event.t}\ndata: ${JSON.stringify({ seq: seqEv.seq, ...seqEv.event })}\n\n`;
         res.write(frame);
       } catch {
         close();

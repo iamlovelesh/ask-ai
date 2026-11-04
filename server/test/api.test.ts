@@ -31,6 +31,7 @@ import type { AppDeps } from '../src/api/types';
 import { openEventLog, type EventLog } from '../src/events/log';
 import { openSessions, type SessionsDb } from '../src/store/sessions-db';
 import { openSpans, type Spans } from '../src/events/trace';
+import { VirtualClock } from '../src/store/clock';
 import { createRefStore } from '../src/agent/refs';
 import { buildRegistry, type Registry } from '../src/catalog/registry';
 import { coreOps } from '../src/catalog/core-ops';
@@ -153,17 +154,20 @@ async function createSession(app: FastifyInstance): Promise<string> {
 // --- SSE frame parsing (test-side only) --------------------------------------
 
 interface ParsedFrame {
+  id: string;
   event: string;
   data: Record<string, unknown>;
 }
 
 function parseOneFrame(raw: string): ParsedFrame {
   const lines = raw.split('\n');
+  const idLine = lines.find((l) => l.startsWith('id: '));
   const eventLine = lines.find((l) => l.startsWith('event: '));
   const dataLine = lines.find((l) => l.startsWith('data: '));
+  const id = idLine ? idLine.slice('id: '.length) : '';
   const event = eventLine ? eventLine.slice('event: '.length) : '';
   const data = dataLine ? (JSON.parse(dataLine.slice('data: '.length)) as Record<string, unknown>) : {};
-  return { event, data };
+  return { id, event, data };
 }
 
 /**
@@ -328,6 +332,12 @@ describe('POST /api/sessions/:id/messages — full turn over SSE', () => {
     const seqs = frames.map((f) => Number(f.data['seq']));
     expect(seqs.every((n) => Number.isFinite(n))).toBe(true);
     for (let i = 1; i < seqs.length; i += 1) expect(seqs[i]).toBeGreaterThan(seqs[i - 1] as number);
+
+    // every frame's `id:` line equals its `data.seq` (LLD §6 Last-Event-ID
+    // resumability — a native EventSource only ever populates
+    // `Last-Event-ID` from a frame's `id:` line on reconnect).
+    expect(frames.length).toBeGreaterThan(0);
+    for (const f of frames) expect(Number(f.id)).toBe(Number(f.data['seq']));
 
     // session title = first 40 chars of the first message.
     const sessionsRes = await app.inject({ method: 'GET', url: '/api/sessions' });
@@ -545,6 +555,123 @@ describe('POST /api/sessions/:id/messages — one turn at a time', () => {
   });
 });
 
+describe('POST /api/sessions/:id/cancel', () => {
+  it('cancelling a turn paused on confirmation denies it: status cancelled, zero handler calls, session accepts a new turn', async () => {
+    let handlerCalls = 0;
+    const registry = buildRegistry(
+      [[
+        action(
+          'contacts.archive_contact',
+          'destructive',
+          async (input) => {
+            handlerCalls += 1;
+            return { id: (input as { id: string }).id, archived: true };
+          },
+          z.object({ id: z.string() }),
+        ),
+      ]],
+      coreOps,
+    );
+    const queue = queueMockLlm([
+      { kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'c1' }, dependsOn: [] }] } },
+    ]);
+    __setTestFetch(queue.fetch);
+
+    const app = buildApp({ registry });
+    const sessionId = await createSession(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${sessionId}/messages`,
+      payload: { text: 'Archive this contact' },
+      payloadAsStream: true,
+    });
+    expect(res.statusCode).toBe(200);
+
+    const reader = new FrameReader(res.stream());
+    await reader.waitFor((f) => f.event === 'confirmation.required');
+
+    const cancelRes = await app.inject({ method: 'POST', url: `/api/sessions/${sessionId}/cancel` });
+    expect(cancelRes.statusCode).toBe(204);
+
+    const completed = await reader.waitFor((f) => f.event === 'turn.completed');
+    expect(completed.data['status']).toBe('cancelled');
+    await reader.drain();
+
+    expect(handlerCalls).toBe(0);
+
+    // the session's running-flag must have cleared — a brand new turn is accepted.
+    const queue2 = queueMockLlm([{ kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'c1' }, dependsOn: [] }] } }]);
+    __setTestFetch(queue2.fetch);
+    const res2 = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${sessionId}/messages`,
+      payload: { text: 'Archive this contact' },
+      payloadAsStream: true,
+    });
+    expect(res2.statusCode).toBe(200);
+
+    // drain + cancel this second turn too, for a clean teardown.
+    const reader2 = new FrameReader(res2.stream());
+    await reader2.waitFor((f) => f.event === 'confirmation.required');
+    await app.inject({ method: 'POST', url: `/api/sessions/${sessionId}/cancel` });
+    await reader2.drain();
+    expect(handlerCalls).toBe(0);
+  });
+
+  it('a late POST /confirm {approved:true} after cancel -> 409, and the handler is STILL never called', async () => {
+    let handlerCalls = 0;
+    const registry = buildRegistry(
+      [[
+        action(
+          'contacts.archive_contact',
+          'destructive',
+          async (input) => {
+            handlerCalls += 1;
+            return { id: (input as { id: string }).id, archived: true };
+          },
+          z.object({ id: z.string() }),
+        ),
+      ]],
+      coreOps,
+    );
+    const queue = queueMockLlm([
+      { kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'c1' }, dependsOn: [] }] } },
+    ]);
+    __setTestFetch(queue.fetch);
+
+    const app = buildApp({ registry });
+    const sessionId = await createSession(app);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${sessionId}/messages`,
+      payload: { text: 'Archive this contact' },
+      payloadAsStream: true,
+    });
+    const reader = new FrameReader(res.stream());
+    const confirmFrame = await reader.waitFor((f) => f.event === 'confirmation.required');
+    const confirmId = confirmFrame.data['confirmId'] as string;
+
+    const cancelRes = await app.inject({ method: 'POST', url: `/api/sessions/${sessionId}/cancel` });
+    expect(cancelRes.statusCode).toBe(204);
+
+    // The user believes they cancelled — a late/retried approve must NOT execute the write.
+    const lateConfirm = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${sessionId}/confirm/${confirmId}`,
+      payload: { approved: true },
+    });
+    expect(lateConfirm.statusCode).toBe(409);
+    expect(handlerCalls).toBe(0);
+
+    const completed = await reader.waitFor((f) => f.event === 'turn.completed');
+    expect(completed.data['status']).toBe('cancelled');
+    await reader.drain();
+    expect(handlerCalls).toBe(0);
+  });
+});
+
 describe('POST /api/sessions/:id/messages — baseline routing', () => {
   it('agent:"baseline" runs the baseline agent (no plan.ready)', async () => {
     const registry = buildRegistry(
@@ -610,6 +737,72 @@ describe('GET /api/metrics', () => {
     }
     expect(body.byAgent['optimized']?.['count']).toBe(2);
     expect(body.byStatus['done']?.['count']).toBe(2);
+  });
+
+  it('default window (no ?window) actually applies 24h — excludes an older turn', async () => {
+    const registry = buildRegistry(
+      [[action('leads.search_leads', 'read', async () => ({ items: [{ id: 'l1' }], total: 1 }))]],
+      coreOps,
+    );
+    const app = buildApp({ registry });
+    const sessionId = await createSession(app);
+
+    // Synthetic OLD turn (hand-crafted events, 25h before the pinned
+    // VirtualClock "now" — `turn.started.ts` is stamped from that same
+    // pinned clock in real turns, so the window cutoff must be computed in
+    // the SAME domain; this directly exercises that).
+    const now = new VirtualClock().now();
+    const oldTurnId = 't_old';
+    eventLog.append(sessionId, {
+      t: 'turn.started',
+      turnId: oldTurnId,
+      sessionId,
+      userText: 'old request',
+      ts: now - 25 * 60 * 60 * 1000,
+    });
+    eventLog.append(sessionId, {
+      t: 'turn.completed',
+      turnId: oldTurnId,
+      status: 'done',
+      metrics: {
+        ttfurMs: 100,
+        totalMs: 200,
+        llmCalls: 1,
+        repairs: 0,
+        replans: 0,
+        searchRounds: 0,
+        tokensIn: 10,
+        tokensOut: 10,
+        costUsd: 0.001,
+        stepsOk: 1,
+        stepsFailed: 0,
+      },
+    });
+
+    // One REAL recent turn, at the pinned "now".
+    const queue = queueMockLlm([
+      { kind: 'plan', plan: { goal: 'find leads', steps: [{ id: 's1', action: 'leads.search_leads', params: {}, dependsOn: [] }] } },
+    ]);
+    __setTestFetch(queue.fetch);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${sessionId}/messages`,
+      payload: { text: 'find leads now' },
+      payloadAsStream: true,
+    });
+    await new FrameReader(res.stream()).drain();
+
+    const metricsRes = await app.inject({ method: 'GET', url: '/api/metrics' });
+    expect(metricsRes.statusCode).toBe(200);
+    const body = metricsRes.json() as { window: string; overall: { count: number } };
+    expect(body.window).toBe('24h');
+    // Only the recent turn — the default window must actually filter, not
+    // just label itself "24h" while counting everything.
+    expect(body.overall.count).toBe(1);
+
+    const allRes = await app.inject({ method: 'GET', url: '/api/metrics?window=all' });
+    const allBody = allRes.json() as { overall: { count: number } };
+    expect(allBody.overall.count).toBe(2);
   });
 });
 

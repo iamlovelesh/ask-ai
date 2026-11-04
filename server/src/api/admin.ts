@@ -44,7 +44,18 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
     try {
       await resetCrm(profile, templatePathFor(profile));
     } catch (err) {
-      reply.code(404).send({ error: 'template_not_found', message: err instanceof Error ? err.message : String(err) });
+      // `resetCrm` throws exactly one message shape for "the template file
+      // doesn't exist" (`store/reset.ts`: `reset template not found: ...`)
+      // — that's the only case that's really a 404 (bad `?profile`). Any
+      // OTHER failure (copy/close/reopen I/O error, corrupted template,
+      // permissions) is a server-side problem, not a client-input one, and
+      // blanket-404ing it would misreport a real failure as "just pick a
+      // different profile".
+      const message = err instanceof Error ? err.message : String(err);
+      const templateMissing = message.includes('reset template not found');
+      reply
+        .code(templateMissing ? 404 : 500)
+        .send({ error: templateMissing ? 'template_not_found' : 'reset_failed', message });
       return;
     }
 

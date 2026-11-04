@@ -140,13 +140,18 @@ export function registerMetricsRoutes(app: FastifyInstance, deps: AppDeps): void
 
   app.get('/api/metrics', async (req, reply) => {
     const query = req.query as Record<string, unknown>;
-    const windowRaw = typeof query['window'] === 'string' ? query['window'] : undefined;
+    // Default to '24h' BEFORE parsing — a bare `GET /api/metrics` (no
+    // `?window`) must actually apply the 24h filter it claims in its
+    // response, not silently report "24h" while filtering nothing (the
+    // previous bug: `windowRaw` stayed `undefined` for the unset case, and
+    // `parseWindowMs(undefined)` returns `undefined` = "no filter").
+    const windowRaw = (typeof query['window'] === 'string' ? query['window'] : undefined) ?? '24h';
     const windowMs = parseWindowMs(windowRaw);
 
     const samples = collectSamples(deps, windowMs);
 
     reply.send({
-      window: windowRaw ?? '24h',
+      window: windowRaw,
       overall: bucketFor(samples),
       byStatus: groupBy(samples, (s) => s.status),
       byAgent: groupBy(samples, (s) => s.agent),

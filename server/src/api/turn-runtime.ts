@@ -6,10 +6,13 @@
  *     that drives `runTurn`/`runBaselineTurn` to completion INDEPENDENTLY
  *     of whatever SSE connection (if any) is currently attached (Task 13
  *     note: SSE only ever subscribes to `EventLog`, it never drains the
- *     generator itself — that's this module's job), best-effort
- *     cancellation, and the confirm-resolution policy (controller
- *     carry-forward: match against the pending `confirmation.required`
- *     EVENT, never `foldExecutor`'s state, which omits hash/rev on purpose).
+ *     generator itself — that's this module's job), cancellation (which
+ *     works by denying every pending confirmation for a session — see
+ *     `cancel()`'s doc comment for why that's the ONLY real interruption
+ *     point this pipeline exposes), and the confirm-resolution policy
+ *     (controller carry-forward: match against the pending
+ *     `confirmation.required` EVENT, never `foldExecutor`'s state, which
+ *     omits hash/rev on purpose).
  */
 
 import { randomUUID } from 'node:crypto';
@@ -20,10 +23,9 @@ import type { EventLog } from '../events/log.js';
 import { createRefStore, type RefStore } from '../agent/refs.js';
 import type { ConfirmBroker, ConfirmRequest } from '../agent/executor.js';
 import type { Playbook } from '../playbooks/loader.js';
-import { emptyWorkingState } from '../agent/memory.js';
 import { runTurn, type SessionDeps } from '../agent/pipeline.js';
 import { runBaselineTurn, type BaselineSessionDeps } from '../baseline/agent.js';
-import type { Event, TurnMetrics } from '../events/types.js';
+import type { Event } from '../events/types.js';
 
 export type AgentKind = 'optimized' | 'baseline';
 
@@ -54,10 +56,23 @@ class HttpConfirmBroker implements ConfirmBroker {
     return this.pending.has(confirmId);
   }
 
+  /** Every confirmId currently awaiting a verdict (in practice at most one
+   * — the executor awaits `confirm.request()` serially, one gate at a time
+   * — but this doesn't assume that). Used by `SessionRuntime.cancel` to
+   * deny every pending confirmation for a session. */
+  pendingIds(): string[] {
+    return [...this.pending.keys()];
+  }
+
   /** Resolves the broker's promise for `confirmId` iff it is still
    * pending. Returns false when it was never pending (unknown, already
    * resolved, or superseded) — the caller (`SessionRuntime.resolveConfirmation`)
-   * is responsible for turning that into the right HTTP status. */
+   * is responsible for turning that into the right HTTP status. Removing
+   * the entry from `pending` BEFORE the awaiting executor's continuation
+   * runs is what makes a subsequent `POST /confirm` for the same id 409
+   * immediately — `resolveConfirmation` checks `isPending`, not whether
+   * the `confirmation.resolved` EVENT has been appended yet (that happens
+   * on a later microtask, once the executor's `await` resumes). */
   resolve(confirmId: string, approved: boolean): boolean {
     const p = this.pending.get(confirmId);
     if (!p) return false;
@@ -72,7 +87,6 @@ class HttpConfirmBroker implements ConfirmBroker {
 interface RunningTurn {
   turnId: string;
   agent: AgentKind;
-  cancelled: boolean;
 }
 
 export interface StartTurnInput {
@@ -145,7 +159,7 @@ export class SessionRuntime {
       throw new Error('ALREADY_RUNNING');
     }
     const turnId = `t_${randomUUID()}`;
-    const state: RunningTurn = { turnId, agent: input.agent, cancelled: false };
+    const state: RunningTurn = { turnId, agent: input.agent };
     this.running.set(input.sessionId, state);
     this.turnAgent.set(turnId, input.agent);
 
@@ -189,12 +203,25 @@ export class SessionRuntime {
             } satisfies SessionDeps,
           });
 
+    // NOTE on why there is no "check a cancelled flag between steps" here
+    // (a prior revision had one, and it was dead code at best, actively
+    // harmful at worst): `runTurn`/`runBaselineTurn` are async GENERATORS
+    // that only ever `yield` from inside `finalize()` — there is no yield
+    // point anywhere during retrieval/planning/execution. That means the
+    // FIRST `gen.next()` call below does not resolve until the turn has
+    // ALREADY run to completion (including any `await confirm.request()`
+    // suspension) and started finalizing. A flag checked only between
+    // `gen.next()` calls therefore never gets a chance to interrupt
+    // anything meaningful — by the time it could fire, the turn's outcome
+    // is already decided, and injecting a SECOND synthetic
+    // `turn.completed`/`memory.snapshot` on top of the ones `finalize()` is
+    // already in the middle of yielding would corrupt the event stream
+    // with duplicate terminal events for the same turnId. The only point
+    // this module can genuinely reach INTO a suspended turn is the
+    // confirmation broker — see `cancel()` below — so this loop just drains
+    // the generator to whatever its natural outcome is.
     try {
       for (;;) {
-        if (state.cancelled) {
-          this.emitCancellation(sessionId, state.turnId);
-          return;
-        }
         const { done } = await gen.next();
         if (done) return;
       }
@@ -206,35 +233,39 @@ export class SessionRuntime {
     }
   }
 
-  private emitCancellation(sessionId: string, turnId: string): void {
-    const metrics: TurnMetrics = {
-      ttfurMs: 0,
-      totalMs: 0,
-      llmCalls: 0,
-      repairs: 0,
-      replans: 0,
-      searchRounds: 0,
-      tokensIn: 0,
-      tokensOut: 0,
-      costUsd: 0,
-      stepsOk: 0,
-      stepsFailed: 0,
-    };
-    this.eventLog.append(sessionId, { t: 'turn.completed', turnId, status: 'cancelled', metrics });
-    this.eventLog.append(sessionId, { t: 'memory.snapshot', turnId, state: emptyWorkingState() });
-  }
-
-  /** `POST /cancel` (LLD §6) — best-effort AbortController-style flag: the
-   * drive loop above checks it between every generator step. A turn
-   * currently suspended awaiting a confirmation is NOT interrupted by this
-   * (there is no safe way to abort mid-handler without the executor's
-   * cooperation) — it only takes effect the next time the generator
-   * actually yields control back. Returns whether a turn was running at
-   * all (the caller always responds 204 either way, per LLD). */
+  /**
+   * `POST /cancel` (LLD §6). The ONLY point a turn is ever genuinely
+   * interruptible from outside is while `agent/executor.ts`'s `gate()` is
+   * suspended in `await confirm.request(...)` — so `cancel()` denies EVERY
+   * currently-pending confirmation for `sessionId` as an implicit "no":
+   * the executor's gate unwinds through its normal denied-path (the
+   * handler is NEVER invoked, downstream steps are skipped, the turn
+   * finalizes `status:'cancelled'`), and `startTurn`'s `.finally()` clears
+   * `running` once the generator drains to completion — all through the
+   * EXISTING pipeline/executor machinery, no synthetic events needed.
+   * `HttpConfirmBroker.resolve` removes the entry from `pending`
+   * synchronously (before the executor's `await` continuation even runs),
+   * so a `POST /confirm` for that SAME confirmId arriving immediately after
+   * this call already sees `isPending() === false` → 409, even though the
+   * `confirmation.resolved` EVENT may not be appended to the log for
+   * another microtask yet.
+   *
+   * A turn with NO pending confirmation at the moment of cancellation
+   * (still planning, mid-handler, etc.) has no safe interruption point
+   * today — `execute()`/`runTurn()` accept no `AbortSignal` — so this is a
+   * documented no-op for that case: the turn simply runs to its natural
+   * conclusion. Returns whether a turn was running at all; the caller
+   * always responds 204 either way, per LLD.
+   */
   cancel(sessionId: string): boolean {
     const state = this.running.get(sessionId);
     if (!state) return false;
-    state.cancelled = true;
+    const broker = this.brokers.get(sessionId);
+    if (broker) {
+      for (const confirmId of broker.pendingIds()) {
+        broker.resolve(confirmId, false);
+      }
+    }
     return true;
   }
 
