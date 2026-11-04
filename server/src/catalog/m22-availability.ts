@@ -37,6 +37,7 @@ import {
   computeAvailableSlots,
   findSchedulingConflicts,
   assertValidDateString,
+  nextBlockId,
   VALID_WEEKDAYS,
   type TimeRange,
   type DateOverride,
@@ -253,7 +254,7 @@ const blockTimeRange: ActionDef<z.infer<typeof blockTimeRangeInput>, BlockTimeRa
       throw new ActionError('VALIDATION', 'A time block must have `end_at` after `start_at`.');
     }
     const config = readCalendarConfig(row);
-    const blockId = `blk_${config.availability.blocks.length + 1}`;
+    const blockId = nextBlockId(config.availability.blocks);
     const block: TimeBlock = { id: blockId, start_at: input.start_at, end_at: input.end_at, reason: input.reason ?? null };
     writeCalendarConfig(
       ctx.db,

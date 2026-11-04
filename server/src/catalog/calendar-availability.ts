@@ -127,6 +127,29 @@ export function getCalendarRow(db: StoreTx, id: string): Row {
   return row;
 }
 
+/**
+ * Next `blk_{n}` id for a calendar's own `config.availability.blocks` array
+ * — derived from the MAX numeric suffix among the blocks CURRENTLY on the
+ * calendar (same principle as `next-id.ts#nextId`'s `MAX(...)+1` over a real
+ * table), NOT `blocks.length + 1`. `length`-based ids collide the moment a
+ * block is removed from the middle: add A (`blk_1`) + B (`blk_2`), remove A
+ * (length drops to 1), add C → `length + 1` = `blk_2`, colliding with the
+ * still-live B. `remove_time_block('blk_2')` would then delete BOTH B and C
+ * (the filter matches both by id), and any conflict check against B's time
+ * range would silently stop firing once "B" is actually C's row. Reviewer
+ * finding, task-9-b3 fix round 1 — regression test in
+ * `server/test/calendar-availability.test.ts`.
+ */
+export function nextBlockId(blocks: readonly TimeBlock[]): string {
+  let maxN = 0;
+  for (const block of blocks) {
+    const match = /^blk_(\d+)$/.exec(block.id);
+    const n = match?.[1] ? Number(match[1]) : NaN;
+    if (Number.isFinite(n) && n > maxN) maxN = n;
+  }
+  return `blk_${maxN + 1}`;
+}
+
 function hhmmToMs(hhmm: string): number {
   const match = /^(\d{2}):(\d{2})$/.exec(hhmm);
   if (!match || !match[1] || !match[2]) {

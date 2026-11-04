@@ -434,6 +434,12 @@ const submitSimulatedFormResponse: ActionDef<
   name: 'Submit simulated form response',
   description: 'Record a simulated submission against a form (writes a `records` row).',
   risk: 'write',
+  // NOTE: bare `id` here means the FORM's id (structures), not a `records`
+  // row — safe only because `m18SynthHints` declares an action-scoped
+  // `${slug}:id` hint overriding `testing.ts`'s entities[0] fallback (see
+  // that hint map below). Ordering is `['records', 'structures']`
+  // intentionally — `records` is this action's write-target (the row it
+  // actually inserts), `structures` is just the parent lookup.
   entities: ['records', 'structures'],
   inputSchema: submitSimulatedFormResponseInput,
   outputSchema: submitSimulatedFormResponseOutput,
@@ -489,6 +495,11 @@ const listFormSubmissions: ActionDef<z.infer<typeof listFormSubmissionsInput>, L
   name: 'List form submissions',
   description: 'List real submissions recorded against a form.',
   risk: 'read',
+  // NOTE: bare `id` here also means the FORM's id (structures) — same
+  // scoped-synthHint override as `submit_simulated_form_response` above.
+  // `records` is listed first because it's this action's primary read
+  // target (the submissions themselves); `structures` is just the parent
+  // existence check.
   entities: ['records', 'structures'],
   inputSchema: listFormSubmissionsInput,
   outputSchema: listFormSubmissionsOutput,

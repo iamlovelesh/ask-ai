@@ -439,6 +439,13 @@ const submitSimulatedSurveyResponse: ActionDef<
   name: 'Submit simulated survey response',
   description: 'Record a simulated response against a survey (writes a `records` row).',
   risk: 'write',
+  // NOTE: bare `id` here means the SURVEY's id (structures), not a
+  // `records` row — safe only because `m19SynthHints` declares an
+  // action-scoped `${slug}:id` hint overriding `testing.ts`'s entities[0]
+  // fallback (see that hint map below). Ordering is
+  // `['records', 'structures']` intentionally — `records` is this action's
+  // write-target (the row it actually inserts), `structures` is just the
+  // parent lookup.
   entities: ['records', 'structures'],
   inputSchema: submitSimulatedSurveyResponseInput,
   outputSchema: submitSimulatedSurveyResponseOutput,
@@ -502,6 +509,11 @@ const getSurveyResponseSummary: ActionDef<
   name: 'Get survey response summary',
   description: 'Aggregate real per-question response counts/value distributions from recorded responses.',
   risk: 'read',
+  // NOTE: bare `id` here also means the SURVEY's id (structures) — same
+  // scoped-synthHint override as `submit_simulated_survey_response` above.
+  // `records` is listed first because it's this action's primary read
+  // target (the responses being aggregated); `structures` is just the
+  // parent existence check.
   entities: ['records', 'structures'],
   inputSchema: getSurveyResponseSummaryInput,
   outputSchema: getSurveyResponseSummaryOutput,
