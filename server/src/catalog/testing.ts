@@ -109,6 +109,9 @@ interface SynthCtx {
   entities: readonly string[];
   /** module-declared hints, take precedence over `DEFAULT_HINTS`. */
   hints: Readonly<SynthHints>;
+  /** `def.slug` — used to look up an action-scoped hint (`${slug}:${field}`),
+   * see `stringValueFor` below. */
+  slug: string;
   /** Per-synthesize-call offsets, keyed by `table:kind`, so repeated ids on
    * the same (table, kind) come back distinct. */
   usedOffsets: Map<string, number>;
@@ -145,10 +148,20 @@ function fieldNameCandidates(field: string): string[] {
 function stringValueFor(ctx: SynthCtx, schema: z.ZodString): string {
   const field = ctx.fieldName ?? '';
   if (field === 'id' || field.endsWith('_id')) {
+    // Action-scoped hint (`${slug}:${field}`) wins over everything else.
+    // This matters for the bare `id` field specifically: several modules
+    // (M05 pipelines, M08 tags, M09 smart_lists, M10 custom_fields, …) all
+    // have `entities[0] === 'structures'` but a DIFFERENT `kind` each — a
+    // flat field-name-keyed hint on `'id'` can't disambiguate between them
+    // (last-module-wins would silently break every earlier one). Scoping
+    // the hint to the action's own slug sidesteps the collision entirely;
+    // see synth-hints.ts for the convention.
+    const scoped = ctx.hints[`${ctx.slug}:${field}`];
     const hint =
-      field === 'id'
-        ? (ctx.entities[0] ? { table: ctx.entities[0] } : undefined)
-        : guessHintFromIdField(field, ctx.hints);
+      scoped ??
+      (field === 'id'
+        ? (ctx.hints['id'] ?? (ctx.entities[0] ? { table: ctx.entities[0] } : undefined))
+        : guessHintFromIdField(field, ctx.hints));
     if (hint) {
       const id = seededId(ctx, hint);
       if (id) return id;
@@ -228,7 +241,7 @@ export function synthesizeInput(
   tx: StoreTx,
   hints: Readonly<SynthHints> = {},
 ): unknown {
-  const ctx: SynthCtx = { tx, entities: def.entities, hints, usedOffsets: new Map() };
+  const ctx: SynthCtx = { tx, entities: def.entities, hints, slug: def.slug, usedOffsets: new Map() };
   const candidate = synthesizeValue(def.inputSchema as z.ZodTypeAny, ctx);
   const result = (def.inputSchema as z.ZodTypeAny).safeParse(candidate);
   if (!result.success) {

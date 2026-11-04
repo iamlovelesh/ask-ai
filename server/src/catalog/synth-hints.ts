@@ -42,5 +42,18 @@ export interface SynthHint {
   kind?: string;
 }
 
-/** field name → resolution hint. */
+/**
+ * field name → resolution hint, OR `${actionSlug}:${fieldName}` → resolution
+ * hint (task 9 addition). The scoped form is REQUIRED for a module's own
+ * bare `id` field whenever `entities[0]` is a kind-discriminated shared
+ * table (`structures`/`records`/`participations`) — a flat `'id'` key
+ * cannot disambiguate between, e.g., M05 pipelines' `id` (kind: 'pipeline')
+ * and M08 tags' `id` (kind: 'tag'), since `MODULE_SYNTH_HINTS` merges every
+ * module's map into ONE flat object keyed by field name. `testing.ts`
+ * checks the scoped key first, then the flat field-name key (built-in
+ * default or module-supplied), then a generic `{noun}_id → {noun}s` guess.
+ * Non-bare `*_id` fields can use the scoped form too, for the same reason,
+ * whenever a field name (e.g. `target_id`) means a different table
+ * depending on which module/action declares it.
+ */
 export type SynthHints = Record<string, SynthHint>;
