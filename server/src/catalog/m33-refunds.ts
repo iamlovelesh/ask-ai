@@ -162,8 +162,11 @@ const createRefundRequest: ActionDef<z.infer<typeof createRefundRequestInput>, R
   inputSchema: createRefundRequestInput,
   outputSchema: refundView,
   searchCard: {
-    synonyms: ['request refund', 'new refund request'],
-    examplePhrasings: ['Start a refund request for this payment'],
+    synonyms: ['request refund', 'new refund request', 'customer wants their money back'],
+    examplePhrasings: [
+      'Start a refund request for this payment',
+      'This customer wants their money back for this purchase',
+    ],
   },
   handler: withIdempotentWrite(async (input, ctx) => {
     const original = getPaymentRow(ctx.db, input.payment_id, 'payment');

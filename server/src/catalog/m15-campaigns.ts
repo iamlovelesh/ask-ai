@@ -436,8 +436,8 @@ const pauseCampaign: ActionDef<z.infer<typeof pauseCampaignInput>, CampaignView>
   inputSchema: pauseCampaignInput,
   outputSchema: campaignView,
   searchCard: {
-    synonyms: ['stop campaign temporarily', 'pause sending'],
-    examplePhrasings: ['Pause this campaign'],
+    synonyms: ['stop campaign temporarily', 'pause sending', 'freeze this marketing sequence'],
+    examplePhrasings: ['Pause this campaign', 'Freeze this marketing sequence for now'],
   },
   handler: withIdempotentWrite(async (input, ctx) => {
     const row = getCampaignRow(ctx.db, input.id);

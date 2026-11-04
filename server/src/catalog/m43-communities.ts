@@ -472,7 +472,10 @@ const removeReportedPost: ActionDef<z.infer<typeof removeReportedPostInput>, Pos
   entities: ['structures'],
   inputSchema: removeReportedPostInput,
   outputSchema: postSchema,
-  searchCard: { synonyms: ['delete post', 'remove reported content'], examplePhrasings: ['Remove this reported post'] },
+  searchCard: {
+    synonyms: ['delete post', 'remove reported content', 'someone flagged this comment'],
+    examplePhrasings: ['Remove this reported post', 'Someone flagged this comment in our community, take it down'],
+  },
   handler: withIdempotentWrite(async (input, ctx) => {
     const row = getCommunityRow(ctx.db, input.id);
     const config = readConfig(row);

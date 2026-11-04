@@ -506,8 +506,11 @@ const listOverdueInvoices: ActionDef<ListOverdueInvoicesInput, ListOverdueInvoic
   inputSchema: listOverdueInvoicesInput,
   outputSchema: listOverdueInvoicesOutput,
   searchCard: {
-    synonyms: ['overdue invoices', 'unpaid invoices past due'],
-    examplePhrasings: ['Which invoices are overdue by more than 15 days?'],
+    synonyms: ['overdue invoices', 'unpaid invoices past due', 'customers who still owe us money'],
+    examplePhrasings: [
+      'Which invoices are overdue by more than 15 days?',
+      "Which customers haven't paid us yet?",
+    ],
   },
   jit: 'Results cap at 50 inline rows; beyond that you get {__spill:true,total,sample}.',
   handler: async (input, ctx) => {

@@ -289,7 +289,10 @@ const deactivateUser: ActionDef<z.infer<typeof deactivateUserInput>, UserView> =
   entities: ['users', 'tasks', 'support_tickets'],
   inputSchema: deactivateUserInput,
   outputSchema: userView,
-  searchCard: { synonyms: ['disable user', 'offboard user'], examplePhrasings: ['Deactivate this user'] },
+  searchCard: {
+    synonyms: ['disable user', 'offboard user', 'lock out of their account'],
+    examplePhrasings: ['Deactivate this user', 'Lock this person out of their account'],
+  },
   handler: withIdempotentWrite(async (input, ctx) => {
     const row = getUserRow(ctx.db, input.id);
     if (row['active'] === 0) throw new ActionError('CONFLICT', `User '${input.id}' is already inactive.`);

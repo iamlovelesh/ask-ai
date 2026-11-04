@@ -1,0 +1,200 @@
+# Retrieval probe set (LLD §4 / Task 10).
+#
+# 60 queries: ≥20 "paraphrase" (no lexical overlap with the target action's
+# name/slug words — e.g. "customers who haven't paid us yet" for
+# invoices.list_overdue_invoices), ≥12 "typo" (misspelled direct queries —
+# minisearch `fuzzy: 0.2` + `prefix: true` must still find the action), and
+# the rest "direct" (close to the action's own name/words). Spread across
+# ≥25 of the 50 catalog modules.
+#
+# `expect` is the set of ACCEPTABLE slugs for that query — `retrieve()`
+# passes the probe if ANY of them appears in its top-20 cards.
+# `scripts/probe.ts` computes recall@20 overall and per-category and fails
+# the gate below 0.95 (LLD §4).
+
+- q: create a contact
+  category: direct
+  expect: [contacts.create_contact]
+- q: search companies
+  category: direct
+  expect: [companies.search_companies]
+- q: create a lead
+  category: direct
+  expect: [leads.create_lead]
+- q: create an opportunity
+  category: direct
+  expect: [opportunities.create_opportunity]
+- q: list pipelines
+  category: direct
+  expect: [pipelines.list_pipelines]
+- q: create a task
+  category: direct
+  expect: [tasks.create_task]
+- q: search notes
+  category: direct
+  expect: [notes.search_notes]
+- q: list tags
+  category: direct
+  expect: [tags.list_tags]
+- q: create a smart list
+  category: direct
+  expect: [smart_lists.create_smart_list]
+- q: create a custom field
+  category: direct
+  expect: [custom_fields.create_custom_field]
+- q: search conversations
+  category: direct
+  expect: [conversations.search_conversations]
+- q: send an sms
+  category: direct
+  expect: [sms.send_sms]
+- q: send an email
+  category: direct
+  expect: [email.send_email]
+- q: create a message template
+  category: direct
+  expect: [message_templates.create_message_template]
+- q: create a campaign
+  category: direct
+  expect: [campaigns.create_campaign]
+- q: create a workflow
+  category: direct
+  expect: [workflows.create_workflow]
+- q: create an event trigger
+  category: direct
+  expect: [event_triggers.create_event_trigger]
+- q: create a form
+  category: direct
+  expect: [forms.create_form]
+- q: create a survey
+  category: direct
+  expect: [surveys.create_survey]
+- q: create a calendar
+  category: direct
+  expect: [calendars.create_calendar]
+- q: create an appointment
+  category: direct
+  expect: [appointments.create_appointment]
+- q: find available slots
+  category: direct
+  expect: [availability.find_available_slots]
+- q: create a booking page
+  category: direct
+  expect: [booking_pages.create_booking_page]
+- q: create an event
+  category: direct
+  expect: [events.create_event]
+- q: create a product
+  category: direct
+  expect: [products.create_product]
+- q: create a product price
+  category: direct
+  expect: [prices.create_product_price]
+- q: create a quote
+  category: direct
+  expect: [quotes.create_quote]
+- q: create an invoice
+  category: direct
+  expect: [invoices.create_invoice]
+
+# --- paraphrase (≥20, no lexical overlap with the target action name) -----
+
+- q: customers who haven't paid us yet
+  category: paraphrase
+  expect: [invoices.list_overdue_invoices]
+- q: people who wrote in but we never replied
+  category: paraphrase
+  expect: [conversations.list_unanswered_conversations]
+- q: these two records are actually the same person, combine them
+  category: paraphrase
+  expect: [contacts.merge_duplicate_contacts]
+- q: who on the team has open time this week
+  category: paraphrase
+  expect: [availability.find_available_slots]
+- q: mark this prospect as a dead end, they chose a competitor
+  category: paraphrase
+  expect: [leads.disqualify_lead_with_reason]
+- q: turn this prospect into a real deal
+  category: paraphrase
+  expect: [leads.convert_lead_to_opportunity]
+- q: how many contacts still have the vip label on them
+  category: paraphrase
+  expect: [tags.view_tag_usage_counts]
+- q: give this discount code an end date
+  category: paraphrase
+  expect: [coupons.set_coupon_validity_window]
+- q: freeze this marketing sequence so it stops going out for now
+  category: paraphrase
+  expect: [campaigns.pause_campaign]
+- q: check if there's enough stock left to sell this item
+  category: paraphrase
+  expect: [products.get_inventory_availability]
+- q: put this phone number on the do-not-text list
+  category: paraphrase
+  expect: [sms.record_sms_opt_out]
+- q: show me everything people have sent in through our signup page
+  category: paraphrase
+  expect: [forms.list_form_submissions]
+- q: give me a breakdown of how people answered our questionnaire
+  category: paraphrase
+  expect: [surveys.get_survey_response_summary]
+- q: a guest never showed up for their scheduled meeting
+  category: paraphrase
+  expect: [appointments.mark_attendee_no_show]
+- q: someone wants their money back for this purchase
+  category: paraphrase
+  expect: [refunds.create_refund_request]
+- q: lock this person out of their account
+  category: paraphrase
+  expect: [users.deactivate_user]
+- q: who hasn't finished watching their training videos yet
+  category: paraphrase
+  expect: [enrollments.get_learner_progress]
+- q: give this subscriber more time before we start charging their card
+  category: paraphrase
+  expect: [subscriptions.set_subscription_trial_end]
+- q: a customer left a harsh rating, I want to reply in public
+  category: paraphrase
+  expect: [reviews.draft_review_response]
+- q: someone flagged a comment in our online group, take it down
+  category: paraphrase
+  expect: [communities.remove_reported_post]
+
+# --- typo (≥12, minisearch fuzzy:0.2 + prefix:true must still resolve) -----
+
+- q: creat a contct
+  category: typo
+  expect: [contacts.create_contact]
+- q: serach for leeds
+  category: typo
+  expect: [leads.search_leads]
+- q: cretae an oppurtunity
+  category: typo
+  expect: [opportunities.create_opportunity]
+- q: lanch a campaing
+  category: typo
+  expect: [campaigns.launch_campaign]
+- q: snd an emal
+  category: typo
+  expect: [email.send_email]
+- q: shcedule an sms
+  category: typo
+  expect: [sms.schedule_sms]
+- q: creat a worfklow
+  category: typo
+  expect: [workflows.create_workflow]
+- q: serach invocies
+  category: typo
+  expect: [invoices.search_invoices]
+- q: aprove a refnud request
+  category: typo
+  expect: [refunds.approve_refund_request]
+- q: reschedual an appointmant
+  category: typo
+  expect: [appointments.reschedule_appointment]
+- q: publsh a corse
+  category: typo
+  expect: [courses.publish_course]
+- q: archiv a custom feild
+  category: typo
+  expect: [custom_fields.archive_custom_field]

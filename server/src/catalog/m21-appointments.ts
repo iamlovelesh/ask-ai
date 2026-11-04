@@ -427,8 +427,11 @@ const markAttendeeNoShow: ActionDef<z.infer<typeof markAttendeeNoShowInput>, z.i
   inputSchema: markAttendeeNoShowInput,
   outputSchema: markAttendeeNoShowOutput,
   searchCard: {
-    synonyms: ['mark no-show', 'attendee did not show up'],
-    examplePhrasings: ["Mark this appointment's attendee as a no-show"],
+    synonyms: ['mark no-show', 'attendee did not show up', 'guest never showed up'],
+    examplePhrasings: [
+      "Mark this appointment's attendee as a no-show",
+      'This guest never showed up for their scheduled meeting',
+    ],
   },
   handler: withIdempotentWrite(async (input, ctx) => {
     const row = getAppointmentRow(ctx.db, input.id);

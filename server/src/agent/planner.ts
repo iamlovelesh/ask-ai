@@ -1,0 +1,194 @@
+/**
+ * Planner (LLD §5.2): builds the two-part prompt (byte-stable SYSTEM +
+ * per-turn USER) and wraps the `generateObject` call against
+ * `planOutcomeSchema`.
+ *
+ * Prompt layout: cache-stable SYSTEM (no dynamic content — verified by a
+ * snapshot test); USER carries context/playbook/actions/request, in that
+ * order, with the date inside `<context>` and the WorkingState block at the
+ * very end of `<context>` (LLD §2.5 "Writer rule" — transcript masking is
+ * `renderContext`'s job in `agent/memory.ts`, a later task; this module
+ * only assembles the blocks it's handed).
+ */
+
+import { llmCall, type LlmCallResult } from '../llm/client.js';
+import type { LlmUsage } from '../events/types.js';
+import { planOutcomeSchema, type PlanOutcome } from './plan-schema.js';
+
+// --- core op signatures (static — LLD §2.2; never varies across turns) ----
+
+const CORE_OPS_TEXT = [
+  'core.filter     {in: Ref, field, op: eq|neq|gt|lt|contains, value}        -> {items}',
+  'core.exclude_by {in: Ref, field, op, value}       // scalar predicate     -> {items}',
+  'core.anti_join  {in: Ref, key, exclude: Ref, excludeKey}  // set difference -> {items}',
+  'core.join       {in: Ref, key, with: Ref, withKey, as}    // enrich        -> {items}',
+  'core.pluck      {in: Ref, field}                                          -> {items}',
+  'core.distribute {items: Ref, across: Ref, strategy: "round_robin"}',
+  '                -> {items: Array<{item, assignee}>}        // shape is normative',
+].join('\n');
+
+// --- SYSTEM prompt (BYTE-STABLE — no interpolation, snapshot-tested) ------
+
+const SYSTEM_PROMPT = `You are the planner for a CRM automation agent. Given a user request, the
+current working state, and a shortlist of candidate actions, you MUST
+respond with exactly one JSON object matching the PlanOutcome schema:
+
+  {"kind":"plan", "plan": {"goal": string, "steps": Step[]}}
+  {"kind":"search", "queries": string[]}
+  {"kind":"clarify", "question": string}
+  {"kind":"unsupported", "reason": string}
+  {"kind":"respond", "text": string}
+
+Choose "plan" whenever the request can be satisfied by calling one or more
+of the listed candidate actions (optionally combined with the core.* data
+ops described below). Choose "search" ONLY when NONE of the listed
+candidate actions fit the request and a different retrieval round might
+surface one that does — you get at most 2 search rounds per turn, so only
+ask when you are confident a better action exists but was not shown to you.
+Choose "clarify" when the request is genuinely ambiguous or missing a
+required parameter that is not already present in the working state or
+transcript — ask exactly ONE focused question, and NEVER ask for
+information that is already visible to you (re-asking known information is
+a hard failure). Choose "unsupported" when the request cannot be satisfied
+by any combination of available actions, with a short honest "reason".
+Choose "respond" for requests that need no action at all (small talk,
+clarifying statements the user already answered, or a direct answer you
+already know from the working state).
+
+A Step has this exact shape:
+  {
+    "id": "s1",                        // unique within the plan
+    "action": "module.slug",           // from the candidate list, a prior
+                                        // search round, or "core.*"
+    "params": { ... },                 // JSON literals and/or refs (below)
+    "dependsOn": ["s0"],                // step ids this step waits on
+    "forEach": "$s2.items",             // OPTIONAL: fan out over a list;
+                                        // binds $item inside THIS step only
+    "when": {"ref": "$s1.items", "op": "nonempty", "value": ...},  // OPTIONAL
+    "expects": {"nonEmpty": true, "maxCount": 500, "minCount": 1}  // OPTIONAL
+  }
+
+Ref grammar — these are the ONLY legal forms for a param value that refers
+to another result (anything else is a plain JSON literal):
+  $s<N>[.path]          intra-plan step result, e.g. "$s1.items[*].id"
+  $r_t<T>_s<N>[.path]   a cross-turn handle shown to you in the working
+                        state, e.g. "$r_t3_s1" — use EXACTLY the ref string
+                        shown; do not invent one
+  $item[.path]          the current element — legal ONLY inside a step that
+                        itself declares "forEach"; e.g. "$item.item.id" or
+                        "$item.assignee" when forEach targets a
+                        core.distribute output
+  path := field | field.path | items[*]   (a trailing [*] plucks over an
+                        array — only valid as the LAST path segment)
+There is no "$turnN.sM" syntax. Never fabricate an id or a ref that was not
+shown to you — always resolve data through steps/refs, never by typing in a
+literal id you merely inferred from a result.
+
+Built-in data ops (deterministic, zero cost, risk=read — always available,
+not part of the candidate list because they never change):
+${CORE_OPS_TEXT}
+
+Guidance:
+- Prefer the fewest steps that correctly satisfy the request.
+- Use "dependsOn" to express ordering; a step may read another step's
+  output only if it depends on it (directly or transitively).
+- Use "forEach" for per-item writes (e.g. creating N tasks); it gates once
+  for the whole fan-out, not per item — do not unroll it into N steps.
+- Use "expects" on a read step when a later step's correctness depends on a
+  non-trivial assumption about that read (e.g. "the search actually found
+  leads") so a violation is caught before writes run.
+- If the working state already contains a cross-turn handle or an active
+  task frame with filters, build directly on it — do not re-ask or re-fetch.
+- Respond with the JSON object only. No prose, no markdown fences.`;
+
+// --- USER prompt assembly ---------------------------------------------------
+
+export interface PlannerPromptCtx {
+  /** Rendered WorkingState block (agent/memory.ts, later task) — placed at
+   * the END of <context> per LLD §2.5's "Writer rule". */
+  workingStateBlock: string;
+  /** Rendered, masked transcript of the last ≤6 turns (agent/memory.ts). */
+  maskedTurns: string;
+  /** Rendered playbook body, if retrieval matched one (LLD §7). */
+  playbookBody?: string;
+  /** Rendered candidate action cards (agent/retrieval.ts `renderCards`). */
+  cards: string;
+  /** Query-rewritten, standalone version of the user's request. */
+  rewrittenRequest: string;
+  /** The user's original, unrewritten message. */
+  rawRequest: string;
+  /** Virtual-clock "now", ISO-8601 — NEVER wall-clock (LLD §3.2). */
+  nowIso: string;
+}
+
+function buildUserPrompt(ctx: PlannerPromptCtx): string {
+  const sections: string[] = [];
+
+  sections.push(
+    [
+      '<context>',
+      `now: ${ctx.nowIso}`,
+      '',
+      ctx.maskedTurns,
+      '',
+      ctx.workingStateBlock,
+      '</context>',
+    ].join('\n'),
+  );
+
+  if (ctx.playbookBody !== undefined) {
+    sections.push(['<playbook>', ctx.playbookBody, '</playbook>'].join('\n'));
+  }
+
+  sections.push(
+    [
+      '<actions>',
+      ctx.cards,
+      '',
+      'If none of the actions above fit the request, you may respond with',
+      '{"kind":"search","queries":[...]} to request a different retrieval round',
+      '(this is the ONLY way to look beyond this shortlist — there is no',
+      'separate search_more_actions tool).',
+      '</actions>',
+    ].join('\n'),
+  );
+
+  sections.push(
+    ['<request>', ctx.rewrittenRequest, '', `(original message: ${ctx.rawRequest})`, '</request>'].join('\n'),
+  );
+
+  return sections.join('\n\n');
+}
+
+/** Builds the planner's `{system, prompt}` pair. `system` is byte-stable
+ * across every call (no interpolation) — see `planner.test.ts`'s snapshot. */
+export function buildPlannerPrompt(ctx: PlannerPromptCtx): { system: string; prompt: string } {
+  return { system: SYSTEM_PROMPT, prompt: buildUserPrompt(ctx) };
+}
+
+// --- plan() — the actual LLM call -------------------------------------------
+
+export interface PlanCtx extends PlannerPromptCtx {
+  /** Needed by `llmCall` for span/budget accounting — not part of the
+   * prompt itself. */
+  turnId: string;
+}
+
+export interface PlanResult {
+  outcome: PlanOutcome;
+  usage: LlmUsage;
+  spanId: string;
+}
+
+export async function plan(ctx: PlanCtx, model: string): Promise<PlanResult> {
+  const { system, prompt } = buildPlannerPrompt(ctx);
+  const result: LlmCallResult<PlanOutcome> = await llmCall<PlanOutcome>({
+    stage: 'plan',
+    model,
+    schema: planOutcomeSchema,
+    system,
+    prompt,
+    turnId: ctx.turnId,
+  });
+  return { outcome: result.value as PlanOutcome, usage: result.usage, spanId: result.spanId };
+}

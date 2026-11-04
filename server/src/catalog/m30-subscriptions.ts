@@ -319,8 +319,11 @@ const setSubscriptionTrialEnd: ActionDef<z.infer<typeof setSubscriptionTrialEndI
   inputSchema: setSubscriptionTrialEndInput,
   outputSchema: subscriptionView,
   searchCard: {
-    synonyms: ['extend trial', 'set trial end date'],
-    examplePhrasings: ["Extend this customer's trial by a week"],
+    synonyms: ['extend trial', 'set trial end date', 'more time before we start charging their card'],
+    examplePhrasings: [
+      "Extend this customer's trial by a week",
+      'Give this subscriber more time before we start charging their card',
+    ],
   },
   handler: withIdempotentWrite(async (input, ctx) => {
     const sub = getSubscriptionRow(ctx.db, input.id);

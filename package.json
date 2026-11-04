@@ -18,7 +18,7 @@
     "seed": "tsx scripts/seed-standard.ts",
     "transcribe-catalog": "tsx scripts/transcribe-catalog.ts",
     "smoke": "tsx eval/smoke.ts",
-    "probe": "tsx eval/probe.ts",
+    "probe": "tsx scripts/probe.ts",
     "eval": "tsx eval/run.ts",
     "eval:quick": "tsx eval/run.ts --quick",
     "eval:baseline": "tsx eval/run.ts --baseline",
@@ -30,6 +30,7 @@
   "devDependencies": {
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.0",
+    "yaml": "^2.9.1"
   }
 }

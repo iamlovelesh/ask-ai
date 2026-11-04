@@ -504,8 +504,11 @@ const listFormSubmissions: ActionDef<z.infer<typeof listFormSubmissionsInput>, L
   inputSchema: listFormSubmissionsInput,
   outputSchema: listFormSubmissionsOutput,
   searchCard: {
-    synonyms: ['form responses', 'form submissions'],
-    examplePhrasings: ['Show me the submissions for this form'],
+    synonyms: ['form responses', 'form submissions', 'what people sent in on our signup page'],
+    examplePhrasings: [
+      'Show me the submissions for this form',
+      'What have people submitted through our signup page?',
+    ],
   },
   jit: 'Results cap at 50 inline rows; beyond that you get {__spill:true,total,sample}.',
   handler: async (input, ctx) => {

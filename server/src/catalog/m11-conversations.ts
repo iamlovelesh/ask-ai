@@ -467,8 +467,11 @@ const listUnansweredConversations: ActionDef<
   inputSchema: listUnansweredConversationsInput,
   outputSchema: listUnansweredConversationsOutput,
   searchCard: {
-    synonyms: ['unreplied conversations', 'needs a reply'],
-    examplePhrasings: ['Which conversations are waiting on a reply from us?'],
+    synonyms: ['unreplied conversations', 'needs a reply', 'people we never replied to'],
+    examplePhrasings: [
+      'Which conversations are waiting on a reply from us?',
+      'Who messaged us that we never wrote back to?',
+    ],
   },
   jit: 'Results cap at 50 inline rows; beyond that you get {__spill:true,total,sample}.',
   handler: async (input, ctx) => {

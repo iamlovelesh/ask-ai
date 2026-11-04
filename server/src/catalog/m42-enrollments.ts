@@ -422,7 +422,13 @@ const getLearnerProgress: ActionDef<z.infer<typeof getLearnerProgressInput>, z.i
   entities: ['participations', 'records', 'courses'],
   inputSchema: getLearnerProgressInput,
   outputSchema: learnerProgressOutput,
-  searchCard: { synonyms: ['course progress', 'how far along'], examplePhrasings: ['How much of this course has this learner completed?'] },
+  searchCard: {
+    synonyms: ['course progress', 'how far along', 'finished watching training videos'],
+    examplePhrasings: [
+      'How much of this course has this learner completed?',
+      "Has this learner finished watching their training videos yet?",
+    ],
+  },
   handler: async (input, ctx) => {
     const row = getEnrollmentRow(ctx.db, input.id);
     const courseId = row['parent_id'] as string;
