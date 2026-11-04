@@ -68,14 +68,44 @@ export interface ExecutionMetrics {
 }
 
 export interface ExecutionResult {
-  status: 'done' | 'cancelled' | 'failed' | 'halted';
+  status: 'done' | 'cancelled' | 'failed' | 'halted' | 'clarify';
   /** Present only when `status === 'halted'`. */
   halted?: 'stuck';
+  /** Present only when `status === 'clarify'` (an `onWriteStratum` joiner
+   * decision asked a question mid-execution — LLD §5.4). */
+  clarifyQuestion?: string;
+  /** Present only when `status === 'failed'` via an `onWriteStratum`
+   * `'abort'` decision — the human-readable reason to surface honestly
+   * (LLD §5.4 "then honest partial report"). */
+  abortReason?: string;
   stepStates: Record<string, StepRecord>;
   /** Step ids of successfully completed READ steps (core.* + risk:'read'). */
   completedReads: string[];
   metrics: ExecutionMetrics;
 }
+
+/** Joiner checkpoint input (LLD §5.4) — handed to `onWriteStratum` once per
+ * write-bearing stratum, before its writes run. `plan` is the CURRENT
+ * (possibly already-patched) plan; `completed` carries every step result
+ * recorded so far (reads AND writes from earlier strata); `upcoming` is
+ * this stratum's write steps (the ones `checkStratum`'s forEach-emptiness
+ * check reasons about). */
+export interface WriteStratumCtx {
+  plan: Plan;
+  completed: Record<string, { result: unknown }>;
+  upcoming: readonly Step[];
+}
+
+/** The joiner's verdict on a checkpoint (LLD §5.4's `patch | proceed |
+ * clarify | abort`), translated into what the executor needs to act on.
+ * `'patch'` carries the NEW planRev the caller already bumped (idempotency
+ * keys for steps run after the patch use it) — this module never decides
+ * planRev itself, it only adopts the value it's given. */
+export type WriteStratumDecision =
+  | { decision: 'proceed' }
+  | { decision: 'patch'; patchedSteps: Step[]; planRev: number }
+  | { decision: 'clarify'; question: string }
+  | { decision: 'abort'; reason: string };
 
 export interface ExecuteInput {
   plan: Plan;
@@ -92,6 +122,13 @@ export interface ExecuteInput {
   confirm: ConfirmBroker;
   /** TRANSIENT retry backoff (LLD §5.3: 250ms). Overridable for tests. */
   retryDelayMs?: number;
+  /** LLD §5.4 joiner checkpoint hook — called once per write-bearing
+   * stratum, before its writes run. Optional: omitted entirely (as every
+   * Task 11 test does), this is a no-op pass-through — behavior is
+   * byte-identical to the pre-Task-13 executor. The real implementation
+   * (`checkStratum` + `joinerRepair`, both LLM/budget-aware) lives in
+   * `agent/pipeline.ts` — this module stays LLM-free. */
+  onWriteStratum?: (ctx: WriteStratumCtx) => Promise<WriteStratumDecision>;
 }
 
 const DRIFT_RECONFIRM_THRESHOLD = 0.25; // LLD §2.5: drift >25% forces re-confirm
@@ -260,7 +297,12 @@ function sampleNames(items: readonly unknown[], max = 5): string[] {
 // --- the executor -----------------------------------------------------------
 
 export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
-  const { plan, planRev, turnId, registry, crm, refs, onEvent, confirm } = input;
+  const { turnId, registry, crm, refs, onEvent, confirm } = input;
+  // Mutable: a `'patch'` joiner decision (LLD §5.4) replaces the remaining
+  // step array and bumps planRev — every other reference in this function
+  // reads these two via closure, so reassigning here is all a patch needs.
+  let plan = input.plan;
+  let planRev = input.planRev;
   const retryDelayMs = input.retryDelayMs ?? 250;
   const clock = new VirtualClock();
 
@@ -275,6 +317,9 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
 
   let denied = false;
   let halted = false;
+  let clarifyQuestion: string | undefined;
+  let aborted = false;
+  let abortReason: string | undefined;
 
   const terminal = (s: StepLifecycle): boolean =>
     s === 'done' || s === 'failed' || s === 'skipped' || s === 'cancelled';
@@ -666,7 +711,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
   // --- scheduling loop ------------------------------------------------------
 
   for (;;) {
-    if (halted) break;
+    if (halted || aborted || clarifyQuestion !== undefined) break;
 
     const frontier = plan.steps.filter((step) => {
       const rec = states.get(step.id);
@@ -713,6 +758,44 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
       if (halted) break;
     }
     if (halted) break;
+
+    // JOINER CHECKPOINT (LLD §5.4): fires once per write-bearing stratum,
+    // before its writes run — never for a reads-only stratum. `undefined`
+    // (no hook supplied) is a no-op pass-through, byte-identical to the
+    // pre-Task-13 executor (every Task 11 test omits it).
+    if (writes.length > 0 && input.onWriteStratum) {
+      const completedForCheckpoint: Record<string, { result: unknown }> = {};
+      for (const [id, result] of stepResults) completedForCheckpoint[id] = { result };
+
+      const decision = await input.onWriteStratum({ plan, completed: completedForCheckpoint, upcoming: writes });
+
+      if (decision.decision === 'clarify') {
+        clarifyQuestion = decision.question;
+        break;
+      }
+      if (decision.decision === 'abort') {
+        aborted = true;
+        abortReason = decision.reason;
+        break;
+      }
+      if (decision.decision === 'patch') {
+        // "Replace the FULL remaining step array" (LLD §5.4): keep every
+        // step already terminal, discard every other pending/not-yet-run
+        // step, splice in the corrected array, adopt the bumped planRev
+        // the caller already computed (idempotency keys for steps run
+        // from here on use it).
+        const terminalIds = new Set([...states.keys()].filter((id) => terminal(states.get(id)!.state)));
+        const keptSteps = plan.steps.filter((s) => terminalIds.has(s.id));
+        plan = { ...plan, steps: [...keptSteps, ...decision.patchedSteps] };
+        for (const s of decision.patchedSteps) {
+          if (!states.has(s.id)) states.set(s.id, { state: 'pending' });
+        }
+        planRev = decision.planRev;
+        continue; // re-enter the scheduling loop against the patched plan
+      }
+      // decision === 'proceed' → fall through and run `writes` as scheduled.
+    }
+
     for (const step of writes) {
       await runStep(step);
       if (halted) break;
@@ -725,7 +808,11 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
   for (const [id, rec] of states) stepStates[id] = rec;
 
   let status: ExecutionResult['status'];
-  if (halted) {
+  if (clarifyQuestion !== undefined) {
+    status = 'clarify';
+  } else if (aborted) {
+    status = 'failed';
+  } else if (halted) {
     status = 'halted';
   } else if (denied) {
     status = 'cancelled';
@@ -737,6 +824,8 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
 
   const result: ExecutionResult = { status, stepStates, completedReads, metrics };
   if (status === 'halted') result.halted = 'stuck';
+  if (status === 'clarify' && clarifyQuestion !== undefined) result.clarifyQuestion = clarifyQuestion;
+  if (aborted && abortReason !== undefined) result.abortReason = abortReason;
   return result;
 }
 

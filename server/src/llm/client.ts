@@ -7,10 +7,11 @@
  */
 
 import type { ZodType } from 'zod';
-import { generateObject, generateText, type LanguageModel } from 'ai';
+import { generateObject, generateText, type JSONValue, type LanguageModel } from 'ai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { withBackoff, type BackoffOptions } from './backoff.js';
 import { priceFor } from './prices.js';
+import { isGpt5Family } from './router.js';
 import { openSpans, type Spans, type SpanHandle } from '../events/trace.js';
 import type { LlmUsage } from '../events/types.js';
 
@@ -24,6 +25,12 @@ export interface LlmCallOptions<T> {
   prompt: string;
   turnId: string;
   maxOutputTokens?: number;
+  /** Passthrough to the AI SDK's `providerOptions` (provider-id-keyed JSON).
+   * Merged UNDER the automatic GPT-5 minimal-reasoning default below — an
+   * explicit caller value for the same provider key wins. Most callers never
+   * need this; it exists for the rare case a caller wants to override/extend
+   * the provider options LLD §5.5 otherwise sets automatically. */
+  providerOptions?: Record<string, Record<string, JSONValue>>;
 }
 
 export interface LlmCallResult<T> {
@@ -191,6 +198,13 @@ export async function llmCall<T = string>(opts: LlmCallOptions<T>): Promise<LlmC
   // real monotonic timer, same as `store/reset.ts`'s `performance.now()` use.
   const startedAtMs = performance.now();
 
+  // LLD §5.5: "GPT-5 family models always minimal reasoning effort" — applied
+  // automatically so every call site (planner/joiner/baseline) gets it for
+  // free; `opts.providerOptions`, if supplied, wins per provider key.
+  const providerOptions: Record<string, Record<string, JSONValue>> | undefined = isGpt5Family(opts.model)
+    ? { openrouter: { reasoning: { effort: 'minimal' } }, ...opts.providerOptions }
+    : opts.providerOptions;
+
   try {
     const { value: generated, attempts } = await withBackoff<RawGenResult>(async () => {
       const common = {
@@ -199,6 +213,7 @@ export async function llmCall<T = string>(opts: LlmCallOptions<T>): Promise<LlmC
         prompt: opts.prompt,
         maxRetries: 0,
         ...(opts.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
+        ...(providerOptions !== undefined ? { providerOptions } : {}),
       };
       if (opts.schema) {
         const result = await generateObject({ ...common, schema: opts.schema });
