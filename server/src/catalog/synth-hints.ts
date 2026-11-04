@@ -40,6 +40,16 @@ export interface SynthHint {
   table: string;
   /** discriminator value to filter on, e.g. 'coupon' — omit for plain (non-kind) tables */
   kind?: string;
+  /**
+   * discriminator COLUMN name — defaults to `'kind'` when omitted (every
+   * M02-M10 hint relies on this default, unchanged). Task 9 batch 2 added
+   * this: `messages` (M12 SMS / M13 Email) is a second kind of shared
+   * mega-table — discriminated by a `channel` column, not `kind` — so a
+   * module whose discriminator column isn't literally named `kind` sets
+   * `column` explicitly, e.g. `{table:'messages', kind:'sms',
+   * column:'channel'}`.
+   */
+  column?: string;
 }
 
 /**

@@ -119,11 +119,12 @@ interface SynthCtx {
 }
 
 function seededId(ctx: SynthCtx, hint: SynthHint): string | undefined {
-  const offsetKey = `${hint.table}:${hint.kind ?? ''}`;
+  const column = hint.column ?? 'kind';
+  const offsetKey = `${hint.table}:${column}:${hint.kind ?? ''}`;
   const offset = ctx.usedOffsets.get(offsetKey) ?? 0;
   try {
     const sql = hint.kind
-      ? `SELECT id FROM ${hint.table} WHERE kind = ? ORDER BY id LIMIT 1 OFFSET ?`
+      ? `SELECT id FROM ${hint.table} WHERE ${column} = ? ORDER BY id LIMIT 1 OFFSET ?`
       : `SELECT id FROM ${hint.table} ORDER BY id LIMIT 1 OFFSET ?`;
     const params = hint.kind ? [hint.kind, offset] : [offset];
     const row = ctx.tx.get(sql, params);

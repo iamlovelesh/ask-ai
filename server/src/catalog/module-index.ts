@@ -32,6 +32,13 @@ import { m07Notes, m07DiscriminationChecks, m07SynthHints } from './m07-notes.js
 import { m08Tags, m08DiscriminationChecks, m08SynthHints } from './m08-tags.js';
 import { m09SmartLists, m09DiscriminationChecks, m09SynthHints } from './m09-smart_lists.js';
 import { m10CustomFields, m10DiscriminationChecks, m10SynthHints } from './m10-custom_fields.js';
+import { m11Conversations, m11DiscriminationChecks, m11SynthHints } from './m11-conversations.js';
+import { m12Sms, m12DiscriminationChecks, m12SynthHints } from './m12-sms.js';
+import { m13Email, m13DiscriminationChecks, m13SynthHints } from './m13-email.js';
+import { m14MessageTemplates, m14DiscriminationChecks, m14SynthHints } from './m14-message_templates.js';
+import { m15Campaigns, m15DiscriminationChecks, m15SynthHints } from './m15-campaigns.js';
+import { m16Workflows, m16DiscriminationChecks, m16SynthHints } from './m16-workflows.js';
+import { m17EventTriggers, m17DiscriminationChecks, m17SynthHints } from './m17-event_triggers.js';
 
 /** One entry per module file, in M01…M50 order. */
 export const MODULE_ACTION_ARRAYS: readonly ActionDef[][] = [
@@ -45,6 +52,13 @@ export const MODULE_ACTION_ARRAYS: readonly ActionDef[][] = [
   m08Tags,
   m09SmartLists,
   m10CustomFields,
+  m11Conversations,
+  m12Sms,
+  m13Email,
+  m14MessageTemplates,
+  m15Campaigns,
+  m16Workflows,
+  m17EventTriggers,
 ];
 
 /** One entry per module file's `discriminationChecks` export, flattened. */
@@ -59,6 +73,13 @@ export const MODULE_DISCRIMINATION_CHECKS: readonly DiscriminationCheck[] = [
   ...m08DiscriminationChecks,
   ...m09DiscriminationChecks,
   ...m10DiscriminationChecks,
+  ...m11DiscriminationChecks,
+  ...m12DiscriminationChecks,
+  ...m13DiscriminationChecks,
+  ...m14DiscriminationChecks,
+  ...m15DiscriminationChecks,
+  ...m16DiscriminationChecks,
+  ...m17DiscriminationChecks,
 ];
 
 /**
@@ -80,4 +101,11 @@ export const MODULE_SYNTH_HINTS: Readonly<SynthHints> = {
   ...m08SynthHints,
   ...m09SynthHints,
   ...m10SynthHints,
+  ...m11SynthHints,
+  ...m12SynthHints,
+  ...m13SynthHints,
+  ...m14SynthHints,
+  ...m15SynthHints,
+  ...m16SynthHints,
+  ...m17SynthHints,
 };
