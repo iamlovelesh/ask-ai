@@ -1,0 +1,554 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildCatalogSummary > is deterministic for a given registry (safe to snapshot byte-for-byte) 1`] = `
+"## Contacts
+- contacts.create_contact: Create a new contact record.
+- contacts.get_contact_details: Fetch a single contact by id.
+- contacts.search_contacts: Search non-archived contacts by name/email/phone and common filters.
+- contacts.update_contact_details: Patch editable fields on a contact.
+- contacts.archive_contact: Soft-delete a contact (idempotent).
+- contacts.merge_duplicate_contacts: Fold a duplicate contact into the primary: unions tags, repoints notes/tasks/messages, archives the duplicate.
+- contacts.assign_contact_owner: Set the owning user for a contact.
+- contacts.set_communication_preferences: Merge communication preferences (e.g. channel opt-ins) into a contact.
+- contacts.add_contact_relationship: Record a named relationship from this contact to another contact.
+- contacts.view_contact_activity_timeline: Chronological feed of notes, tasks, and messages tied to a contact.
+## Companies
+- companies.create_company: Create a new company record.
+- companies.get_company_details: Fetch a single company by id.
+- companies.search_companies: Search non-archived companies by name/domain and common filters.
+- companies.update_company_details: Patch editable fields on a company.
+- companies.archive_company: Soft-delete a company (idempotent).
+- companies.link_contact_to_company: Set a contact's company_id.
+- companies.unlink_contact_from_company: Clear a contact's company_id.
+- companies.assign_account_manager: Set the owning user for a company.
+- companies.merge_duplicate_companies: Fold a duplicate company into the primary: unions tags, repoints contacts/opportunities/quotes, archives the duplicate.
+- companies.list_company_contacts: List non-archived contacts belonging to a company.
+## Leads
+- leads.create_lead: Create a new lead record.
+- leads.get_lead_details: Fetch a single lead by id.
+- leads.search_leads: Search non-archived leads by name and common filters.
+- leads.update_lead_details: Patch editable fields on a lead.
+- leads.assign_lead_owner: Set the owning user for a lead.
+- leads.set_lead_source: Set the acquisition source for a lead.
+- leads.record_qualification_answers: Merge BANT/qualification answers into a lead.
+- leads.update_lead_score: Set the numeric qualification score (0-100) for a lead.
+- leads.disqualify_lead_with_reason: Mark a lead disqualified and record why.
+- leads.convert_lead_to_opportunity: Create an opportunity from a lead and mark the lead qualified.
+## Opportunities
+- opportunities.create_opportunity: Create a new sales opportunity.
+- opportunities.get_opportunity_details: Fetch a single opportunity by id.
+- opportunities.search_opportunities: Search non-archived opportunities by name and common filters.
+- opportunities.update_opportunity_value: Set the deal value (in cents) on an opportunity.
+- opportunities.move_opportunity_to_stage: Move an opportunity to a stage that exists in its pipeline's configuration.
+- opportunities.assign_opportunity_owner: Set the owning user for an opportunity.
+- opportunities.set_expected_close_date: Set the expected close date (epoch ms) on an opportunity.
+- opportunities.mark_opportunity_won: Close an opportunity as won.
+- opportunities.mark_opportunity_lost: Close an opportunity as lost.
+- opportunities.reopen_closed_opportunity: Reopen a previously won/lost opportunity.
+## Pipelines
+- pipelines.create_pipeline: Create a new sales pipeline with an ordered stage list.
+- pipelines.get_pipeline_configuration: Fetch a pipeline and its ordered stage list.
+- pipelines.list_pipelines: List non-archived pipelines.
+- pipelines.rename_pipeline: Rename a pipeline.
+- pipelines.archive_pipeline: Soft-delete a pipeline.
+- pipelines.add_pipeline_stage: Append a new stage to a pipeline.
+- pipelines.rename_pipeline_stage: Rename a stage in place, re-pointing opportunities currently in it.
+- pipelines.reorder_pipeline_stages: Replace a pipeline's stage order (must be the same set of stages).
+- pipelines.remove_empty_pipeline_stage: Remove a stage, refusing if any opportunity currently occupies it.
+- pipelines.set_stage_win_probability: Set the default win probability for a stage and apply it to opportunities currently in that stage.
+## Tasks
+- tasks.create_task: Create a new task, optionally due/owned/linked to a contact.
+- tasks.get_task_details: Fetch a single task by id.
+- tasks.search_tasks: Search non-archived tasks by title and common filters.
+- tasks.update_task_description: Set a task's description.
+- tasks.assign_task_owner: Set the owning user for a task.
+- tasks.set_task_due_date: Set a task due date (epoch ms).
+- tasks.set_task_priority: Set a task priority.
+- tasks.mark_task_complete: Mark a task completed.
+- tasks.reopen_task: Reopen a completed or cancelled task.
+- tasks.cancel_task: Cancel a task.
+## Notes
+- notes.create_note: Create a new note, optionally attached to a contact or another record.
+- notes.get_note: Fetch a single note by id.
+- notes.search_notes: Search non-archived notes by body and common filters.
+- notes.update_note: Replace a note's body.
+- notes.delete_note: Soft-delete a note.
+- notes.attach_note_to_record: Point a note at a related record (contact/company/lead/opportunity/task).
+- notes.detach_note_from_record: Clear a note's related-record link.
+- notes.pin_note: Pin a note.
+- notes.unpin_note: Unpin a note.
+- notes.view_note_revision_history: Reconstruct a minimal revision history (created + last edit) for a note.
+## Tags
+- tags.create_tag: Create a new tag definition.
+- tags.list_tags: List non-archived tag definitions.
+- tags.rename_tag: Rename a tag definition (does not relabel already-applied entries).
+- tags.set_tag_color: Set the display color for a tag.
+- tags.delete_unused_tag: Archive a tag definition, refusing if it is still applied anywhere.
+- tags.apply_tag_to_record: Add a tag to a contact or company.
+- tags.remove_tag_from_record: Remove a tag from a contact or company.
+- tags.list_records_with_tag: List contacts and/or companies carrying a tag.
+- tags.merge_tags: Fold a duplicate tag into the primary, relabeling every applied record.
+- tags.view_tag_usage_counts: Count how many contacts and companies carry a tag.
+## Smart Lists
+- smart_lists.create_smart_list: Create a new saved contact segment.
+- smart_lists.get_smart_list_definition: Fetch a smart list and its filter rules.
+- smart_lists.list_smart_lists: List non-archived smart lists.
+- smart_lists.rename_smart_list: Rename a smart list.
+- smart_lists.update_filter_rules: Replace the filter rules that define a smart list segment.
+- smart_lists.preview_matching_records: Preview the contacts a smart list's filter rules currently match.
+- smart_lists.count_matching_records: Count the contacts a smart list's filter rules currently match.
+- smart_lists.export_matching_records: Generate an export of the contacts matching a smart list (segment-wide — always gates) and stamp the smart list with its last-export time.
+- smart_lists.duplicate_smart_list: Clone a smart list (name + filter rules) as a new definition.
+- smart_lists.delete_smart_list: Archive a smart list.
+## Custom Fields
+- custom_fields.create_custom_field: Define a new custom field for a module.
+- custom_fields.get_field_definition: Fetch a single custom field definition.
+- custom_fields.list_fields_for_module: List non-archived custom fields defined on a given module.
+- custom_fields.rename_field_label: Rename a custom field's display label.
+- custom_fields.update_field_help_text: Set a custom field's help text.
+- custom_fields.set_field_validation_rules: Set the validation rules (e.g. required, max length) for a custom field.
+- custom_fields.add_dropdown_option: Add a selectable option to a dropdown-type custom field.
+- custom_fields.retire_dropdown_option: Move a dropdown option to the retired list (kept for historical values, hidden going forward).
+- custom_fields.set_record_field_value: Set a custom field value on a contact (the only entity with a custom_fields column).
+- custom_fields.archive_custom_field: Soft-delete a custom field definition.
+## Conversations
+- conversations.get_conversation: Fetch a single conversation thread by id.
+- conversations.search_conversations: Search non-archived conversation threads by contact/channel/status/reply-state.
+- conversations.assign_conversation_owner: Set the owning user for a conversation thread.
+- conversations.mark_conversation_read: Clear the unread flag on a conversation.
+- conversations.mark_conversation_unread: Set the unread flag on a conversation.
+- conversations.close_conversation: Close a conversation thread (reversible via reopen).
+- conversations.reopen_conversation: Reopen a closed or snoozed conversation thread.
+- conversations.add_internal_comment: Add a staff-only internal note on a conversation (not visible to the contact) — stored as a note.
+- conversations.summarize_conversation_history: Deterministic rollup of message counts and the most recent message in a thread.
+- conversations.list_unanswered_conversations: List conversations whose last message is inbound (no outbound reply sent after it yet).
+## Sms
+- sms.draft_sms: Create a draft outbound SMS, opening or reusing the contact's SMS thread.
+- sms.preview_sms_segmentation: Compute character count, encoding, and carrier segment count for SMS body text.
+- sms.send_sms: Send an SMS now — pass \`id\` to send an existing draft, or \`contact_id\`+\`body\` to send fresh (simulated external send).
+- sms.schedule_sms: Schedule an SMS for later — pass \`id\` to schedule an existing draft, or \`contact_id\`+\`body\` for a fresh scheduled message.
+- sms.cancel_scheduled_sms: Cancel a scheduled SMS, reverting it to draft.
+- sms.get_sms_details: Fetch a single SMS message by id.
+- sms.search_sms_messages: Search SMS messages by contact/status/date range.
+- sms.get_sms_delivery_status: Fetch the delivery status of a sent/scheduled SMS.
+- sms.receive_simulated_inbound_sms: Simulate an inbound SMS from a contact, updating the thread's unread/last-inbound state.
+- sms.record_sms_opt_out: Record that a contact has opted out of SMS messaging.
+## Email
+- email.draft_email: Create a draft outbound email, opening or reusing the contact's email thread.
+- email.preview_email: Compute word count and an approximate read time for an email subject/body.
+- email.send_email: Send an email now — pass \`id\` to send an existing draft, or \`contact_id\`+\`body\` to send fresh (simulated external send).
+- email.schedule_email: Schedule an email for later — pass \`id\` to schedule an existing draft, or \`contact_id\`+\`body\` for a fresh scheduled email.
+- email.cancel_scheduled_email: Cancel a scheduled email, reverting it to draft.
+- email.get_email_details: Fetch a single email message by id.
+- email.search_email_messages: Search email messages by contact/status/date range.
+- email.get_email_delivery_status: Fetch the delivery status of a sent/scheduled email.
+- email.receive_simulated_inbound_email: Simulate an inbound email from a contact, updating the thread's unread/last-inbound state.
+- email.record_email_unsubscribe: Record that a contact has unsubscribed from email.
+## Message Templates
+- message_templates.create_message_template: Create a new SMS/email message template.
+- message_templates.get_template: Fetch a single message template by id.
+- message_templates.search_templates: Search non-archived message templates by status (channel filtered in-memory).
+- message_templates.update_template_content: Replace a template's subject/body, archiving the prior content into its version history.
+- message_templates.archive_template: Soft-delete a message template.
+- message_templates.duplicate_template: Clone a message template (content + variables, fresh version history) as a new definition.
+- message_templates.define_template_variables: Declare the list of \`{{var}}\` placeholder names a template expects.
+- message_templates.validate_template_variables: Diff the \`{{var}}\` placeholders actually referenced in a template against supplied sample data keys.
+- message_templates.render_template_with_sample_data: Substitute \`{{var}}\` placeholders with supplied sample data (unresolved placeholders are left intact).
+- message_templates.restore_template_version: Restore a template's content from its version history (0 = oldest saved version).
+## Campaigns
+- campaigns.create_campaign: Create a new draft marketing campaign.
+- campaigns.get_campaign_details: Fetch a single campaign by id.
+- campaigns.list_campaigns: List non-archived campaigns.
+- campaigns.set_campaign_audience: Store the audience definition for a campaign — a filter-rules set (same vocabulary as smart lists) or a reference to an existing smart list.
+- campaigns.add_campaign_message_step: Append a message step (channel + optional template + delay) to a campaign sequence.
+- campaigns.set_campaign_schedule: Set a campaign's start time (and optional timezone).
+- campaigns.launch_campaign: Launch a campaign to its full audience (segment-wide — always gates).
+- campaigns.pause_campaign: Pause an active campaign.
+- campaigns.resume_campaign: Resume a paused campaign.
+- campaigns.get_campaign_performance: Compute real message counts (sent/delivered/failed) for a campaign from its messages.
+## Workflows
+- workflows.create_workflow: Create a new draft automation workflow.
+- workflows.get_workflow_definition: Fetch a single workflow and its ordered step list.
+- workflows.list_workflows: List non-archived workflows.
+- workflows.add_workflow_step: Append a new step to a workflow.
+- workflows.update_workflow_step: Update an existing step's type/config in place.
+- workflows.remove_workflow_step: Remove a step from a workflow.
+- workflows.validate_workflow: Check a workflow for basic structural validity (non-empty, ordered steps) without publishing it.
+- workflows.publish_workflow: Publish a workflow (requires at least one step).
+- workflows.pause_workflow: Pause a published workflow.
+- workflows.get_workflow_execution_history: List recorded execution-log entries for a workflow (empty for workflows that have never run — there is no execution engine in this backend).
+## Event Triggers
+- event_triggers.create_event_trigger: Create a new event trigger (starts inactive — use enable_trigger to turn it on).
+- event_triggers.get_trigger_configuration: Fetch a single event trigger by id.
+- event_triggers.list_event_triggers: List non-archived event triggers.
+- event_triggers.set_trigger_event_type: Set the catalog event type (e.g. contact.created) a trigger listens for.
+- event_triggers.update_trigger_conditions: Replace the condition map a trigger evaluates against incoming event payloads.
+- event_triggers.bind_trigger_to_workflow: Link a trigger to the workflow it should run when it fires (validates both exist).
+- event_triggers.enable_trigger: Activate an inactive event trigger.
+- event_triggers.disable_trigger: Deactivate an active event trigger.
+- event_triggers.test_trigger_with_sample_event: Dry-run a trigger's condition map against a sample event payload (real AND evaluation, boolean result). Does not fire the trigger or write anything.
+- event_triggers.get_trigger_firing_history: List recorded firing-log entries for a trigger (empty for triggers that have never fired — there is no firing engine in this backend).
+## Forms
+- forms.create_form: Create a new form definition (no fields yet — add them via add_form_field).
+- forms.get_form_definition: Fetch a form and its fields/validation rules.
+- forms.list_forms: List non-archived forms.
+- forms.add_form_field: Append a new field to a form.
+- forms.update_form_field: Patch an existing form field by key.
+- forms.reorder_form_fields: Replace a form's field order (must be exactly the same set of field keys).
+- forms.set_form_validation_rules: Set the validation rules object for one of a form's fields.
+- forms.publish_form: Publish a form so it can accept submissions.
+- forms.submit_simulated_form_response: Record a simulated submission against a form (writes a \`records\` row).
+- forms.list_form_submissions: List real submissions recorded against a form.
+## Surveys
+- surveys.create_survey: Create a new survey definition (no questions yet — add them via add_survey_question).
+- surveys.get_survey_definition: Fetch a survey and its questions/branching rules.
+- surveys.list_surveys: List non-archived surveys.
+- surveys.add_survey_question: Append a new question to a survey.
+- surveys.update_survey_question: Patch an existing survey question by key.
+- surveys.set_question_branching_rules: Set the conditional skip-to-question rules for a survey question.
+- surveys.publish_survey: Publish a survey so it can accept responses.
+- surveys.close_survey: Close a survey so it no longer accepts responses.
+- surveys.submit_simulated_survey_response: Record a simulated response against a survey (writes a \`records\` row).
+- surveys.get_survey_response_summary: Aggregate real per-question response counts/value distributions from recorded responses.
+## Calendars
+- calendars.create_calendar: Create a new scheduling calendar.
+- calendars.get_calendar_settings: Fetch a calendar and its top-level scheduling settings.
+- calendars.list_calendars: List non-archived calendars.
+- calendars.update_calendar_details: Patch a calendar's editable top-level fields (currently: name).
+- calendars.set_calendar_timezone: Set a calendar's timezone label.
+- calendars.assign_calendar_host: Set the hosting user for a calendar.
+- calendars.set_appointment_duration: Set the default appointment duration (minutes) for a calendar.
+- calendars.set_booking_buffer: Set the buffer time (minutes) required between bookings on a calendar.
+- calendars.set_calendar_visibility: Set whether a calendar is publicly bookable or private.
+- calendars.archive_calendar: Soft-delete a calendar.
+## Appointments
+- appointments.create_appointment: Book a new appointment on a calendar.
+- appointments.get_appointment_details: Fetch a single appointment by id.
+- appointments.search_appointments: Search appointments by contact(s), calendar, host, status, and start-time range.
+- appointments.reschedule_appointment: Move a booked appointment to a new start/end time.
+- appointments.cancel_appointment: Cancel an appointment (soft status change, not a delete).
+- appointments.assign_appointment_host: Reassign the hosting user for an appointment.
+- appointments.add_appointment_attendee: Set the attendee contact for an appointment (single-attendee model — see module header).
+- appointments.remove_appointment_attendee: Clear the attendee contact from an appointment (single-attendee model — see module header).
+- appointments.mark_attendee_no_show: Mark an appointment's attendee as a no-show.
+- appointments.mark_appointment_completed: Mark an appointment as completed.
+## Availability
+- availability.set_weekly_working_hours: Replace a calendar's weekly recurring working-hours schedule.
+- availability.get_weekly_working_hours: Fetch a calendar's weekly recurring working-hours schedule.
+- availability.add_date_specific_availability: Override a calendar's availability for one specific date (replaces any existing override for that date).
+- availability.remove_date_specific_availability: Remove a date-specific availability override, reverting that date to the weekly default.
+- availability.block_time_range: Block a specific time range on a calendar so it is excluded from available slots.
+- availability.remove_time_block: Remove a previously-blocked time range from a calendar.
+- availability.set_minimum_booking_notice: Set the minimum lead time (minutes) required before a new booking.
+- availability.set_maximum_booking_horizon: Set how many days into the future a calendar can be booked.
+- availability.find_available_slots: Compute real open booking slots for a calendar in a time range: weekly hours minus blocks minus booked appointments.
+- availability.check_scheduling_conflicts: Real overlap check for a time range against booked appointments and blocks on a calendar.
+## Booking Pages
+- booking_pages.create_booking_page: Create a new booking page (link a calendar via link_calendar_to_booking_page before publishing).
+- booking_pages.get_booking_page: Fetch a single booking page by id.
+- booking_pages.list_booking_pages: List non-archived booking pages.
+- booking_pages.update_booking_page_content: Patch a booking page's headline/description.
+- booking_pages.link_calendar_to_booking_page: Link a booking page to the calendar it books against (validates the calendar exists).
+- booking_pages.set_booking_intake_fields: Replace the list of intake fields a booker must fill in.
+- booking_pages.set_booking_confirmation_message: Set the message shown after a successful booking.
+- booking_pages.set_booking_redirect_url: Set the URL a booker is redirected to after a successful booking.
+- booking_pages.publish_booking_page: Publish a booking page (requires a linked calendar).
+- booking_pages.unpublish_booking_page: Take a booking page offline (back to draft).
+## Events
+- events.create_event: Create a new event.
+- events.get_event_details: Fetch a single event by id.
+- events.search_events: Search non-archived events by name, status, host, and start-time range.
+- events.update_event_details: Patch an event's editable fields.
+- events.set_event_capacity: Set the maximum attendee capacity for an event (refuses to go below the current confirmed count).
+- events.register_attendee: Register a contact for an event; waitlists automatically when the event is at capacity.
+- events.cancel_attendee_registration: Cancel a contact's registration for an event.
+- events.add_attendee_to_waitlist: Add a contact directly to an event's waitlist, bypassing the capacity check.
+- events.promote_waitlisted_attendee: Promote the longest-waiting waitlisted attendee for an event off the waitlist (FIFO).
+- events.check_in_attendee: Check in a contact at an event (validates their registration exists).
+## Products
+- products.create_product: Create a new sellable product.
+- products.get_product_details: Fetch a single product by id.
+- products.search_products: Search non-archived products by name and common filters.
+- products.update_product_details: Patch editable fields on a product.
+- products.archive_product: Soft-delete a product and mark it archived (idempotent).
+- products.add_product_variant: Add a new variant (price-list entry with its own name/SKU) to a product.
+- products.update_product_variant: Patch an existing product variant (name/SKU/amount/currency/interval).
+- products.set_product_sku: Set a product's own top-level SKU.
+- products.set_inventory_quantity: Set the tracked on-hand inventory quantity for a product.
+- products.get_inventory_availability: Check whether a product is in stock. A product with no tracked quantity is treated as always available (untracked).
+## Prices
+- prices.create_product_price: Add a new price-list entry to a product.
+- prices.get_price_details: Fetch a single price-list entry.
+- prices.list_product_prices: List the non-archived price-list entries for a product.
+- prices.update_price_label: Rename a price-list entry's display label.
+- prices.set_price_amount: Set a price-list entry's amount.
+- prices.set_price_currency: Set a price-list entry's currency code.
+- prices.set_billing_interval: Set a price-list entry's recurring billing interval.
+- prices.set_trial_period: Set a price-list entry's free-trial length in days (null clears it).
+- prices.set_default_product_price: Mark one price-list entry as the product's default (and sync products.default_price_cents).
+- prices.archive_price: Soft-delete a price-list entry (idempotent).
+## Quotes
+- quotes.create_quote: Create a new draft quote for a contact.
+- quotes.get_quote_details: Fetch a quote and its line items.
+- quotes.search_quotes: Search non-archived quotes by common filters.
+- quotes.add_quote_line_item: Add a product line item to a quote. total_cents is fully recomputed.
+- quotes.update_quote_line_item: Patch a quote line item's quantity/price. total_cents is fully recomputed.
+- quotes.set_quote_expiry: Set the date a quote stops being valid.
+- quotes.apply_quote_discount: Apply a percent/fixed discount to a quote. total_cents is recomputed now and on every future line-item change.
+- quotes.send_quote_for_acceptance: Transition a draft quote to sent.
+- quotes.record_quote_acceptance: Mark a sent quote as accepted by the customer.
+- quotes.convert_accepted_quote_to_invoice: Create a draft invoice from an accepted quote, copying its line items.
+## Invoices
+- invoices.create_invoice: Create a new draft invoice for a contact.
+- invoices.get_invoice_details: Fetch an invoice and its line items.
+- invoices.search_invoices: Search non-archived invoices. Pass min_days_overdue to find unpaid invoices overdue by more than N days (status='issued' AND due_date < now - N days).
+- invoices.add_invoice_line_item: Add a product line item to a draft invoice. total_cents is fully recomputed.
+- invoices.update_draft_invoice: Patch header fields on a draft invoice.
+- invoices.set_invoice_due_date: Set an invoice due date.
+- invoices.issue_invoice: Transition a draft invoice to issued, setting issued_at and due_date (net-30 default).
+- invoices.send_invoice_reminder: Send a simulated payment reminder email for an issued invoice. Creates a real messages row (channel=email) tagged [invoice_reminder:{id}] for dedup lookups.
+- invoices.void_unpaid_invoice: Void an invoice that has not been paid.
+- invoices.list_overdue_invoices: List unpaid invoices overdue by more than min_days_overdue days (status='issued' AND due_date < now - min_days_overdue days; default 0 = any overdue).
+## Payments
+- payments.create_payment_request: Create a pending payment request for a contact.
+- payments.get_payment_request: Fetch a payment (request or settled) by id.
+- payments.cancel_unpaid_payment_request: Cancel a payment request that has not been settled.
+- payments.record_simulated_payment: Record a simulated payment: settles an existing pending request (if id is given) or creates and settles a fresh one.
+- payments.get_payment_details: Fetch a settled or pending payment by id.
+- payments.search_payments: Search non-archived payment-kind rows (not refunds) by common filters.
+- payments.allocate_payment_to_invoice: Link a succeeded payment to an invoice (payments.invoice_id IS the allocation record) and recompute the invoice's amount_paid_cents, marking it paid once covered.
+- payments.remove_payment_allocation: Unlink a payment from its invoice and recompute the invoice's amount_paid_cents.
+- payments.generate_payment_receipt: Compute a receipt for a payment. Pure read — no state change needed beyond the receipt itself.
+- payments.get_payment_failure_details: Fetch the (simulated) failure reason for a failed payment.
+## Subscriptions
+- subscriptions.create_subscription: Create a new subscription for a contact in trialing status.
+- subscriptions.get_subscription_details: Fetch a subscription by id.
+- subscriptions.search_subscriptions: Search non-archived subscriptions by common filters.
+- subscriptions.change_subscription_plan: Switch a subscription to a different product/plan.
+- subscriptions.update_subscription_quantity: Rescale a subscription's recurring charge for a new seat/unit quantity (amount_cents = product.default_price_cents * quantity).
+- subscriptions.set_subscription_trial_end: Set when a trialing subscription's trial ends (stored as current_period_end while trialing).
+- subscriptions.pause_subscription: Pause an active subscription.
+- subscriptions.resume_subscription: Resume a paused subscription.
+- subscriptions.cancel_subscription: Cancel a subscription.
+- subscriptions.preview_next_subscription_invoice: Compute the amount and period of a subscription's next invoice from its price and quantity-adjusted amount_cents. Pure read.
+## Coupons
+- coupons.create_coupon: Create a new discount coupon.
+- coupons.get_coupon_details: Fetch a coupon and its live redemption count.
+- coupons.search_coupons: Search non-archived coupons by common filters.
+- coupons.update_coupon_description: Update a coupon's description.
+- coupons.set_discount_value: Set a coupon's discount type and value.
+- coupons.set_coupon_validity_window: Set a coupon's valid_from/valid_until window.
+- coupons.set_redemption_limit: Set a coupon's maximum redemption count (null = unlimited).
+- coupons.restrict_coupon_to_products: Restrict a coupon to only apply to specific products (empty = unrestricted).
+- coupons.validate_coupon_for_order: Read-only dry run: checks a coupon is active, within its validity window, under its redemption limit, and (if restricted) applies to at least one of the order's products. Does NOT redeem — see orders.apply_coupon_to_order.
+- coupons.deactivate_coupon: Deactivate a coupon so it can no longer be redeemed.
+## Orders
+- orders.create_draft_order: Create a new pending (draft) order for a contact.
+- orders.get_order_details: Fetch an order and its line items.
+- orders.search_orders: Search non-archived orders by common filters.
+- orders.add_order_line_item: Add a product line item to a pending order. total_cents is fully recomputed.
+- orders.update_order_quantity: Update a pending order line item's quantity. total_cents is fully recomputed.
+- orders.set_order_shipping_address: Set an order's shipping address (persisted — readable back via get_order_details).
+- orders.apply_coupon_to_order: Validate and redeem a coupon on an order: writes records(kind=coupon_redemption) and recomputes total_cents with the discount applied.
+- orders.submit_order: Submit a pending order with at least one line item (simulated instant checkout — transitions to paid).
+- orders.cancel_order: Cancel a pending or paid order.
+- orders.mark_order_fulfilled: Mark a paid order as fulfilled/shipped.
+## Refunds
+- refunds.create_refund_request: Request a refund against a succeeded payment (defaults to a full refund of the remaining balance).
+- refunds.get_refund_request: Fetch a refund (request or executed) by id.
+- refunds.search_refund_requests: Search non-archived refund-kind rows by common filters.
+- refunds.set_refund_reason: Set the reason on a still-requested refund.
+- refunds.set_partial_refund_amount: Set the amount on a still-requested refund (must not exceed the refundable balance).
+- refunds.check_refundable_balance: Compute a payment's remaining refundable balance (amount minus prior EXECUTED refunds). Pure read.
+- refunds.approve_refund_request: Approve a requested refund.
+- refunds.reject_refund_request: Reject a requested or approved refund.
+- refunds.execute_simulated_refund: Execute an approved refund, settling it against the original payment.
+- refunds.get_refund_execution_status: Fetch a refund's current status and processed_at timestamp.
+## Tax Rules
+- tax_rules.create_tax_rule: Create a new tax rule (rate is a fraction, e.g. 0.08 for 8%).
+- tax_rules.get_tax_rule: Fetch a tax rule by id.
+- tax_rules.list_tax_rules: List non-archived tax rules.
+- tax_rules.set_tax_rate: Set a tax rule's rate (a fraction between 0 and 1).
+- tax_rules.set_applicable_region: Set the region a tax rule applies to (null = global/catch-all).
+- tax_rules.set_product_tax_category: Set which product category (matched against products.category) this tax rule applies to (null = all categories).
+- tax_rules.set_tax_inclusive_pricing: Set whether prices under this rule are tax-inclusive (display/informational flag).
+- tax_rules.record_customer_tax_exemption: Exempt a contact from a specific tax rule.
+- tax_rules.calculate_tax_for_order: Compute real tax for an order from its line items x an applicable active tax rule's rate (matched by region, or tax_rule_id to force a specific rule). No matching rule returns a real zero-tax result, not an error.
+- tax_rules.deactivate_tax_rule: Deactivate a tax rule.
+## Websites
+- websites.create_website: Create a new website container.
+- websites.get_website_settings: Fetch a website and its navigation/SEO defaults.
+- websites.list_websites: List non-archived websites.
+- websites.rename_website: Rename a website.
+- websites.add_website_page: Create a new page under this website.
+- websites.set_website_home_page: Set which of a website's pages is the home page (validates the page belongs to this website).
+- websites.update_site_navigation: Replace a website's navigation menu.
+- websites.set_site_seo_defaults: Set a website's default SEO title/description (used by pages without their own).
+- websites.publish_website: Publish a website (requires at least one page).
+- websites.unpublish_website: Take a website offline (back to draft).
+## Funnels
+- funnels.create_funnel: Create a new marketing funnel (no steps yet — add them via add_funnel_step).
+- funnels.get_funnel_definition: Fetch a funnel and its ordered steps.
+- funnels.list_funnels: List non-archived funnels.
+- funnels.add_funnel_step: Append a new step to a funnel.
+- funnels.reorder_funnel_steps: Replace a funnel's step order (must be exactly the same set of step ids).
+- funnels.remove_funnel_step: Remove a step from a funnel.
+- funnels.link_landing_page_to_step: Link a funnel step to the landing page it should show (validates the page exists).
+- funnels.set_funnel_conversion_goal: Set a funnel's target conversion goal.
+- funnels.publish_funnel: Publish a funnel (requires at least one step).
+- funnels.get_funnel_conversion_metrics: Compute per-step visit counts (from each linked landing page's real view count) and the overall first-step-to-last-step conversion rate.
+## Landing Pages
+- landing_pages.create_landing_page: Create a new landing page, optionally under a funnel.
+- landing_pages.get_landing_page: Fetch a single landing page by id.
+- landing_pages.search_landing_pages: Search non-archived landing pages by status, funnel, and title.
+- landing_pages.update_page_content: Set a landing page's freeform HTML/copy.
+- landing_pages.add_page_section: Append a structured section block to a landing page.
+- landing_pages.reorder_page_sections: Replace a landing page's section order (must be exactly the same set of section ids).
+- landing_pages.attach_form_to_page: Attach a lead-capture form to a landing page (validates the form exists).
+- landing_pages.set_page_seo_metadata: Set a landing page's SEO title/description.
+- landing_pages.publish_landing_page: Publish a landing page (requires content: either HTML copy or at least one section).
+- landing_pages.unpublish_landing_page: Take a landing page offline (back to draft).
+## Blogs
+- blogs.create_blog_post: Create a new blog post, optionally under a website.
+- blogs.get_blog_post: Fetch a single blog post by id.
+- blogs.search_blog_posts: Search non-archived blog posts by status, author, and title.
+- blogs.update_blog_post: Patch a blog post's title and/or body text.
+- blogs.assign_post_author: Assign the author of a blog post (validates the user exists).
+- blogs.set_post_categories: Replace the category tags on a blog post.
+- blogs.set_post_seo_metadata: Set a blog post's SEO title/description.
+- blogs.schedule_post_publication: Record a future publish time for a draft post (does not publish it — call publish_post when ready).
+- blogs.publish_post: Publish a blog post immediately.
+- blogs.unpublish_post: Take a blog post offline (back to draft).
+## Media Assets
+- media_assets.upload_media_asset: Record a new media asset (synthetic url — no real file storage in this environment).
+- media_assets.get_asset_metadata: Fetch a media asset by id.
+- media_assets.search_media_assets: Search non-archived media assets by folder, status, and name.
+- media_assets.rename_media_asset: Rename a media asset.
+- media_assets.set_asset_alt_text: Set the accessibility alt text for a media asset.
+- media_assets.move_asset_to_folder: Move a media asset to a different folder (null = root).
+- media_assets.replace_asset_file: Replace the underlying file for a media asset, bumping its version (url gains a \`?v=N\` suffix).
+- media_assets.list_asset_references: Scan website/landing/blog content and other structures configs for real usages of this asset.
+- media_assets.generate_asset_access_link: Generate a time-limited (simulated) signed URL for a media asset.
+- media_assets.delete_unreferenced_asset: Archive a media asset, refusing if it is still referenced anywhere in content.
+## Courses
+- courses.create_course: Create a new course (no lessons yet — add them via lessons.create_lesson).
+- courses.get_course_details: Fetch a single course by id.
+- courses.search_courses: Search non-archived courses by status, instructor, category, and title.
+- courses.update_course_details: Patch a course's editable fields.
+- courses.add_course_section: Append a new named section to a course.
+- courses.reorder_course_sections: Replace a course's section order (must be exactly the same set of sections).
+- courses.assign_course_instructor: Assign the instructor of a course (validates the user exists).
+- courses.set_course_prerequisites: Set the list of courses a learner must complete first (validates each exists; refuses self-reference).
+- courses.publish_course: Publish a course (requires at least one lesson).
+- courses.archive_course: Soft-delete a course.
+## Lessons
+- lessons.create_lesson: Add a new lesson to a course.
+- lessons.get_lesson_details: Fetch a single lesson by id.
+- lessons.search_lessons: Search a course's lessons by title and publish state.
+- lessons.update_lesson_content: Patch a lesson's title/duration.
+- lessons.attach_lesson_media: Attach a media asset (e.g. a video) to a lesson (validates the asset exists).
+- lessons.move_lesson_to_course_section: Move a lesson into one of its course's sections (validates the section exists; null = unsectioned).
+- lessons.set_lesson_release_schedule: Set (or clear, with null) the epoch-ms time a lesson becomes available to learners.
+- lessons.set_lesson_completion_criteria: Define the rule for when a lesson counts as complete (e.g. {type:'watch_percentage',value:80}). This DEFINES the rule — M42 Enrollments' record_lesson_completion is what actually FIRES it.
+- lessons.publish_lesson: Publish a lesson so learners can see it.
+- lessons.unpublish_lesson: Hide a lesson from learners.
+## Enrollments
+- enrollments.enroll_learner_in_course: Enroll a contact in a course (CONFLICT if already actively enrolled).
+- enrollments.get_enrollment_details: Fetch a single enrollment by id, with its live progress percentage.
+- enrollments.search_enrollments: Search enrollments by contact, course, and status.
+- enrollments.set_enrollment_expiry: Set when a learner's access to a course expires. NOTE: \`participations\` has no field to persist this value — validated and stamped, but not retrievable (documented schema gap).
+- enrollments.suspend_enrollment: Suspend an active enrollment (CONFLICT unless currently enrolled).
+- enrollments.resume_enrollment: Resume a suspended enrollment (CONFLICT unless currently suspended).
+- enrollments.revoke_enrollment: Permanently revoke an enrollment (terminal — CONFLICT if already revoked).
+- enrollments.record_lesson_completion: Record that a learner completed a lesson (validates the lesson belongs to the enrollment's own course; CONFLICT on a duplicate completion).
+- enrollments.get_learner_progress: Compute a learner's real completion percentage for a course, freshly from lesson_completion records (never a stale cache).
+- enrollments.issue_course_completion_certificate: Issue a completion certificate for a learner (CONFLICT unless their real progress is exactly 100%).
+## Communities
+- communities.create_community: Create a new community.
+- communities.get_community_details: Fetch a community, its channels, and live member/post counts.
+- communities.update_community_guidelines: Set a community's posting guidelines.
+- communities.create_discussion_channel: Add a new discussion channel to a community.
+- communities.join_community: Add a contact as an active member of a community (CONFLICT if already an active member).
+- communities.leave_community: Mark a contact's community membership as left.
+- communities.create_community_post: Create a new top-level post in a community channel (requires an active membership).
+- communities.reply_to_community_post: Reply to an existing post (inherits the parent's channel; requires an active membership).
+- communities.pin_community_post: Pin a post to the top of its channel.
+- communities.remove_reported_post: Soft-remove a reported post (CONFLICT if already removed).
+## Memberships
+- memberships.create_membership_plan: Create a new membership plan.
+- memberships.get_membership_plan: Fetch a membership plan and its live member count.
+- memberships.list_membership_plans: List non-archived membership plans.
+- memberships.update_plan_description: Update a membership plan's description.
+- memberships.add_plan_entitlement: Add an entitlement to a membership plan.
+- memberships.remove_plan_entitlement: Remove an entitlement from a membership plan.
+- memberships.grant_membership_to_contact: Grant a contact active membership in a plan (CONFLICT if already active).
+- memberships.set_membership_expiry: Set (or clear, with null) a membership's expiry time.
+- memberships.revoke_membership: Revoke a membership (CONFLICT if already revoked).
+- memberships.check_member_access: Compute whether a membership currently grants access (active AND not expired).
+## Reviews
+- reviews.create_review_request: Create a (not-yet-sent) request asking a contact to leave a review.
+- reviews.send_review_request: Send a simulated review-request email (creates a real messages row).
+- reviews.cancel_unsent_review_request: Cancel a review request that has not been sent yet (CONFLICT if already sent).
+- reviews.list_review_requests: List review requests (requested/sent/cancelled — never a submitted review).
+- reviews.record_simulated_customer_review: Record a new simulated customer review awaiting moderation.
+- reviews.search_reviews: Search submitted reviews (always rating IS NOT NULL — never a request row) by status, target, and rating.
+- reviews.get_review_details: Fetch a single submitted review by id.
+- reviews.draft_review_response: Save a draft response to a review (not yet visible — call publish_review_response to make it live).
+- reviews.publish_review_response: Publish a response to a review (uses the saved draft if \`response\` is omitted).
+- reviews.get_review_rating_summary: Compute a real average/count-by-rating summary over published reviews, optionally scoped to one target.
+## Business Listings
+- business_listings.create_business_listing: Create a new business listing.
+- business_listings.get_listing_details: Fetch a single business listing by id.
+- business_listings.search_business_listings: Search non-archived business listings by status and name.
+- business_listings.update_listing_name: Rename a business listing.
+- business_listings.update_listing_address: Update a business listing's address.
+- business_listings.update_listing_phone: Update a business listing's phone number.
+- business_listings.set_listing_business_hours: Replace the weekly business-hours map for a listing (a day mapped to null = closed that day).
+- business_listings.set_listing_categories: Replace the category tags for a business listing.
+- business_listings.publish_listing_to_simulated_directory: Publish a business listing to the (simulated) public directory — requires address and phone to be set.
+- business_listings.get_listing_sync_status: Fetch the (simulated) directory sync status for a listing.
+## Support Tickets
+- support_tickets.create_support_ticket: Open a new support ticket for a contact.
+- support_tickets.get_ticket_details: Fetch a single support ticket by id.
+- support_tickets.search_tickets: Search non-archived support tickets by status, priority, assignee, team, and subject.
+- support_tickets.assign_ticket_owner: Assign a ticket to a user (validates the user exists).
+- support_tickets.set_ticket_priority: Change a ticket's priority.
+- support_tickets.update_ticket_status: Transition a ticket's status along the real open->pending->resolved->closed machine (CONFLICT on an illegal transition).
+- support_tickets.add_internal_ticket_note: Add an internal (not customer-visible) note to a ticket — creates a real \`notes\` row.
+- support_tickets.reply_to_ticket_requester: Send a simulated email reply to the ticket requester (creates a real messages row; stamps first_response_at if unset).
+- support_tickets.link_ticket_to_contact: Re-link a ticket to a different contact (validates the contact exists).
+- support_tickets.get_ticket_sla_status: Compute real elapsed-vs-threshold SLA status for a ticket from created_at/first_response_at/priority.
+## Users
+- users.invite_user: Invite (provision) a new user. Immediate in this simulated environment — no pending-invite state is tracked.
+- users.get_user_profile: Fetch a single user by id.
+- users.list_users: List non-archived users by role, active state, and team.
+- users.update_user_profile: Patch a user's name/title/phone.
+- users.assign_user_role: Set a user's role (admin|sales_rep|support).
+- users.revoke_user_role: Revoke a user's CURRENT role (CONFLICT if their current role doesn't match), leaving them roleless.
+- users.deactivate_user: Deactivate a user (CONFLICT if they still own open tasks/tickets — reassign those first).
+- users.reactivate_user: Reactivate a deactivated user (CONFLICT if already active).
+- users.list_user_permissions: Derive a user's permission list from their role (a static, documented role->permissions map).
+- users.view_user_audit_activity: Real merged activity feed for a user: tasks they own, notes they authored, tickets assigned to them (each source LIMIT 200, merge-sorted).
+## Teams
+- teams.create_team: Create a new team.
+- teams.get_team_details: Fetch a single team by id.
+- teams.list_teams: List non-archived teams.
+- teams.rename_team: Rename a team.
+- teams.add_team_member: Add a user as a team member (CONFLICT if already an active member).
+- teams.remove_team_member: Remove a user from a team (soft-deletes the membership record).
+- teams.assign_team_manager: Set a team's manager/lead (validates the user exists).
+- teams.set_team_assignment_strategy: Set how new work is routed to a team's members (round_robin|load_balanced|manual).
+- teams.get_team_workload: Compute each active member's real open-task/open-ticket counts.
+- teams.archive_team: Soft-delete a team (CONFLICT if it still has active members — remove them first).
+## Reports
+- reports.create_saved_report: Create a new saved report definition. Supported types for run_report: leads_by_source, revenue_by_month, pipeline_summary — other types can be saved but will VALIDATION on run.
+- reports.get_report_definition: Fetch a saved report definition by id.
+- reports.list_saved_reports: List non-archived saved reports.
+- reports.update_report_filters: Replace a saved report's filters object.
+- reports.set_report_date_range: Set a saved report's date range (both null = unbounded).
+- reports.set_report_grouping: Set an informational grouping label for a report (the actual GROUP BY column used by run_report is fixed per report type).
+- reports.run_report: Execute real aggregation for this report's type. Supported: leads_by_source, revenue_by_month, pipeline_summary — any other type VALIDATIONs.
+- reports.compare_report_periods: Run the same aggregation for two date ranges and diff the results by group key.
+- reports.export_report_results: Run the report and mark it exported (stamps \`last_export.exported_at\`).
+- reports.schedule_report_delivery: Schedule recurring email delivery of a report (stores the schedule config — no background scheduler fires it in this task)."
+`;

@@ -143,6 +143,31 @@ export interface ExecuteInput {
 const DRIFT_RECONFIRM_THRESHOLD = 0.25; // LLD §2.5: drift >25% forces re-confirm
 const INLINE_RESULT_CAP_BYTES = 2048; // LLD §2.3: step.finished.inlineResult ≤2KB
 
+/** Drift info for a gate decision (LLD §2.5) — structurally identical to
+ * `ResolveMeta['drift']` (`{ref} & ResolveResult`); named independently here
+ * so `shouldGate` has no dependency on this file's internal `ResolveMeta`
+ * type (Task 14's baseline agent imports `shouldGate` directly and never
+ * builds a drift value — it has no cross-turn refs to drift-check). */
+export interface GateDrift {
+  ref: string;
+  ids: string[];
+  missing: number;
+  total: number;
+}
+
+/** The unified confirmation-gate rule (LLD §5.3): fire iff `risk` is
+ * inherently wide (destructive/bulk/external) OR the resolved target count
+ * exceeds `BUDGETS.confirmTargetThreshold`, OR cross-turn ref drift on this
+ * step exceeds `DRIFT_RECONFIRM_THRESHOLD`. Extracted to module scope (no
+ * closure over `execute()`'s locals) so Task 14's baseline agent can import
+ * and reuse the EXACT SAME predicate rather than re-implementing it. */
+export function shouldGate(risk: ActionDef['risk'], affectedCount: number, drift?: GateDrift): boolean {
+  if (risk === 'destructive' || risk === 'bulk' || risk === 'external') return true;
+  if (affectedCount > BUDGETS.confirmTargetThreshold) return true;
+  if (drift && drift.total > 0 && drift.missing / drift.total > DRIFT_RECONFIRM_THRESHOLD) return true;
+  return false;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -468,13 +493,6 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     });
     onEvent({ t: 'confirmation.resolved', turnId, confirmId, approved });
     return approved;
-  };
-
-  const shouldGate = (risk: ActionDef['risk'], affectedCount: number, drift: ResolveMeta['drift']): boolean => {
-    if (risk === 'destructive' || risk === 'bulk' || risk === 'external') return true;
-    if (affectedCount > BUDGETS.confirmTargetThreshold) return true;
-    if (drift && drift.total > 0 && drift.missing / drift.total > DRIFT_RECONFIRM_THRESHOLD) return true;
-    return false;
   };
 
   /** Build the human one-liner for step.finished (names + counts). */
