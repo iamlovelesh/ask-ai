@@ -1,0 +1,409 @@
+/**
+ * Plan validator (LLD §2.2 ref grammar, §5.1 budgets). Runs AFTER an LLM
+ * emits a `PlanOutcome` (already Zod-parsed by `generateObject`/
+ * `planOutcomeSchema`) and BEFORE the executor ever sees it. Every check
+ * here is a defensive re-check of a model-authored structure — nothing in
+ * this file throws on bad input; unknown/malformed plans always come back
+ * as `{ok:false, errors}` so the pipeline can repair-prompt and retry
+ * (LLD Review Focus 3: "unknown slug → repairable error, NEVER throws").
+ */
+
+import { createHash } from 'node:crypto';
+import type { Registry } from '../catalog/registry.js';
+import {
+  planOutcomeSchema,
+  type PlanOutcome,
+  type Plan,
+  type Step,
+} from './plan-schema.js';
+
+// --- public result types ----------------------------------------------------
+
+export type ValidationErrorCode =
+  | 'SCHEMA'
+  | 'UNKNOWN_SLUG'
+  | 'UNKNOWN_PARAM'
+  | 'PARAM_SCHEMA'
+  | 'REF_GRAMMAR'
+  | 'ITEM_OUTSIDE_FOREACH'
+  | 'FOREACH_NOT_REF'
+  | 'UNKNOWN_DEP'
+  | 'UNKNOWN_HANDLE'
+  | 'CYCLE';
+
+export interface ValidationError {
+  code: ValidationErrorCode;
+  message: string;
+  stepId?: string;
+}
+
+/** A cross-turn handle descriptor — the trimmed shape the validator needs
+ * (full `RefHandle` from `agent/memory.ts` has more fields; only `ref` and
+ * `entityType` matter here). */
+export interface HandleRef {
+  ref: string; // "r_t3_s1" — WITHOUT the leading "$"
+  entityType: string;
+}
+
+export interface Valid {
+  ok: true;
+  outcome: PlanOutcome;
+  /** Present only when `outcome.kind === 'plan'`. */
+  plan?: Plan;
+  planHash?: string;
+  /** Topological step order (present only alongside `plan`). */
+  stepOrder?: string[];
+}
+
+export interface Invalid {
+  ok: false;
+  errors: ValidationError[];
+}
+
+// --- budgets (LLD §5.1 — canonical; the spec defers to these) --------------
+
+export const BUDGETS = {
+  maxLlmCallsPerTurn: 6,
+  maxRepairs: 2,
+  maxReplans: 2,
+  maxSearchRounds: 2,
+  turnTimeoutMs: 120_000,
+  confirmTargetThreshold: 50,
+  forEachHardCap: 500,
+} as const;
+
+// --- ref grammar (LLD §2.2 — "the ONLY forms; validator enforces") ---------
+//
+//   $s<N>[.path]        intra-plan step result
+//   $r_t<T>_s<N>[.path] cross-turn handle from WorkingState
+//   $item[.path]        current element — legal ONLY under forEach
+//   path := field | field.path | items[*] (pluck over array)
+
+const PATH = '(?:\\.[A-Za-z_][A-Za-z0-9_]*(?:\\[\\*\\])?)*';
+const STEP_REF = new RegExp(`^\\$s(\\d+)(${PATH})$`);
+const CROSS_TURN_REF = new RegExp(`^\\$(r_t\\d+_s\\d+)(${PATH})$`);
+const ITEM_REF = new RegExp(`^\\$item(${PATH})$`);
+
+export type ParsedRef =
+  | { form: 'step'; stepId: string; path: string }
+  | { form: 'crossTurn'; handleId: string; path: string }
+  | { form: 'item'; path: string };
+
+/** Parses a candidate ref string against the three legal grammar forms.
+ * Returns `null` if `ref` is not a well-formed ref at all. */
+export function parseRefGrammar(ref: string): ParsedRef | null {
+  const step = STEP_REF.exec(ref);
+  if (step) return { form: 'step', stepId: `s${step[1]}`, path: step[2] ?? '' };
+  const crossTurn = CROSS_TURN_REF.exec(ref);
+  if (crossTurn) return { form: 'crossTurn', handleId: crossTurn[1] ?? '', path: crossTurn[2] ?? '' };
+  const item = ITEM_REF.exec(ref);
+  if (item) return { form: 'item', path: item[1] ?? '' };
+  return null;
+}
+
+/** Recursively collects every string in `value` whose ENTIRE value is a ref
+ * (starts with `$`) — used for grammar-checking (REF_GRAMMAR /
+ * ITEM_OUTSIDE_FOREACH / UNKNOWN_HANDLE / FOREACH_NOT_REF).
+ *
+ * Deliberately does NOT reach into a larger literal string that merely
+ * CONTAINS a `$ref` substring (e.g. the conformance example's
+ * `"title": "Follow up with $item.item.name"`) — that's template
+ * interpolation the executor resolves at run time, not a ref grammar this
+ * validator enforces. See `containsEmbeddedDollar` below for the (broader)
+ * check used to decide whether a param is "ref-bearing" at all. */
+export function collectRefStrings(value: unknown): string[] {
+  if (typeof value === 'string') {
+    return value.startsWith('$') ? [value] : [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(collectRefStrings);
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).flatMap(collectRefStrings);
+  }
+  return [];
+}
+
+/** Broader than `collectRefStrings`: true if `value` contains a `$`
+ * ANYWHERE in any nested string (whole-value ref OR embedded template).
+ * Used to decide whether a param is skipped from literal inputSchema
+ * compile — a templated string is not a "literal" the way a plain string
+ * is, even though its outer shape (a JSON string) looks identical. */
+function containsEmbeddedDollar(value: unknown): boolean {
+  if (typeof value === 'string') return value.includes('$');
+  if (Array.isArray(value)) return value.some(containsEmbeddedDollar);
+  if (value !== null && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).some(containsEmbeddedDollar);
+  }
+  return false;
+}
+
+function containsRef(value: unknown): boolean {
+  return containsEmbeddedDollar(value);
+}
+
+// --- per-field schema compile (zod v4 ZodObject exposes `.shape`) ----------
+
+interface ShapeLike {
+  shape: Record<string, { safeParse: (v: unknown) => { success: boolean; error?: { message: string } } }>;
+}
+
+function isObjectShape(schema: unknown): schema is ShapeLike {
+  return (
+    schema !== null &&
+    typeof schema === 'object' &&
+    'shape' in schema &&
+    typeof (schema as { shape?: unknown }).shape === 'object'
+  );
+}
+
+// --- topological sort / cycle detection -------------------------------------
+
+function topoSort(steps: readonly Step[]): { ok: true; order: string[] } | { ok: false; cycleStepIds: string[] } {
+  const ids = steps.map((s) => s.id);
+  const idSet = new Set(ids);
+  const indegree = new Map<string, number>();
+  const dependents = new Map<string, string[]>();
+  for (const id of ids) {
+    indegree.set(id, 0);
+    dependents.set(id, []);
+  }
+  for (const step of steps) {
+    for (const dep of step.dependsOn) {
+      if (!idSet.has(dep)) continue; // unknown dep — reported separately
+      dependents.get(dep)?.push(step.id);
+      indegree.set(step.id, (indegree.get(step.id) ?? 0) + 1);
+    }
+  }
+  const queue: string[] = ids.filter((id) => indegree.get(id) === 0);
+  const order: string[] = [];
+  const seen = new Set<string>();
+  while (queue.length > 0) {
+    const id = queue.shift() as string;
+    order.push(id);
+    seen.add(id);
+    for (const next of dependents.get(id) ?? []) {
+      const remaining = (indegree.get(next) ?? 0) - 1;
+      indegree.set(next, remaining);
+      if (remaining === 0) queue.push(next);
+    }
+  }
+  if (order.length !== ids.length) {
+    const cycleStepIds = ids.filter((id) => !seen.has(id));
+    return { ok: false, cycleStepIds };
+  }
+  return { ok: true, order };
+}
+
+// --- plan hash (sha256 of sorted-keys JSON) ---------------------------------
+
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const sorted: Record<string, unknown> = {};
+    for (const [k, v] of entries) sorted[k] = sortKeysDeep(v);
+    return sorted;
+  }
+  return value;
+}
+
+/** sha256 of the plan serialized with keys sorted at every level — stable
+ * regardless of the key order the LLM/JSON.stringify happened to emit. */
+export function computePlanHash(plan: Plan): string {
+  const stable = JSON.stringify(sortKeysDeep(plan));
+  return createHash('sha256').update(stable).digest('hex');
+}
+
+// --- the validator -----------------------------------------------------------
+
+/**
+ * Validates a `PlanOutcome`.
+ *
+ * `shortlist` (the retrieval candidate set offered to the planner this
+ * round) is accepted but deliberately NOT used to reject slugs: known-slug
+ * checking is against the FULL catalog (`registry`), not the shortlist — a
+ * model may legitimately recall an action from an earlier `search` round or
+ * from `core.*` (always available, never retrieved). The param exists so
+ * callers/tests have a documented place to pass it, and so a future
+ * "slug outside shortlist" WARNING (not an error) has somewhere to read it
+ * from without a signature change.
+ */
+export function validate(
+  outcome: PlanOutcome,
+  shortlist: Set<string>,
+  handles: readonly HandleRef[],
+  registry: Registry,
+): Valid | Invalid {
+  void shortlist; // see doc comment above
+
+  // Layer 0: structural re-check against the canonical schema. Catches
+  // malformed `when`/`expects` shapes and anything else `plan-schema.ts`
+  // already encodes, for callers that didn't construct `outcome` via
+  // `generateObject` (e.g. hand-built in tests, or a repaired JSON blob).
+  const structural = planOutcomeSchema.safeParse(outcome);
+  if (!structural.success) {
+    return {
+      ok: false,
+      errors: structural.error.issues.map((issue) => ({
+        code: 'SCHEMA' as const,
+        message: `${issue.path.join('.') || '(root)'}: ${issue.message}`,
+      })),
+    };
+  }
+  const parsedOutcome = structural.data;
+
+  if (parsedOutcome.kind !== 'plan') {
+    // search / clarify / unsupported / respond — no further semantic checks.
+    return { ok: true, outcome: parsedOutcome };
+  }
+
+  const { plan } = parsedOutcome;
+  const errors: ValidationError[] = [];
+  const stepIds = new Set(plan.steps.map((s) => s.id));
+  const handleIds = new Set(handles.map((h) => h.ref));
+
+  function checkRef(ref: string, step: Step, context: string): void {
+    const parsed = parseRefGrammar(ref);
+    if (!parsed) {
+      errors.push({
+        code: 'REF_GRAMMAR',
+        stepId: step.id,
+        message: `${context}: '${ref}' is not a valid ref — only $sN[.path], $r_t<T>_s<N>[.path], or $item[.path] (under forEach) are legal.`,
+      });
+      return;
+    }
+    if (parsed.form === 'item' && step.forEach === undefined) {
+      errors.push({
+        code: 'ITEM_OUTSIDE_FOREACH',
+        stepId: step.id,
+        message: `${context}: '$item' used in step '${step.id}', which has no forEach — $item is only legal inside a forEach step.`,
+      });
+    }
+    if (parsed.form === 'crossTurn' && !handleIds.has(parsed.handleId)) {
+      errors.push({
+        code: 'UNKNOWN_HANDLE',
+        stepId: step.id,
+        message: `${context}: '${ref}' references unknown cross-turn handle '${parsed.handleId}' (not in WorkingState).`,
+      });
+    }
+  }
+
+  for (const step of plan.steps) {
+    // 1. unknown slug (catalog, not shortlist) — never throws, always a
+    //    repairable error.
+    const action = registry.get(step.action);
+    if (!action) {
+      errors.push({
+        code: 'UNKNOWN_SLUG',
+        stepId: step.id,
+        message: `Step '${step.id}' references unknown action slug '${step.action}'.`,
+      });
+    } else {
+      // 2. params compile against the action's inputSchema WHERE literal;
+      //    ref-bearing params are skipped (resolved at execution time).
+      const shape = isObjectShape(action.inputSchema) ? action.inputSchema.shape : undefined;
+      for (const [key, value] of Object.entries(step.params)) {
+        if (containsRef(value)) continue;
+        if (!shape || !(key in shape)) {
+          errors.push({
+            code: 'UNKNOWN_PARAM',
+            stepId: step.id,
+            message: `Step '${step.id}': action '${step.action}' has no input field '${key}'.`,
+          });
+          continue;
+        }
+        const fieldResult = shape[key]?.safeParse(value);
+        if (fieldResult && !fieldResult.success) {
+          errors.push({
+            code: 'PARAM_SCHEMA',
+            stepId: step.id,
+            message: `Step '${step.id}': param '${key}' for '${step.action}' failed validation (${fieldResult.error?.message ?? 'invalid'}).`,
+          });
+        }
+      }
+    }
+
+    // 3. ref grammar over params + when.
+    for (const ref of collectRefStrings(step.params)) {
+      checkRef(ref, step, `Step '${step.id}' params`);
+    }
+    if (step.when) {
+      for (const ref of collectRefStrings(step.when)) {
+        checkRef(ref, step, `Step '${step.id}' when`);
+      }
+    }
+
+    // 4. forEach target must itself be a ref (and not $item — you cannot
+    //    fan out over the current item of a fan-out you're declaring).
+    if (step.forEach !== undefined) {
+      const parsed = parseRefGrammar(step.forEach);
+      if (!parsed || parsed.form === 'item') {
+        errors.push({
+          code: 'FOREACH_NOT_REF',
+          stepId: step.id,
+          message: `Step '${step.id}': forEach target '${step.forEach}' must be a $sN or $r_t<T>_s<N> ref.`,
+        });
+      } else if (parsed.form === 'crossTurn' && !handleIds.has(parsed.handleId)) {
+        errors.push({
+          code: 'UNKNOWN_HANDLE',
+          stepId: step.id,
+          message: `Step '${step.id}': forEach '${step.forEach}' references unknown cross-turn handle '${parsed.handleId}'.`,
+        });
+      }
+    }
+
+    // 5. dependsOn references exist.
+    for (const dep of step.dependsOn) {
+      if (!stepIds.has(dep)) {
+        errors.push({
+          code: 'UNKNOWN_DEP',
+          stepId: step.id,
+          message: `Step '${step.id}' depends on unknown step '${dep}'.`,
+        });
+      }
+    }
+  }
+
+  // 6. acyclic.
+  const topo = topoSort(plan.steps);
+  if (!topo.ok) {
+    errors.push({
+      code: 'CYCLE',
+      message: `Cycle detected among steps: ${topo.cycleStepIds.join(', ')}.`,
+    });
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    outcome: parsedOutcome,
+    plan,
+    planHash: computePlanHash(plan),
+    stepOrder: topo.ok ? topo.order : [],
+  };
+}
+
+/** Builds a targeted repair prompt: the previous plan JSON + a bullet list
+ * of exactly what's wrong, nothing else (LLD §5.1 `maxRepairs`). */
+export function repairPrompt(plan: Plan, errors: readonly ValidationError[]): string {
+  const errorLines = errors
+    .map((e) => `- ${e.stepId ? `[step ${e.stepId}] ` : ''}${e.code}: ${e.message}`)
+    .join('\n');
+  return [
+    'The previous plan failed validation. Fix ONLY the problems listed below and',
+    'resend the COMPLETE corrected plan as the same PlanOutcome JSON shape',
+    '(normally `{"kind":"plan","plan":{...}}` with the FULL `plan.steps` array —',
+    'not a diff. If the request can no longer be satisfied as a plan, you may',
+    'instead return a different `kind` (search/clarify/unsupported/respond).',
+    '',
+    'Previous plan:',
+    JSON.stringify(plan),
+    '',
+    'Validation errors to fix:',
+    errorLines,
+  ].join('\n');
+}

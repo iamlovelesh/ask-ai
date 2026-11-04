@@ -2,40 +2,20 @@
  * Event log types (LLD §2.3) + the LLM usage/metrics shapes referenced by
  * events and by `llm/client.ts`.
  *
- * `PlanOutcome`/`Plan`/`Step` (LLD §2.2) and `WorkingState` (LLD §2.5) are
- * owned by `agent/plan-schema.ts` and `agent/memory.ts` respectively (later
- * tasks). Those files do not exist yet, so minimal verbatim-field copies live
- * here ONLY so the `Event` union below type-checks today. When those modules
- * land they should either re-export these names or this file should be
- * updated to import from them — do not let the two definitions drift.
+ * `PlanOutcome`/`Plan`/`Step` (LLD §2.2) are owned by `agent/plan-schema.ts`
+ * — re-exported below so this file's `Event` union can reference them
+ * without a second definition to drift out of sync. `WorkingState` (LLD
+ * §2.5) is owned by `agent/memory.ts` (later task); that file does not exist
+ * yet, so a minimal verbatim-field copy lives here ONLY so the `Event` union
+ * below type-checks today. When `agent/memory.ts` lands it should either
+ * re-export these names or this file should be updated to import from it —
+ * do not let the two definitions drift.
  */
 
-// --- agent/plan-schema.ts (LLD §2.2) — minimal copy, field names verbatim --
+// --- agent/plan-schema.ts (LLD §2.2) — re-exported, not re-defined --------
 
-/** JSON literal | RefString, per LLD §2.2. */
-export type Value = string | number | boolean | null | Value[] | { [key: string]: Value };
-
-export interface Step {
-  id: string;
-  action: string;
-  params: Record<string, Value>;
-  dependsOn: string[];
-  forEach?: string;
-  when?: { ref: string; op: 'eq' | 'gt' | 'lt' | 'nonempty' | 'empty'; value?: unknown };
-  expects?: { nonEmpty?: boolean; maxCount?: number; minCount?: number };
-}
-
-export interface Plan {
-  goal: string;
-  steps: Step[];
-}
-
-export type PlanOutcome =
-  | { kind: 'plan'; plan: Plan }
-  | { kind: 'search'; queries: string[] }
-  | { kind: 'clarify'; question: string }
-  | { kind: 'unsupported'; reason: string }
-  | { kind: 'respond'; text: string };
+import type { PlanOutcome } from '../agent/plan-schema.js';
+export type { Value, Step, Plan, PlanOutcome } from '../agent/plan-schema.js';
 
 // --- agent/memory.ts (LLD §2.5) — minimal copy, field names verbatim -------
 
