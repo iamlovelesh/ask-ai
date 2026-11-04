@@ -51,19 +51,46 @@ export function prepareShardTemplate(profile: string): string {
   return dest;
 }
 
+/** Every shard/eval-local profile this module ever generates matches this
+ * prefix (`shardProfileName` in `eval/runner.ts`, and this module's own
+ * test-only callers). Anything NOT matching it — most importantly the
+ * real `'standard'` profile — is a benchmark-destroying foot-gun to ever
+ * delete files for, so `cleanupShardFiles` refuses outright rather than
+ * trying to special-case `'standard'` alone (stricter is safer: an
+ * unanticipated future profile name is ALSO rejected, not just the one
+ * name anyone thought to block). */
+const SHARD_PROFILE_RE = /^evalrun-/;
+
 /**
- * I4 (Task 16 review): deletes every shard-local CRM file this module
- * ever creates for `profile` — `.db`, its WAL/SHM/journal sidecars, AND
- * the shard-local `.template.db` copy (`prepareShardTemplate`). Safe to
- * call even if some/none of these exist. `.gitignore` un-ignores
- * `*.template.db` (so the COMMITTED artifact stays trackable) — which
- * means a shard-local template copy left on disk after a run would show
- * up as an untracked file a broad `git add -A` could sweep in; this is
- * what keeps a real eval run from leaking those into the working tree.
- * Never touches `crm-standard.*` — only ever called with the shard's own
- * generated profile name, never `'standard'`.
+ * I4 (Task 16 review) + follow-up review (shard-cleanup guard): deletes
+ * every shard-local CRM file this module ever creates for `profile` —
+ * `.db`, its WAL/SHM/journal sidecars, AND the shard-local `.template.db`
+ * copy (`prepareShardTemplate`). Safe to call even if some/none of these
+ * exist. `.gitignore` un-ignores `*.template.db` (so the COMMITTED
+ * artifact stays trackable) — which means a shard-local template copy
+ * left on disk after a run would show up as an untracked file a broad
+ * `git add -A` could sweep in; this is what keeps a real eval run from
+ * leaking those into the working tree.
+ *
+ * THROWS if `profile` doesn't match `/^evalrun-/` — in particular, this
+ * means a call with `profile: 'standard'` throws rather than deleting
+ * `server/data/crm-standard.db` AND the COMMITTED
+ * `crm-standard.template.db` fixture. An explicit `--profile standard`
+ * CLI invocation (no `--server-url`) is exactly the scenario this guards
+ * against; `eval/runner.ts`'s `parseArgs` additionally refuses that
+ * combination outright before a server is even spawned (belt and
+ * suspenders — this function's own guard is what actually protects any
+ * OTHER caller, present or future, that might pass a profile through
+ * without going via `parseArgs` at all).
  */
 export function cleanupShardFiles(profile: string): void {
+  if (!SHARD_PROFILE_RE.test(profile)) {
+    throw new Error(
+      `cleanupShardFiles refuses to touch profile '${profile}' — it must match /^evalrun-/. ` +
+        "Deleting files for 'standard' (or any other non-shard profile) would destroy the " +
+        'committed crm-standard.template.db fixture and/or the live crm-standard.db.',
+    );
+  }
   const base = resolve(SERVER_DIR, `data/crm-${profile}`);
   for (const suffix of ['.db', '.db-wal', '.db-shm', '.db-journal', '.template.db']) {
     const path = `${base}${suffix}`;

@@ -99,6 +99,27 @@ export function parseArgs(argv: readonly string[]): RunnerOptions {
 
   const serverUrl = flagValue(argv, '--server-url');
   const profile = flagValue(argv, '--profile');
+  // Shard-cleanup guard follow-up (review): `--profile standard` with NO
+  // `--server-url` means `main()` would spawn its OWN server under the
+  // 'standard' profile, and `SpawnedServer.stop()` would then throw deep
+  // inside `cleanupShardFiles` (which refuses anything not matching
+  // `/^evalrun-/` — exactly to stop this from ever deleting
+  // `server/data/crm-standard.db` AND the COMMITTED
+  // `crm-standard.template.db` fixture). Rejecting here, at parse time,
+  // turns a benchmark-destroying foot-gun into an immediate, legible CLI
+  // error instead of a crash after however much of a real run already
+  // happened. `--profile standard` IS legitimate when paired with
+  // `--server-url` (pointing at an already-running, separately-managed
+  // server this process never spawns and therefore never cleans up).
+  if (profile === 'standard' && !serverUrl) {
+    throw new Error(
+      "--profile standard requires --server-url: without it, this process would spawn its own " +
+        "server under the 'standard' profile, and stopping that server would attempt to delete " +
+        "server/data/crm-standard.db and the COMMITTED crm-standard.template.db fixture. Point " +
+        '--server-url at an already-running server instead, or omit --profile to let a shard-local ' +
+        'profile be generated automatically.',
+    );
+  }
   // MUST be resolved to an absolute path here: the spawned server's cwd is
   // `server/` (runner-process.ts), so a relative path handed to it as-is
   // would be read relative to the WRONG directory inside the child

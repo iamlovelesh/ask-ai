@@ -20,6 +20,7 @@ import {
   type ResultRow,
 } from '../runner-tuples.js';
 import { parseArgs, shardProfileName } from '../runner.js';
+import { cleanupShardFiles } from '../runner-process.js';
 import type { Scenario } from '../types.js';
 
 function scenario(id: string, category: Scenario['category'] = 'direct'): Scenario {
@@ -228,11 +229,40 @@ describe('parseArgs', () => {
     expect(opts.mockLlmScript?.startsWith('/')).toBe(true);
     expect(opts.mockLlmScript).toContain('eval/mock-scripts/direct-search-leads.json');
   });
+
+  // --- shard-cleanup guard follow-up (review): --profile standard foot-gun ---
+
+  it('rejects --profile standard without --server-url (would spawn+later destroy the standard profile)', () => {
+    expect(() => parseArgs(['--profile', 'standard'])).toThrow(/--profile standard requires --server-url/);
+  });
+
+  it('accepts --profile standard WHEN --server-url is also given (an externally managed server)', () => {
+    const opts = parseArgs(['--profile', 'standard', '--server-url', 'http://localhost:4000']);
+    expect(opts.profile).toBe('standard');
+    expect(opts.serverUrl).toBe('http://localhost:4000');
+  });
 });
 
 describe('shardProfileName', () => {
   it('is deterministic and filesystem-safe', () => {
     expect(shardProfileName('2026-11-05T00-00-00', { k: 1, m: 4 })).toBe('evalrun-2026-11-05T00-00-00-s1');
     expect(shardProfileName('run:with/bad:chars', undefined)).toMatch(/^evalrun-[a-zA-Z0-9-]+$/);
+  });
+});
+
+// --- cleanupShardFiles guard (review follow-up on I4) -----------------------
+
+describe('cleanupShardFiles', () => {
+  it("throws for profile 'standard' — never touches the committed template/live db", () => {
+    expect(() => cleanupShardFiles('standard')).toThrow(/evalrun-/);
+  });
+
+  it('throws for any profile not matching /^evalrun-/, not just "standard"', () => {
+    expect(() => cleanupShardFiles('some-other-profile')).toThrow(/evalrun-/);
+    expect(() => cleanupShardFiles('')).toThrow(/evalrun-/);
+  });
+
+  it('does not throw for a well-formed evalrun-* profile (no files on disk is a silent no-op)', () => {
+    expect(() => cleanupShardFiles('evalrun-does-not-exist-on-disk')).not.toThrow();
   });
 });
