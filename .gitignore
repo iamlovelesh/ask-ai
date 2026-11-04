@@ -2,7 +2,11 @@ node_modules
 dist
 .env
 .superpowers/
+server/data/*.db
+server/data/*.db-wal
+server/data/*.db-shm
 server/data/*.db-journal
+!server/data/*.template.db
 web/node_modules
 *.log
 .DS_Store
