@@ -16,6 +16,7 @@
     "dev": "npm -w server run dev",
     "dev:web": "npm -w web run dev",
     "seed": "tsx scripts/seed-standard.ts",
+    "transcribe-catalog": "tsx scripts/transcribe-catalog.ts",
     "smoke": "tsx eval/smoke.ts",
     "probe": "tsx eval/probe.ts",
     "eval": "tsx eval/run.ts",

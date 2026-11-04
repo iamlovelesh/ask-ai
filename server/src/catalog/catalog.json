@@ -1,0 +1,3502 @@
+[
+  {
+    "id": "M01.A01",
+    "module": "contacts",
+    "moduleName": "Contacts",
+    "name": "Create contact",
+    "slug": "contacts.create_contact"
+  },
+  {
+    "id": "M01.A02",
+    "module": "contacts",
+    "moduleName": "Contacts",
+    "name": "Get contact details",
+    "slug": "contacts.get_contact_details"
+  },
+  {
+    "id": "M01.A03",
+    "module": "contacts",
+    "moduleName": "Contacts",
+    "name": "Search contacts",
+    "slug": "contacts.search_contacts"
+  },
+  {
+    "id": "M01.A04",
+    "module": "contacts",
+    "moduleName": "Contacts",
+    "name": "Update contact details",
+    "slug": "contacts.update_contact_details"
+  },
+  {
+    "id": "M01.A05",
+    "module": "contacts",
+    "moduleName": "Contacts",
+    "name": "Archive contact",
+    "slug": "contacts.archive_contact"
+  },
+  {
+    "id": "M01.A06",
+    "module": "contacts",
+    "moduleName": "Contacts",
+    "name": "Merge duplicate contacts",
+    "slug": "contacts.merge_duplicate_contacts"
+  },
+  {
+    "id": "M01.A07",
+    "module": "contacts",
+    "moduleName": "Contacts",
+    "name": "Assign contact owner",
+    "slug": "contacts.assign_contact_owner"
+  },
+  {
+    "id": "M01.A08",
+    "module": "contacts",
+    "moduleName": "Contacts",
+    "name": "Set communication preferences",
+    "slug": "contacts.set_communication_preferences"
+  },
+  {
+    "id": "M01.A09",
+    "module": "contacts",
+    "moduleName": "Contacts",
+    "name": "Add contact relationship",
+    "slug": "contacts.add_contact_relationship"
+  },
+  {
+    "id": "M01.A10",
+    "module": "contacts",
+    "moduleName": "Contacts",
+    "name": "View contact activity timeline",
+    "slug": "contacts.view_contact_activity_timeline"
+  },
+  {
+    "id": "M02.A01",
+    "module": "companies",
+    "moduleName": "Companies",
+    "name": "Create company",
+    "slug": "companies.create_company"
+  },
+  {
+    "id": "M02.A02",
+    "module": "companies",
+    "moduleName": "Companies",
+    "name": "Get company details",
+    "slug": "companies.get_company_details"
+  },
+  {
+    "id": "M02.A03",
+    "module": "companies",
+    "moduleName": "Companies",
+    "name": "Search companies",
+    "slug": "companies.search_companies"
+  },
+  {
+    "id": "M02.A04",
+    "module": "companies",
+    "moduleName": "Companies",
+    "name": "Update company details",
+    "slug": "companies.update_company_details"
+  },
+  {
+    "id": "M02.A05",
+    "module": "companies",
+    "moduleName": "Companies",
+    "name": "Archive company",
+    "slug": "companies.archive_company"
+  },
+  {
+    "id": "M02.A06",
+    "module": "companies",
+    "moduleName": "Companies",
+    "name": "Link contact to company",
+    "slug": "companies.link_contact_to_company"
+  },
+  {
+    "id": "M02.A07",
+    "module": "companies",
+    "moduleName": "Companies",
+    "name": "Unlink contact from company",
+    "slug": "companies.unlink_contact_from_company"
+  },
+  {
+    "id": "M02.A08",
+    "module": "companies",
+    "moduleName": "Companies",
+    "name": "Assign account manager",
+    "slug": "companies.assign_account_manager"
+  },
+  {
+    "id": "M02.A09",
+    "module": "companies",
+    "moduleName": "Companies",
+    "name": "Merge duplicate companies",
+    "slug": "companies.merge_duplicate_companies"
+  },
+  {
+    "id": "M02.A10",
+    "module": "companies",
+    "moduleName": "Companies",
+    "name": "List company contacts",
+    "slug": "companies.list_company_contacts"
+  },
+  {
+    "id": "M03.A01",
+    "module": "leads",
+    "moduleName": "Leads",
+    "name": "Create lead",
+    "slug": "leads.create_lead"
+  },
+  {
+    "id": "M03.A02",
+    "module": "leads",
+    "moduleName": "Leads",
+    "name": "Get lead details",
+    "slug": "leads.get_lead_details"
+  },
+  {
+    "id": "M03.A03",
+    "module": "leads",
+    "moduleName": "Leads",
+    "name": "Search leads",
+    "slug": "leads.search_leads"
+  },
+  {
+    "id": "M03.A04",
+    "module": "leads",
+    "moduleName": "Leads",
+    "name": "Update lead details",
+    "slug": "leads.update_lead_details"
+  },
+  {
+    "id": "M03.A05",
+    "module": "leads",
+    "moduleName": "Leads",
+    "name": "Assign lead owner",
+    "slug": "leads.assign_lead_owner"
+  },
+  {
+    "id": "M03.A06",
+    "module": "leads",
+    "moduleName": "Leads",
+    "name": "Set lead source",
+    "slug": "leads.set_lead_source"
+  },
+  {
+    "id": "M03.A07",
+    "module": "leads",
+    "moduleName": "Leads",
+    "name": "Record qualification answers",
+    "slug": "leads.record_qualification_answers"
+  },
+  {
+    "id": "M03.A08",
+    "module": "leads",
+    "moduleName": "Leads",
+    "name": "Update lead score",
+    "slug": "leads.update_lead_score"
+  },
+  {
+    "id": "M03.A09",
+    "module": "leads",
+    "moduleName": "Leads",
+    "name": "Disqualify lead with reason",
+    "slug": "leads.disqualify_lead_with_reason"
+  },
+  {
+    "id": "M03.A10",
+    "module": "leads",
+    "moduleName": "Leads",
+    "name": "Convert lead to opportunity",
+    "slug": "leads.convert_lead_to_opportunity"
+  },
+  {
+    "id": "M04.A01",
+    "module": "opportunities",
+    "moduleName": "Opportunities",
+    "name": "Create opportunity",
+    "slug": "opportunities.create_opportunity"
+  },
+  {
+    "id": "M04.A02",
+    "module": "opportunities",
+    "moduleName": "Opportunities",
+    "name": "Get opportunity details",
+    "slug": "opportunities.get_opportunity_details"
+  },
+  {
+    "id": "M04.A03",
+    "module": "opportunities",
+    "moduleName": "Opportunities",
+    "name": "Search opportunities",
+    "slug": "opportunities.search_opportunities"
+  },
+  {
+    "id": "M04.A04",
+    "module": "opportunities",
+    "moduleName": "Opportunities",
+    "name": "Update opportunity value",
+    "slug": "opportunities.update_opportunity_value"
+  },
+  {
+    "id": "M04.A05",
+    "module": "opportunities",
+    "moduleName": "Opportunities",
+    "name": "Move opportunity to stage",
+    "slug": "opportunities.move_opportunity_to_stage"
+  },
+  {
+    "id": "M04.A06",
+    "module": "opportunities",
+    "moduleName": "Opportunities",
+    "name": "Assign opportunity owner",
+    "slug": "opportunities.assign_opportunity_owner"
+  },
+  {
+    "id": "M04.A07",
+    "module": "opportunities",
+    "moduleName": "Opportunities",
+    "name": "Set expected close date",
+    "slug": "opportunities.set_expected_close_date"
+  },
+  {
+    "id": "M04.A08",
+    "module": "opportunities",
+    "moduleName": "Opportunities",
+    "name": "Mark opportunity won",
+    "slug": "opportunities.mark_opportunity_won"
+  },
+  {
+    "id": "M04.A09",
+    "module": "opportunities",
+    "moduleName": "Opportunities",
+    "name": "Mark opportunity lost",
+    "slug": "opportunities.mark_opportunity_lost"
+  },
+  {
+    "id": "M04.A10",
+    "module": "opportunities",
+    "moduleName": "Opportunities",
+    "name": "Reopen closed opportunity",
+    "slug": "opportunities.reopen_closed_opportunity"
+  },
+  {
+    "id": "M05.A01",
+    "module": "pipelines",
+    "moduleName": "Pipelines",
+    "name": "Create pipeline",
+    "slug": "pipelines.create_pipeline"
+  },
+  {
+    "id": "M05.A02",
+    "module": "pipelines",
+    "moduleName": "Pipelines",
+    "name": "Get pipeline configuration",
+    "slug": "pipelines.get_pipeline_configuration"
+  },
+  {
+    "id": "M05.A03",
+    "module": "pipelines",
+    "moduleName": "Pipelines",
+    "name": "List pipelines",
+    "slug": "pipelines.list_pipelines"
+  },
+  {
+    "id": "M05.A04",
+    "module": "pipelines",
+    "moduleName": "Pipelines",
+    "name": "Rename pipeline",
+    "slug": "pipelines.rename_pipeline"
+  },
+  {
+    "id": "M05.A05",
+    "module": "pipelines",
+    "moduleName": "Pipelines",
+    "name": "Archive pipeline",
+    "slug": "pipelines.archive_pipeline"
+  },
+  {
+    "id": "M05.A06",
+    "module": "pipelines",
+    "moduleName": "Pipelines",
+    "name": "Add pipeline stage",
+    "slug": "pipelines.add_pipeline_stage"
+  },
+  {
+    "id": "M05.A07",
+    "module": "pipelines",
+    "moduleName": "Pipelines",
+    "name": "Rename pipeline stage",
+    "slug": "pipelines.rename_pipeline_stage"
+  },
+  {
+    "id": "M05.A08",
+    "module": "pipelines",
+    "moduleName": "Pipelines",
+    "name": "Reorder pipeline stages",
+    "slug": "pipelines.reorder_pipeline_stages"
+  },
+  {
+    "id": "M05.A09",
+    "module": "pipelines",
+    "moduleName": "Pipelines",
+    "name": "Remove empty pipeline stage",
+    "slug": "pipelines.remove_empty_pipeline_stage"
+  },
+  {
+    "id": "M05.A10",
+    "module": "pipelines",
+    "moduleName": "Pipelines",
+    "name": "Set stage win probability",
+    "slug": "pipelines.set_stage_win_probability"
+  },
+  {
+    "id": "M06.A01",
+    "module": "tasks",
+    "moduleName": "Tasks",
+    "name": "Create task",
+    "slug": "tasks.create_task"
+  },
+  {
+    "id": "M06.A02",
+    "module": "tasks",
+    "moduleName": "Tasks",
+    "name": "Get task details",
+    "slug": "tasks.get_task_details"
+  },
+  {
+    "id": "M06.A03",
+    "module": "tasks",
+    "moduleName": "Tasks",
+    "name": "Search tasks",
+    "slug": "tasks.search_tasks"
+  },
+  {
+    "id": "M06.A04",
+    "module": "tasks",
+    "moduleName": "Tasks",
+    "name": "Update task description",
+    "slug": "tasks.update_task_description"
+  },
+  {
+    "id": "M06.A05",
+    "module": "tasks",
+    "moduleName": "Tasks",
+    "name": "Assign task owner",
+    "slug": "tasks.assign_task_owner"
+  },
+  {
+    "id": "M06.A06",
+    "module": "tasks",
+    "moduleName": "Tasks",
+    "name": "Set task due date",
+    "slug": "tasks.set_task_due_date"
+  },
+  {
+    "id": "M06.A07",
+    "module": "tasks",
+    "moduleName": "Tasks",
+    "name": "Set task priority",
+    "slug": "tasks.set_task_priority"
+  },
+  {
+    "id": "M06.A08",
+    "module": "tasks",
+    "moduleName": "Tasks",
+    "name": "Mark task complete",
+    "slug": "tasks.mark_task_complete"
+  },
+  {
+    "id": "M06.A09",
+    "module": "tasks",
+    "moduleName": "Tasks",
+    "name": "Reopen task",
+    "slug": "tasks.reopen_task"
+  },
+  {
+    "id": "M06.A10",
+    "module": "tasks",
+    "moduleName": "Tasks",
+    "name": "Cancel task",
+    "slug": "tasks.cancel_task"
+  },
+  {
+    "id": "M07.A01",
+    "module": "notes",
+    "moduleName": "Notes",
+    "name": "Create note",
+    "slug": "notes.create_note"
+  },
+  {
+    "id": "M07.A02",
+    "module": "notes",
+    "moduleName": "Notes",
+    "name": "Get note",
+    "slug": "notes.get_note"
+  },
+  {
+    "id": "M07.A03",
+    "module": "notes",
+    "moduleName": "Notes",
+    "name": "Search notes",
+    "slug": "notes.search_notes"
+  },
+  {
+    "id": "M07.A04",
+    "module": "notes",
+    "moduleName": "Notes",
+    "name": "Update note",
+    "slug": "notes.update_note"
+  },
+  {
+    "id": "M07.A05",
+    "module": "notes",
+    "moduleName": "Notes",
+    "name": "Delete note",
+    "slug": "notes.delete_note"
+  },
+  {
+    "id": "M07.A06",
+    "module": "notes",
+    "moduleName": "Notes",
+    "name": "Attach note to record",
+    "slug": "notes.attach_note_to_record"
+  },
+  {
+    "id": "M07.A07",
+    "module": "notes",
+    "moduleName": "Notes",
+    "name": "Detach note from record",
+    "slug": "notes.detach_note_from_record"
+  },
+  {
+    "id": "M07.A08",
+    "module": "notes",
+    "moduleName": "Notes",
+    "name": "Pin note",
+    "slug": "notes.pin_note"
+  },
+  {
+    "id": "M07.A09",
+    "module": "notes",
+    "moduleName": "Notes",
+    "name": "Unpin note",
+    "slug": "notes.unpin_note"
+  },
+  {
+    "id": "M07.A10",
+    "module": "notes",
+    "moduleName": "Notes",
+    "name": "View note revision history",
+    "slug": "notes.view_note_revision_history"
+  },
+  {
+    "id": "M08.A01",
+    "module": "tags",
+    "moduleName": "Tags",
+    "name": "Create tag",
+    "slug": "tags.create_tag"
+  },
+  {
+    "id": "M08.A02",
+    "module": "tags",
+    "moduleName": "Tags",
+    "name": "List tags",
+    "slug": "tags.list_tags"
+  },
+  {
+    "id": "M08.A03",
+    "module": "tags",
+    "moduleName": "Tags",
+    "name": "Rename tag",
+    "slug": "tags.rename_tag"
+  },
+  {
+    "id": "M08.A04",
+    "module": "tags",
+    "moduleName": "Tags",
+    "name": "Set tag color",
+    "slug": "tags.set_tag_color"
+  },
+  {
+    "id": "M08.A05",
+    "module": "tags",
+    "moduleName": "Tags",
+    "name": "Delete unused tag",
+    "slug": "tags.delete_unused_tag"
+  },
+  {
+    "id": "M08.A06",
+    "module": "tags",
+    "moduleName": "Tags",
+    "name": "Apply tag to record",
+    "slug": "tags.apply_tag_to_record"
+  },
+  {
+    "id": "M08.A07",
+    "module": "tags",
+    "moduleName": "Tags",
+    "name": "Remove tag from record",
+    "slug": "tags.remove_tag_from_record"
+  },
+  {
+    "id": "M08.A08",
+    "module": "tags",
+    "moduleName": "Tags",
+    "name": "List records with tag",
+    "slug": "tags.list_records_with_tag"
+  },
+  {
+    "id": "M08.A09",
+    "module": "tags",
+    "moduleName": "Tags",
+    "name": "Merge tags",
+    "slug": "tags.merge_tags"
+  },
+  {
+    "id": "M08.A10",
+    "module": "tags",
+    "moduleName": "Tags",
+    "name": "View tag usage counts",
+    "slug": "tags.view_tag_usage_counts"
+  },
+  {
+    "id": "M09.A01",
+    "module": "smart_lists",
+    "moduleName": "Smart Lists",
+    "name": "Create smart list",
+    "slug": "smart_lists.create_smart_list"
+  },
+  {
+    "id": "M09.A02",
+    "module": "smart_lists",
+    "moduleName": "Smart Lists",
+    "name": "Get smart list definition",
+    "slug": "smart_lists.get_smart_list_definition"
+  },
+  {
+    "id": "M09.A03",
+    "module": "smart_lists",
+    "moduleName": "Smart Lists",
+    "name": "List smart lists",
+    "slug": "smart_lists.list_smart_lists"
+  },
+  {
+    "id": "M09.A04",
+    "module": "smart_lists",
+    "moduleName": "Smart Lists",
+    "name": "Rename smart list",
+    "slug": "smart_lists.rename_smart_list"
+  },
+  {
+    "id": "M09.A05",
+    "module": "smart_lists",
+    "moduleName": "Smart Lists",
+    "name": "Update filter rules",
+    "slug": "smart_lists.update_filter_rules"
+  },
+  {
+    "id": "M09.A06",
+    "module": "smart_lists",
+    "moduleName": "Smart Lists",
+    "name": "Preview matching records",
+    "slug": "smart_lists.preview_matching_records"
+  },
+  {
+    "id": "M09.A07",
+    "module": "smart_lists",
+    "moduleName": "Smart Lists",
+    "name": "Count matching records",
+    "slug": "smart_lists.count_matching_records"
+  },
+  {
+    "id": "M09.A08",
+    "module": "smart_lists",
+    "moduleName": "Smart Lists",
+    "name": "Export matching records",
+    "slug": "smart_lists.export_matching_records"
+  },
+  {
+    "id": "M09.A09",
+    "module": "smart_lists",
+    "moduleName": "Smart Lists",
+    "name": "Duplicate smart list",
+    "slug": "smart_lists.duplicate_smart_list"
+  },
+  {
+    "id": "M09.A10",
+    "module": "smart_lists",
+    "moduleName": "Smart Lists",
+    "name": "Delete smart list",
+    "slug": "smart_lists.delete_smart_list"
+  },
+  {
+    "id": "M10.A01",
+    "module": "custom_fields",
+    "moduleName": "Custom Fields",
+    "name": "Create custom field",
+    "slug": "custom_fields.create_custom_field"
+  },
+  {
+    "id": "M10.A02",
+    "module": "custom_fields",
+    "moduleName": "Custom Fields",
+    "name": "Get field definition",
+    "slug": "custom_fields.get_field_definition"
+  },
+  {
+    "id": "M10.A03",
+    "module": "custom_fields",
+    "moduleName": "Custom Fields",
+    "name": "List fields for module",
+    "slug": "custom_fields.list_fields_for_module"
+  },
+  {
+    "id": "M10.A04",
+    "module": "custom_fields",
+    "moduleName": "Custom Fields",
+    "name": "Rename field label",
+    "slug": "custom_fields.rename_field_label"
+  },
+  {
+    "id": "M10.A05",
+    "module": "custom_fields",
+    "moduleName": "Custom Fields",
+    "name": "Update field help text",
+    "slug": "custom_fields.update_field_help_text"
+  },
+  {
+    "id": "M10.A06",
+    "module": "custom_fields",
+    "moduleName": "Custom Fields",
+    "name": "Set field validation rules",
+    "slug": "custom_fields.set_field_validation_rules"
+  },
+  {
+    "id": "M10.A07",
+    "module": "custom_fields",
+    "moduleName": "Custom Fields",
+    "name": "Add dropdown option",
+    "slug": "custom_fields.add_dropdown_option"
+  },
+  {
+    "id": "M10.A08",
+    "module": "custom_fields",
+    "moduleName": "Custom Fields",
+    "name": "Retire dropdown option",
+    "slug": "custom_fields.retire_dropdown_option"
+  },
+  {
+    "id": "M10.A09",
+    "module": "custom_fields",
+    "moduleName": "Custom Fields",
+    "name": "Set record field value",
+    "slug": "custom_fields.set_record_field_value"
+  },
+  {
+    "id": "M10.A10",
+    "module": "custom_fields",
+    "moduleName": "Custom Fields",
+    "name": "Archive custom field",
+    "slug": "custom_fields.archive_custom_field"
+  },
+  {
+    "id": "M11.A01",
+    "module": "conversations",
+    "moduleName": "Conversations",
+    "name": "Get conversation",
+    "slug": "conversations.get_conversation"
+  },
+  {
+    "id": "M11.A02",
+    "module": "conversations",
+    "moduleName": "Conversations",
+    "name": "Search conversations",
+    "slug": "conversations.search_conversations"
+  },
+  {
+    "id": "M11.A03",
+    "module": "conversations",
+    "moduleName": "Conversations",
+    "name": "Assign conversation owner",
+    "slug": "conversations.assign_conversation_owner"
+  },
+  {
+    "id": "M11.A04",
+    "module": "conversations",
+    "moduleName": "Conversations",
+    "name": "Mark conversation read",
+    "slug": "conversations.mark_conversation_read"
+  },
+  {
+    "id": "M11.A05",
+    "module": "conversations",
+    "moduleName": "Conversations",
+    "name": "Mark conversation unread",
+    "slug": "conversations.mark_conversation_unread"
+  },
+  {
+    "id": "M11.A06",
+    "module": "conversations",
+    "moduleName": "Conversations",
+    "name": "Close conversation",
+    "slug": "conversations.close_conversation"
+  },
+  {
+    "id": "M11.A07",
+    "module": "conversations",
+    "moduleName": "Conversations",
+    "name": "Reopen conversation",
+    "slug": "conversations.reopen_conversation"
+  },
+  {
+    "id": "M11.A08",
+    "module": "conversations",
+    "moduleName": "Conversations",
+    "name": "Add internal comment",
+    "slug": "conversations.add_internal_comment"
+  },
+  {
+    "id": "M11.A09",
+    "module": "conversations",
+    "moduleName": "Conversations",
+    "name": "Summarize conversation history",
+    "slug": "conversations.summarize_conversation_history"
+  },
+  {
+    "id": "M11.A10",
+    "module": "conversations",
+    "moduleName": "Conversations",
+    "name": "List unanswered conversations",
+    "slug": "conversations.list_unanswered_conversations"
+  },
+  {
+    "id": "M12.A01",
+    "module": "sms",
+    "moduleName": "SMS",
+    "name": "Draft SMS",
+    "slug": "sms.draft_sms"
+  },
+  {
+    "id": "M12.A02",
+    "module": "sms",
+    "moduleName": "SMS",
+    "name": "Preview SMS segmentation",
+    "slug": "sms.preview_sms_segmentation"
+  },
+  {
+    "id": "M12.A03",
+    "module": "sms",
+    "moduleName": "SMS",
+    "name": "Send SMS",
+    "slug": "sms.send_sms"
+  },
+  {
+    "id": "M12.A04",
+    "module": "sms",
+    "moduleName": "SMS",
+    "name": "Schedule SMS",
+    "slug": "sms.schedule_sms"
+  },
+  {
+    "id": "M12.A05",
+    "module": "sms",
+    "moduleName": "SMS",
+    "name": "Cancel scheduled SMS",
+    "slug": "sms.cancel_scheduled_sms"
+  },
+  {
+    "id": "M12.A06",
+    "module": "sms",
+    "moduleName": "SMS",
+    "name": "Get SMS details",
+    "slug": "sms.get_sms_details"
+  },
+  {
+    "id": "M12.A07",
+    "module": "sms",
+    "moduleName": "SMS",
+    "name": "Search SMS messages",
+    "slug": "sms.search_sms_messages"
+  },
+  {
+    "id": "M12.A08",
+    "module": "sms",
+    "moduleName": "SMS",
+    "name": "Get SMS delivery status",
+    "slug": "sms.get_sms_delivery_status"
+  },
+  {
+    "id": "M12.A09",
+    "module": "sms",
+    "moduleName": "SMS",
+    "name": "Receive simulated inbound SMS",
+    "slug": "sms.receive_simulated_inbound_sms"
+  },
+  {
+    "id": "M12.A10",
+    "module": "sms",
+    "moduleName": "SMS",
+    "name": "Record SMS opt-out",
+    "slug": "sms.record_sms_opt_out"
+  },
+  {
+    "id": "M13.A01",
+    "module": "email",
+    "moduleName": "Email",
+    "name": "Draft email",
+    "slug": "email.draft_email"
+  },
+  {
+    "id": "M13.A02",
+    "module": "email",
+    "moduleName": "Email",
+    "name": "Preview email",
+    "slug": "email.preview_email"
+  },
+  {
+    "id": "M13.A03",
+    "module": "email",
+    "moduleName": "Email",
+    "name": "Send email",
+    "slug": "email.send_email"
+  },
+  {
+    "id": "M13.A04",
+    "module": "email",
+    "moduleName": "Email",
+    "name": "Schedule email",
+    "slug": "email.schedule_email"
+  },
+  {
+    "id": "M13.A05",
+    "module": "email",
+    "moduleName": "Email",
+    "name": "Cancel scheduled email",
+    "slug": "email.cancel_scheduled_email"
+  },
+  {
+    "id": "M13.A06",
+    "module": "email",
+    "moduleName": "Email",
+    "name": "Get email details",
+    "slug": "email.get_email_details"
+  },
+  {
+    "id": "M13.A07",
+    "module": "email",
+    "moduleName": "Email",
+    "name": "Search email messages",
+    "slug": "email.search_email_messages"
+  },
+  {
+    "id": "M13.A08",
+    "module": "email",
+    "moduleName": "Email",
+    "name": "Get email delivery status",
+    "slug": "email.get_email_delivery_status"
+  },
+  {
+    "id": "M13.A09",
+    "module": "email",
+    "moduleName": "Email",
+    "name": "Receive simulated inbound email",
+    "slug": "email.receive_simulated_inbound_email"
+  },
+  {
+    "id": "M13.A10",
+    "module": "email",
+    "moduleName": "Email",
+    "name": "Record email unsubscribe",
+    "slug": "email.record_email_unsubscribe"
+  },
+  {
+    "id": "M14.A01",
+    "module": "message_templates",
+    "moduleName": "Message Templates",
+    "name": "Create message template",
+    "slug": "message_templates.create_message_template"
+  },
+  {
+    "id": "M14.A02",
+    "module": "message_templates",
+    "moduleName": "Message Templates",
+    "name": "Get template",
+    "slug": "message_templates.get_template"
+  },
+  {
+    "id": "M14.A03",
+    "module": "message_templates",
+    "moduleName": "Message Templates",
+    "name": "Search templates",
+    "slug": "message_templates.search_templates"
+  },
+  {
+    "id": "M14.A04",
+    "module": "message_templates",
+    "moduleName": "Message Templates",
+    "name": "Update template content",
+    "slug": "message_templates.update_template_content"
+  },
+  {
+    "id": "M14.A05",
+    "module": "message_templates",
+    "moduleName": "Message Templates",
+    "name": "Archive template",
+    "slug": "message_templates.archive_template"
+  },
+  {
+    "id": "M14.A06",
+    "module": "message_templates",
+    "moduleName": "Message Templates",
+    "name": "Duplicate template",
+    "slug": "message_templates.duplicate_template"
+  },
+  {
+    "id": "M14.A07",
+    "module": "message_templates",
+    "moduleName": "Message Templates",
+    "name": "Define template variables",
+    "slug": "message_templates.define_template_variables"
+  },
+  {
+    "id": "M14.A08",
+    "module": "message_templates",
+    "moduleName": "Message Templates",
+    "name": "Validate template variables",
+    "slug": "message_templates.validate_template_variables"
+  },
+  {
+    "id": "M14.A09",
+    "module": "message_templates",
+    "moduleName": "Message Templates",
+    "name": "Render template with sample data",
+    "slug": "message_templates.render_template_with_sample_data"
+  },
+  {
+    "id": "M14.A10",
+    "module": "message_templates",
+    "moduleName": "Message Templates",
+    "name": "Restore template version",
+    "slug": "message_templates.restore_template_version"
+  },
+  {
+    "id": "M15.A01",
+    "module": "campaigns",
+    "moduleName": "Campaigns",
+    "name": "Create campaign",
+    "slug": "campaigns.create_campaign"
+  },
+  {
+    "id": "M15.A02",
+    "module": "campaigns",
+    "moduleName": "Campaigns",
+    "name": "Get campaign details",
+    "slug": "campaigns.get_campaign_details"
+  },
+  {
+    "id": "M15.A03",
+    "module": "campaigns",
+    "moduleName": "Campaigns",
+    "name": "List campaigns",
+    "slug": "campaigns.list_campaigns"
+  },
+  {
+    "id": "M15.A04",
+    "module": "campaigns",
+    "moduleName": "Campaigns",
+    "name": "Set campaign audience",
+    "slug": "campaigns.set_campaign_audience"
+  },
+  {
+    "id": "M15.A05",
+    "module": "campaigns",
+    "moduleName": "Campaigns",
+    "name": "Add campaign message step",
+    "slug": "campaigns.add_campaign_message_step"
+  },
+  {
+    "id": "M15.A06",
+    "module": "campaigns",
+    "moduleName": "Campaigns",
+    "name": "Set campaign schedule",
+    "slug": "campaigns.set_campaign_schedule"
+  },
+  {
+    "id": "M15.A07",
+    "module": "campaigns",
+    "moduleName": "Campaigns",
+    "name": "Launch campaign",
+    "slug": "campaigns.launch_campaign"
+  },
+  {
+    "id": "M15.A08",
+    "module": "campaigns",
+    "moduleName": "Campaigns",
+    "name": "Pause campaign",
+    "slug": "campaigns.pause_campaign"
+  },
+  {
+    "id": "M15.A09",
+    "module": "campaigns",
+    "moduleName": "Campaigns",
+    "name": "Resume campaign",
+    "slug": "campaigns.resume_campaign"
+  },
+  {
+    "id": "M15.A10",
+    "module": "campaigns",
+    "moduleName": "Campaigns",
+    "name": "Get campaign performance",
+    "slug": "campaigns.get_campaign_performance"
+  },
+  {
+    "id": "M16.A01",
+    "module": "workflows",
+    "moduleName": "Workflows",
+    "name": "Create workflow",
+    "slug": "workflows.create_workflow"
+  },
+  {
+    "id": "M16.A02",
+    "module": "workflows",
+    "moduleName": "Workflows",
+    "name": "Get workflow definition",
+    "slug": "workflows.get_workflow_definition"
+  },
+  {
+    "id": "M16.A03",
+    "module": "workflows",
+    "moduleName": "Workflows",
+    "name": "List workflows",
+    "slug": "workflows.list_workflows"
+  },
+  {
+    "id": "M16.A04",
+    "module": "workflows",
+    "moduleName": "Workflows",
+    "name": "Add workflow step",
+    "slug": "workflows.add_workflow_step"
+  },
+  {
+    "id": "M16.A05",
+    "module": "workflows",
+    "moduleName": "Workflows",
+    "name": "Update workflow step",
+    "slug": "workflows.update_workflow_step"
+  },
+  {
+    "id": "M16.A06",
+    "module": "workflows",
+    "moduleName": "Workflows",
+    "name": "Remove workflow step",
+    "slug": "workflows.remove_workflow_step"
+  },
+  {
+    "id": "M16.A07",
+    "module": "workflows",
+    "moduleName": "Workflows",
+    "name": "Validate workflow",
+    "slug": "workflows.validate_workflow"
+  },
+  {
+    "id": "M16.A08",
+    "module": "workflows",
+    "moduleName": "Workflows",
+    "name": "Publish workflow",
+    "slug": "workflows.publish_workflow"
+  },
+  {
+    "id": "M16.A09",
+    "module": "workflows",
+    "moduleName": "Workflows",
+    "name": "Pause workflow",
+    "slug": "workflows.pause_workflow"
+  },
+  {
+    "id": "M16.A10",
+    "module": "workflows",
+    "moduleName": "Workflows",
+    "name": "Get workflow execution history",
+    "slug": "workflows.get_workflow_execution_history"
+  },
+  {
+    "id": "M17.A01",
+    "module": "event_triggers",
+    "moduleName": "Event Triggers",
+    "name": "Create event trigger",
+    "slug": "event_triggers.create_event_trigger"
+  },
+  {
+    "id": "M17.A02",
+    "module": "event_triggers",
+    "moduleName": "Event Triggers",
+    "name": "Get trigger configuration",
+    "slug": "event_triggers.get_trigger_configuration"
+  },
+  {
+    "id": "M17.A03",
+    "module": "event_triggers",
+    "moduleName": "Event Triggers",
+    "name": "List event triggers",
+    "slug": "event_triggers.list_event_triggers"
+  },
+  {
+    "id": "M17.A04",
+    "module": "event_triggers",
+    "moduleName": "Event Triggers",
+    "name": "Set trigger event type",
+    "slug": "event_triggers.set_trigger_event_type"
+  },
+  {
+    "id": "M17.A05",
+    "module": "event_triggers",
+    "moduleName": "Event Triggers",
+    "name": "Update trigger conditions",
+    "slug": "event_triggers.update_trigger_conditions"
+  },
+  {
+    "id": "M17.A06",
+    "module": "event_triggers",
+    "moduleName": "Event Triggers",
+    "name": "Bind trigger to workflow",
+    "slug": "event_triggers.bind_trigger_to_workflow"
+  },
+  {
+    "id": "M17.A07",
+    "module": "event_triggers",
+    "moduleName": "Event Triggers",
+    "name": "Enable trigger",
+    "slug": "event_triggers.enable_trigger"
+  },
+  {
+    "id": "M17.A08",
+    "module": "event_triggers",
+    "moduleName": "Event Triggers",
+    "name": "Disable trigger",
+    "slug": "event_triggers.disable_trigger"
+  },
+  {
+    "id": "M17.A09",
+    "module": "event_triggers",
+    "moduleName": "Event Triggers",
+    "name": "Test trigger with sample event",
+    "slug": "event_triggers.test_trigger_with_sample_event"
+  },
+  {
+    "id": "M17.A10",
+    "module": "event_triggers",
+    "moduleName": "Event Triggers",
+    "name": "Get trigger firing history",
+    "slug": "event_triggers.get_trigger_firing_history"
+  },
+  {
+    "id": "M18.A01",
+    "module": "forms",
+    "moduleName": "Forms",
+    "name": "Create form",
+    "slug": "forms.create_form"
+  },
+  {
+    "id": "M18.A02",
+    "module": "forms",
+    "moduleName": "Forms",
+    "name": "Get form definition",
+    "slug": "forms.get_form_definition"
+  },
+  {
+    "id": "M18.A03",
+    "module": "forms",
+    "moduleName": "Forms",
+    "name": "List forms",
+    "slug": "forms.list_forms"
+  },
+  {
+    "id": "M18.A04",
+    "module": "forms",
+    "moduleName": "Forms",
+    "name": "Add form field",
+    "slug": "forms.add_form_field"
+  },
+  {
+    "id": "M18.A05",
+    "module": "forms",
+    "moduleName": "Forms",
+    "name": "Update form field",
+    "slug": "forms.update_form_field"
+  },
+  {
+    "id": "M18.A06",
+    "module": "forms",
+    "moduleName": "Forms",
+    "name": "Reorder form fields",
+    "slug": "forms.reorder_form_fields"
+  },
+  {
+    "id": "M18.A07",
+    "module": "forms",
+    "moduleName": "Forms",
+    "name": "Set form validation rules",
+    "slug": "forms.set_form_validation_rules"
+  },
+  {
+    "id": "M18.A08",
+    "module": "forms",
+    "moduleName": "Forms",
+    "name": "Publish form",
+    "slug": "forms.publish_form"
+  },
+  {
+    "id": "M18.A09",
+    "module": "forms",
+    "moduleName": "Forms",
+    "name": "Submit simulated form response",
+    "slug": "forms.submit_simulated_form_response"
+  },
+  {
+    "id": "M18.A10",
+    "module": "forms",
+    "moduleName": "Forms",
+    "name": "List form submissions",
+    "slug": "forms.list_form_submissions"
+  },
+  {
+    "id": "M19.A01",
+    "module": "surveys",
+    "moduleName": "Surveys",
+    "name": "Create survey",
+    "slug": "surveys.create_survey"
+  },
+  {
+    "id": "M19.A02",
+    "module": "surveys",
+    "moduleName": "Surveys",
+    "name": "Get survey definition",
+    "slug": "surveys.get_survey_definition"
+  },
+  {
+    "id": "M19.A03",
+    "module": "surveys",
+    "moduleName": "Surveys",
+    "name": "List surveys",
+    "slug": "surveys.list_surveys"
+  },
+  {
+    "id": "M19.A04",
+    "module": "surveys",
+    "moduleName": "Surveys",
+    "name": "Add survey question",
+    "slug": "surveys.add_survey_question"
+  },
+  {
+    "id": "M19.A05",
+    "module": "surveys",
+    "moduleName": "Surveys",
+    "name": "Update survey question",
+    "slug": "surveys.update_survey_question"
+  },
+  {
+    "id": "M19.A06",
+    "module": "surveys",
+    "moduleName": "Surveys",
+    "name": "Set question branching rules",
+    "slug": "surveys.set_question_branching_rules"
+  },
+  {
+    "id": "M19.A07",
+    "module": "surveys",
+    "moduleName": "Surveys",
+    "name": "Publish survey",
+    "slug": "surveys.publish_survey"
+  },
+  {
+    "id": "M19.A08",
+    "module": "surveys",
+    "moduleName": "Surveys",
+    "name": "Close survey",
+    "slug": "surveys.close_survey"
+  },
+  {
+    "id": "M19.A09",
+    "module": "surveys",
+    "moduleName": "Surveys",
+    "name": "Submit simulated survey response",
+    "slug": "surveys.submit_simulated_survey_response"
+  },
+  {
+    "id": "M19.A10",
+    "module": "surveys",
+    "moduleName": "Surveys",
+    "name": "Get survey response summary",
+    "slug": "surveys.get_survey_response_summary"
+  },
+  {
+    "id": "M20.A01",
+    "module": "calendars",
+    "moduleName": "Calendars",
+    "name": "Create calendar",
+    "slug": "calendars.create_calendar"
+  },
+  {
+    "id": "M20.A02",
+    "module": "calendars",
+    "moduleName": "Calendars",
+    "name": "Get calendar settings",
+    "slug": "calendars.get_calendar_settings"
+  },
+  {
+    "id": "M20.A03",
+    "module": "calendars",
+    "moduleName": "Calendars",
+    "name": "List calendars",
+    "slug": "calendars.list_calendars"
+  },
+  {
+    "id": "M20.A04",
+    "module": "calendars",
+    "moduleName": "Calendars",
+    "name": "Update calendar details",
+    "slug": "calendars.update_calendar_details"
+  },
+  {
+    "id": "M20.A05",
+    "module": "calendars",
+    "moduleName": "Calendars",
+    "name": "Set calendar timezone",
+    "slug": "calendars.set_calendar_timezone"
+  },
+  {
+    "id": "M20.A06",
+    "module": "calendars",
+    "moduleName": "Calendars",
+    "name": "Assign calendar host",
+    "slug": "calendars.assign_calendar_host"
+  },
+  {
+    "id": "M20.A07",
+    "module": "calendars",
+    "moduleName": "Calendars",
+    "name": "Set appointment duration",
+    "slug": "calendars.set_appointment_duration"
+  },
+  {
+    "id": "M20.A08",
+    "module": "calendars",
+    "moduleName": "Calendars",
+    "name": "Set booking buffer",
+    "slug": "calendars.set_booking_buffer"
+  },
+  {
+    "id": "M20.A09",
+    "module": "calendars",
+    "moduleName": "Calendars",
+    "name": "Set calendar visibility",
+    "slug": "calendars.set_calendar_visibility"
+  },
+  {
+    "id": "M20.A10",
+    "module": "calendars",
+    "moduleName": "Calendars",
+    "name": "Archive calendar",
+    "slug": "calendars.archive_calendar"
+  },
+  {
+    "id": "M21.A01",
+    "module": "appointments",
+    "moduleName": "Appointments",
+    "name": "Create appointment",
+    "slug": "appointments.create_appointment"
+  },
+  {
+    "id": "M21.A02",
+    "module": "appointments",
+    "moduleName": "Appointments",
+    "name": "Get appointment details",
+    "slug": "appointments.get_appointment_details"
+  },
+  {
+    "id": "M21.A03",
+    "module": "appointments",
+    "moduleName": "Appointments",
+    "name": "Search appointments",
+    "slug": "appointments.search_appointments"
+  },
+  {
+    "id": "M21.A04",
+    "module": "appointments",
+    "moduleName": "Appointments",
+    "name": "Reschedule appointment",
+    "slug": "appointments.reschedule_appointment"
+  },
+  {
+    "id": "M21.A05",
+    "module": "appointments",
+    "moduleName": "Appointments",
+    "name": "Cancel appointment",
+    "slug": "appointments.cancel_appointment"
+  },
+  {
+    "id": "M21.A06",
+    "module": "appointments",
+    "moduleName": "Appointments",
+    "name": "Assign appointment host",
+    "slug": "appointments.assign_appointment_host"
+  },
+  {
+    "id": "M21.A07",
+    "module": "appointments",
+    "moduleName": "Appointments",
+    "name": "Add appointment attendee",
+    "slug": "appointments.add_appointment_attendee"
+  },
+  {
+    "id": "M21.A08",
+    "module": "appointments",
+    "moduleName": "Appointments",
+    "name": "Remove appointment attendee",
+    "slug": "appointments.remove_appointment_attendee"
+  },
+  {
+    "id": "M21.A09",
+    "module": "appointments",
+    "moduleName": "Appointments",
+    "name": "Mark attendee no-show",
+    "slug": "appointments.mark_attendee_no_show"
+  },
+  {
+    "id": "M21.A10",
+    "module": "appointments",
+    "moduleName": "Appointments",
+    "name": "Mark appointment completed",
+    "slug": "appointments.mark_appointment_completed"
+  },
+  {
+    "id": "M22.A01",
+    "module": "availability",
+    "moduleName": "Availability",
+    "name": "Set weekly working hours",
+    "slug": "availability.set_weekly_working_hours"
+  },
+  {
+    "id": "M22.A02",
+    "module": "availability",
+    "moduleName": "Availability",
+    "name": "Get weekly working hours",
+    "slug": "availability.get_weekly_working_hours"
+  },
+  {
+    "id": "M22.A03",
+    "module": "availability",
+    "moduleName": "Availability",
+    "name": "Add date-specific availability",
+    "slug": "availability.add_date_specific_availability"
+  },
+  {
+    "id": "M22.A04",
+    "module": "availability",
+    "moduleName": "Availability",
+    "name": "Remove date-specific availability",
+    "slug": "availability.remove_date_specific_availability"
+  },
+  {
+    "id": "M22.A05",
+    "module": "availability",
+    "moduleName": "Availability",
+    "name": "Block time range",
+    "slug": "availability.block_time_range"
+  },
+  {
+    "id": "M22.A06",
+    "module": "availability",
+    "moduleName": "Availability",
+    "name": "Remove time block",
+    "slug": "availability.remove_time_block"
+  },
+  {
+    "id": "M22.A07",
+    "module": "availability",
+    "moduleName": "Availability",
+    "name": "Set minimum booking notice",
+    "slug": "availability.set_minimum_booking_notice"
+  },
+  {
+    "id": "M22.A08",
+    "module": "availability",
+    "moduleName": "Availability",
+    "name": "Set maximum booking horizon",
+    "slug": "availability.set_maximum_booking_horizon"
+  },
+  {
+    "id": "M22.A09",
+    "module": "availability",
+    "moduleName": "Availability",
+    "name": "Find available slots",
+    "slug": "availability.find_available_slots"
+  },
+  {
+    "id": "M22.A10",
+    "module": "availability",
+    "moduleName": "Availability",
+    "name": "Check scheduling conflicts",
+    "slug": "availability.check_scheduling_conflicts"
+  },
+  {
+    "id": "M23.A01",
+    "module": "booking_pages",
+    "moduleName": "Booking Pages",
+    "name": "Create booking page",
+    "slug": "booking_pages.create_booking_page"
+  },
+  {
+    "id": "M23.A02",
+    "module": "booking_pages",
+    "moduleName": "Booking Pages",
+    "name": "Get booking page",
+    "slug": "booking_pages.get_booking_page"
+  },
+  {
+    "id": "M23.A03",
+    "module": "booking_pages",
+    "moduleName": "Booking Pages",
+    "name": "List booking pages",
+    "slug": "booking_pages.list_booking_pages"
+  },
+  {
+    "id": "M23.A04",
+    "module": "booking_pages",
+    "moduleName": "Booking Pages",
+    "name": "Update booking page content",
+    "slug": "booking_pages.update_booking_page_content"
+  },
+  {
+    "id": "M23.A05",
+    "module": "booking_pages",
+    "moduleName": "Booking Pages",
+    "name": "Link calendar to booking page",
+    "slug": "booking_pages.link_calendar_to_booking_page"
+  },
+  {
+    "id": "M23.A06",
+    "module": "booking_pages",
+    "moduleName": "Booking Pages",
+    "name": "Set booking intake fields",
+    "slug": "booking_pages.set_booking_intake_fields"
+  },
+  {
+    "id": "M23.A07",
+    "module": "booking_pages",
+    "moduleName": "Booking Pages",
+    "name": "Set booking confirmation message",
+    "slug": "booking_pages.set_booking_confirmation_message"
+  },
+  {
+    "id": "M23.A08",
+    "module": "booking_pages",
+    "moduleName": "Booking Pages",
+    "name": "Set booking redirect URL",
+    "slug": "booking_pages.set_booking_redirect_url"
+  },
+  {
+    "id": "M23.A09",
+    "module": "booking_pages",
+    "moduleName": "Booking Pages",
+    "name": "Publish booking page",
+    "slug": "booking_pages.publish_booking_page"
+  },
+  {
+    "id": "M23.A10",
+    "module": "booking_pages",
+    "moduleName": "Booking Pages",
+    "name": "Unpublish booking page",
+    "slug": "booking_pages.unpublish_booking_page"
+  },
+  {
+    "id": "M24.A01",
+    "module": "events",
+    "moduleName": "Events",
+    "name": "Create event",
+    "slug": "events.create_event"
+  },
+  {
+    "id": "M24.A02",
+    "module": "events",
+    "moduleName": "Events",
+    "name": "Get event details",
+    "slug": "events.get_event_details"
+  },
+  {
+    "id": "M24.A03",
+    "module": "events",
+    "moduleName": "Events",
+    "name": "Search events",
+    "slug": "events.search_events"
+  },
+  {
+    "id": "M24.A04",
+    "module": "events",
+    "moduleName": "Events",
+    "name": "Update event details",
+    "slug": "events.update_event_details"
+  },
+  {
+    "id": "M24.A05",
+    "module": "events",
+    "moduleName": "Events",
+    "name": "Set event capacity",
+    "slug": "events.set_event_capacity"
+  },
+  {
+    "id": "M24.A06",
+    "module": "events",
+    "moduleName": "Events",
+    "name": "Register attendee",
+    "slug": "events.register_attendee"
+  },
+  {
+    "id": "M24.A07",
+    "module": "events",
+    "moduleName": "Events",
+    "name": "Cancel attendee registration",
+    "slug": "events.cancel_attendee_registration"
+  },
+  {
+    "id": "M24.A08",
+    "module": "events",
+    "moduleName": "Events",
+    "name": "Add attendee to waitlist",
+    "slug": "events.add_attendee_to_waitlist"
+  },
+  {
+    "id": "M24.A09",
+    "module": "events",
+    "moduleName": "Events",
+    "name": "Promote waitlisted attendee",
+    "slug": "events.promote_waitlisted_attendee"
+  },
+  {
+    "id": "M24.A10",
+    "module": "events",
+    "moduleName": "Events",
+    "name": "Check in attendee",
+    "slug": "events.check_in_attendee"
+  },
+  {
+    "id": "M25.A01",
+    "module": "products",
+    "moduleName": "Products",
+    "name": "Create product",
+    "slug": "products.create_product"
+  },
+  {
+    "id": "M25.A02",
+    "module": "products",
+    "moduleName": "Products",
+    "name": "Get product details",
+    "slug": "products.get_product_details"
+  },
+  {
+    "id": "M25.A03",
+    "module": "products",
+    "moduleName": "Products",
+    "name": "Search products",
+    "slug": "products.search_products"
+  },
+  {
+    "id": "M25.A04",
+    "module": "products",
+    "moduleName": "Products",
+    "name": "Update product details",
+    "slug": "products.update_product_details"
+  },
+  {
+    "id": "M25.A05",
+    "module": "products",
+    "moduleName": "Products",
+    "name": "Archive product",
+    "slug": "products.archive_product"
+  },
+  {
+    "id": "M25.A06",
+    "module": "products",
+    "moduleName": "Products",
+    "name": "Add product variant",
+    "slug": "products.add_product_variant"
+  },
+  {
+    "id": "M25.A07",
+    "module": "products",
+    "moduleName": "Products",
+    "name": "Update product variant",
+    "slug": "products.update_product_variant"
+  },
+  {
+    "id": "M25.A08",
+    "module": "products",
+    "moduleName": "Products",
+    "name": "Set product SKU",
+    "slug": "products.set_product_sku"
+  },
+  {
+    "id": "M25.A09",
+    "module": "products",
+    "moduleName": "Products",
+    "name": "Set inventory quantity",
+    "slug": "products.set_inventory_quantity"
+  },
+  {
+    "id": "M25.A10",
+    "module": "products",
+    "moduleName": "Products",
+    "name": "Get inventory availability",
+    "slug": "products.get_inventory_availability"
+  },
+  {
+    "id": "M26.A01",
+    "module": "prices",
+    "moduleName": "Prices",
+    "name": "Create product price",
+    "slug": "prices.create_product_price"
+  },
+  {
+    "id": "M26.A02",
+    "module": "prices",
+    "moduleName": "Prices",
+    "name": "Get price details",
+    "slug": "prices.get_price_details"
+  },
+  {
+    "id": "M26.A03",
+    "module": "prices",
+    "moduleName": "Prices",
+    "name": "List product prices",
+    "slug": "prices.list_product_prices"
+  },
+  {
+    "id": "M26.A04",
+    "module": "prices",
+    "moduleName": "Prices",
+    "name": "Update price label",
+    "slug": "prices.update_price_label"
+  },
+  {
+    "id": "M26.A05",
+    "module": "prices",
+    "moduleName": "Prices",
+    "name": "Set price amount",
+    "slug": "prices.set_price_amount"
+  },
+  {
+    "id": "M26.A06",
+    "module": "prices",
+    "moduleName": "Prices",
+    "name": "Set price currency",
+    "slug": "prices.set_price_currency"
+  },
+  {
+    "id": "M26.A07",
+    "module": "prices",
+    "moduleName": "Prices",
+    "name": "Set billing interval",
+    "slug": "prices.set_billing_interval"
+  },
+  {
+    "id": "M26.A08",
+    "module": "prices",
+    "moduleName": "Prices",
+    "name": "Set trial period",
+    "slug": "prices.set_trial_period"
+  },
+  {
+    "id": "M26.A09",
+    "module": "prices",
+    "moduleName": "Prices",
+    "name": "Set default product price",
+    "slug": "prices.set_default_product_price"
+  },
+  {
+    "id": "M26.A10",
+    "module": "prices",
+    "moduleName": "Prices",
+    "name": "Archive price",
+    "slug": "prices.archive_price"
+  },
+  {
+    "id": "M27.A01",
+    "module": "quotes",
+    "moduleName": "Quotes",
+    "name": "Create quote",
+    "slug": "quotes.create_quote"
+  },
+  {
+    "id": "M27.A02",
+    "module": "quotes",
+    "moduleName": "Quotes",
+    "name": "Get quote details",
+    "slug": "quotes.get_quote_details"
+  },
+  {
+    "id": "M27.A03",
+    "module": "quotes",
+    "moduleName": "Quotes",
+    "name": "Search quotes",
+    "slug": "quotes.search_quotes"
+  },
+  {
+    "id": "M27.A04",
+    "module": "quotes",
+    "moduleName": "Quotes",
+    "name": "Add quote line item",
+    "slug": "quotes.add_quote_line_item"
+  },
+  {
+    "id": "M27.A05",
+    "module": "quotes",
+    "moduleName": "Quotes",
+    "name": "Update quote line item",
+    "slug": "quotes.update_quote_line_item"
+  },
+  {
+    "id": "M27.A06",
+    "module": "quotes",
+    "moduleName": "Quotes",
+    "name": "Set quote expiry",
+    "slug": "quotes.set_quote_expiry"
+  },
+  {
+    "id": "M27.A07",
+    "module": "quotes",
+    "moduleName": "Quotes",
+    "name": "Apply quote discount",
+    "slug": "quotes.apply_quote_discount"
+  },
+  {
+    "id": "M27.A08",
+    "module": "quotes",
+    "moduleName": "Quotes",
+    "name": "Send quote for acceptance",
+    "slug": "quotes.send_quote_for_acceptance"
+  },
+  {
+    "id": "M27.A09",
+    "module": "quotes",
+    "moduleName": "Quotes",
+    "name": "Record quote acceptance",
+    "slug": "quotes.record_quote_acceptance"
+  },
+  {
+    "id": "M27.A10",
+    "module": "quotes",
+    "moduleName": "Quotes",
+    "name": "Convert accepted quote to invoice",
+    "slug": "quotes.convert_accepted_quote_to_invoice"
+  },
+  {
+    "id": "M28.A01",
+    "module": "invoices",
+    "moduleName": "Invoices",
+    "name": "Create invoice",
+    "slug": "invoices.create_invoice"
+  },
+  {
+    "id": "M28.A02",
+    "module": "invoices",
+    "moduleName": "Invoices",
+    "name": "Get invoice details",
+    "slug": "invoices.get_invoice_details"
+  },
+  {
+    "id": "M28.A03",
+    "module": "invoices",
+    "moduleName": "Invoices",
+    "name": "Search invoices",
+    "slug": "invoices.search_invoices"
+  },
+  {
+    "id": "M28.A04",
+    "module": "invoices",
+    "moduleName": "Invoices",
+    "name": "Add invoice line item",
+    "slug": "invoices.add_invoice_line_item"
+  },
+  {
+    "id": "M28.A05",
+    "module": "invoices",
+    "moduleName": "Invoices",
+    "name": "Update draft invoice",
+    "slug": "invoices.update_draft_invoice"
+  },
+  {
+    "id": "M28.A06",
+    "module": "invoices",
+    "moduleName": "Invoices",
+    "name": "Set invoice due date",
+    "slug": "invoices.set_invoice_due_date"
+  },
+  {
+    "id": "M28.A07",
+    "module": "invoices",
+    "moduleName": "Invoices",
+    "name": "Issue invoice",
+    "slug": "invoices.issue_invoice"
+  },
+  {
+    "id": "M28.A08",
+    "module": "invoices",
+    "moduleName": "Invoices",
+    "name": "Send invoice reminder",
+    "slug": "invoices.send_invoice_reminder"
+  },
+  {
+    "id": "M28.A09",
+    "module": "invoices",
+    "moduleName": "Invoices",
+    "name": "Void unpaid invoice",
+    "slug": "invoices.void_unpaid_invoice"
+  },
+  {
+    "id": "M28.A10",
+    "module": "invoices",
+    "moduleName": "Invoices",
+    "name": "List overdue invoices",
+    "slug": "invoices.list_overdue_invoices"
+  },
+  {
+    "id": "M29.A01",
+    "module": "payments",
+    "moduleName": "Payments",
+    "name": "Create payment request",
+    "slug": "payments.create_payment_request"
+  },
+  {
+    "id": "M29.A02",
+    "module": "payments",
+    "moduleName": "Payments",
+    "name": "Get payment request",
+    "slug": "payments.get_payment_request"
+  },
+  {
+    "id": "M29.A03",
+    "module": "payments",
+    "moduleName": "Payments",
+    "name": "Cancel unpaid payment request",
+    "slug": "payments.cancel_unpaid_payment_request"
+  },
+  {
+    "id": "M29.A04",
+    "module": "payments",
+    "moduleName": "Payments",
+    "name": "Record simulated payment",
+    "slug": "payments.record_simulated_payment"
+  },
+  {
+    "id": "M29.A05",
+    "module": "payments",
+    "moduleName": "Payments",
+    "name": "Get payment details",
+    "slug": "payments.get_payment_details"
+  },
+  {
+    "id": "M29.A06",
+    "module": "payments",
+    "moduleName": "Payments",
+    "name": "Search payments",
+    "slug": "payments.search_payments"
+  },
+  {
+    "id": "M29.A07",
+    "module": "payments",
+    "moduleName": "Payments",
+    "name": "Allocate payment to invoice",
+    "slug": "payments.allocate_payment_to_invoice"
+  },
+  {
+    "id": "M29.A08",
+    "module": "payments",
+    "moduleName": "Payments",
+    "name": "Remove payment allocation",
+    "slug": "payments.remove_payment_allocation"
+  },
+  {
+    "id": "M29.A09",
+    "module": "payments",
+    "moduleName": "Payments",
+    "name": "Generate payment receipt",
+    "slug": "payments.generate_payment_receipt"
+  },
+  {
+    "id": "M29.A10",
+    "module": "payments",
+    "moduleName": "Payments",
+    "name": "Get payment failure details",
+    "slug": "payments.get_payment_failure_details"
+  },
+  {
+    "id": "M30.A01",
+    "module": "subscriptions",
+    "moduleName": "Subscriptions",
+    "name": "Create subscription",
+    "slug": "subscriptions.create_subscription"
+  },
+  {
+    "id": "M30.A02",
+    "module": "subscriptions",
+    "moduleName": "Subscriptions",
+    "name": "Get subscription details",
+    "slug": "subscriptions.get_subscription_details"
+  },
+  {
+    "id": "M30.A03",
+    "module": "subscriptions",
+    "moduleName": "Subscriptions",
+    "name": "Search subscriptions",
+    "slug": "subscriptions.search_subscriptions"
+  },
+  {
+    "id": "M30.A04",
+    "module": "subscriptions",
+    "moduleName": "Subscriptions",
+    "name": "Change subscription plan",
+    "slug": "subscriptions.change_subscription_plan"
+  },
+  {
+    "id": "M30.A05",
+    "module": "subscriptions",
+    "moduleName": "Subscriptions",
+    "name": "Update subscription quantity",
+    "slug": "subscriptions.update_subscription_quantity"
+  },
+  {
+    "id": "M30.A06",
+    "module": "subscriptions",
+    "moduleName": "Subscriptions",
+    "name": "Set subscription trial end",
+    "slug": "subscriptions.set_subscription_trial_end"
+  },
+  {
+    "id": "M30.A07",
+    "module": "subscriptions",
+    "moduleName": "Subscriptions",
+    "name": "Pause subscription",
+    "slug": "subscriptions.pause_subscription"
+  },
+  {
+    "id": "M30.A08",
+    "module": "subscriptions",
+    "moduleName": "Subscriptions",
+    "name": "Resume subscription",
+    "slug": "subscriptions.resume_subscription"
+  },
+  {
+    "id": "M30.A09",
+    "module": "subscriptions",
+    "moduleName": "Subscriptions",
+    "name": "Cancel subscription",
+    "slug": "subscriptions.cancel_subscription"
+  },
+  {
+    "id": "M30.A10",
+    "module": "subscriptions",
+    "moduleName": "Subscriptions",
+    "name": "Preview next subscription invoice",
+    "slug": "subscriptions.preview_next_subscription_invoice"
+  },
+  {
+    "id": "M31.A01",
+    "module": "coupons",
+    "moduleName": "Coupons",
+    "name": "Create coupon",
+    "slug": "coupons.create_coupon"
+  },
+  {
+    "id": "M31.A02",
+    "module": "coupons",
+    "moduleName": "Coupons",
+    "name": "Get coupon details",
+    "slug": "coupons.get_coupon_details"
+  },
+  {
+    "id": "M31.A03",
+    "module": "coupons",
+    "moduleName": "Coupons",
+    "name": "Search coupons",
+    "slug": "coupons.search_coupons"
+  },
+  {
+    "id": "M31.A04",
+    "module": "coupons",
+    "moduleName": "Coupons",
+    "name": "Update coupon description",
+    "slug": "coupons.update_coupon_description"
+  },
+  {
+    "id": "M31.A05",
+    "module": "coupons",
+    "moduleName": "Coupons",
+    "name": "Set discount value",
+    "slug": "coupons.set_discount_value"
+  },
+  {
+    "id": "M31.A06",
+    "module": "coupons",
+    "moduleName": "Coupons",
+    "name": "Set coupon validity window",
+    "slug": "coupons.set_coupon_validity_window"
+  },
+  {
+    "id": "M31.A07",
+    "module": "coupons",
+    "moduleName": "Coupons",
+    "name": "Set redemption limit",
+    "slug": "coupons.set_redemption_limit"
+  },
+  {
+    "id": "M31.A08",
+    "module": "coupons",
+    "moduleName": "Coupons",
+    "name": "Restrict coupon to products",
+    "slug": "coupons.restrict_coupon_to_products"
+  },
+  {
+    "id": "M31.A09",
+    "module": "coupons",
+    "moduleName": "Coupons",
+    "name": "Validate coupon for order",
+    "slug": "coupons.validate_coupon_for_order"
+  },
+  {
+    "id": "M31.A10",
+    "module": "coupons",
+    "moduleName": "Coupons",
+    "name": "Deactivate coupon",
+    "slug": "coupons.deactivate_coupon"
+  },
+  {
+    "id": "M32.A01",
+    "module": "orders",
+    "moduleName": "Orders",
+    "name": "Create draft order",
+    "slug": "orders.create_draft_order"
+  },
+  {
+    "id": "M32.A02",
+    "module": "orders",
+    "moduleName": "Orders",
+    "name": "Get order details",
+    "slug": "orders.get_order_details"
+  },
+  {
+    "id": "M32.A03",
+    "module": "orders",
+    "moduleName": "Orders",
+    "name": "Search orders",
+    "slug": "orders.search_orders"
+  },
+  {
+    "id": "M32.A04",
+    "module": "orders",
+    "moduleName": "Orders",
+    "name": "Add order line item",
+    "slug": "orders.add_order_line_item"
+  },
+  {
+    "id": "M32.A05",
+    "module": "orders",
+    "moduleName": "Orders",
+    "name": "Update order quantity",
+    "slug": "orders.update_order_quantity"
+  },
+  {
+    "id": "M32.A06",
+    "module": "orders",
+    "moduleName": "Orders",
+    "name": "Set order shipping address",
+    "slug": "orders.set_order_shipping_address"
+  },
+  {
+    "id": "M32.A07",
+    "module": "orders",
+    "moduleName": "Orders",
+    "name": "Apply coupon to order",
+    "slug": "orders.apply_coupon_to_order"
+  },
+  {
+    "id": "M32.A08",
+    "module": "orders",
+    "moduleName": "Orders",
+    "name": "Submit order",
+    "slug": "orders.submit_order"
+  },
+  {
+    "id": "M32.A09",
+    "module": "orders",
+    "moduleName": "Orders",
+    "name": "Cancel order",
+    "slug": "orders.cancel_order"
+  },
+  {
+    "id": "M32.A10",
+    "module": "orders",
+    "moduleName": "Orders",
+    "name": "Mark order fulfilled",
+    "slug": "orders.mark_order_fulfilled"
+  },
+  {
+    "id": "M33.A01",
+    "module": "refunds",
+    "moduleName": "Refunds",
+    "name": "Create refund request",
+    "slug": "refunds.create_refund_request"
+  },
+  {
+    "id": "M33.A02",
+    "module": "refunds",
+    "moduleName": "Refunds",
+    "name": "Get refund request",
+    "slug": "refunds.get_refund_request"
+  },
+  {
+    "id": "M33.A03",
+    "module": "refunds",
+    "moduleName": "Refunds",
+    "name": "Search refund requests",
+    "slug": "refunds.search_refund_requests"
+  },
+  {
+    "id": "M33.A04",
+    "module": "refunds",
+    "moduleName": "Refunds",
+    "name": "Set refund reason",
+    "slug": "refunds.set_refund_reason"
+  },
+  {
+    "id": "M33.A05",
+    "module": "refunds",
+    "moduleName": "Refunds",
+    "name": "Set partial refund amount",
+    "slug": "refunds.set_partial_refund_amount"
+  },
+  {
+    "id": "M33.A06",
+    "module": "refunds",
+    "moduleName": "Refunds",
+    "name": "Check refundable balance",
+    "slug": "refunds.check_refundable_balance"
+  },
+  {
+    "id": "M33.A07",
+    "module": "refunds",
+    "moduleName": "Refunds",
+    "name": "Approve refund request",
+    "slug": "refunds.approve_refund_request"
+  },
+  {
+    "id": "M33.A08",
+    "module": "refunds",
+    "moduleName": "Refunds",
+    "name": "Reject refund request",
+    "slug": "refunds.reject_refund_request"
+  },
+  {
+    "id": "M33.A09",
+    "module": "refunds",
+    "moduleName": "Refunds",
+    "name": "Execute simulated refund",
+    "slug": "refunds.execute_simulated_refund"
+  },
+  {
+    "id": "M33.A10",
+    "module": "refunds",
+    "moduleName": "Refunds",
+    "name": "Get refund execution status",
+    "slug": "refunds.get_refund_execution_status"
+  },
+  {
+    "id": "M34.A01",
+    "module": "tax_rules",
+    "moduleName": "Tax Rules",
+    "name": "Create tax rule",
+    "slug": "tax_rules.create_tax_rule"
+  },
+  {
+    "id": "M34.A02",
+    "module": "tax_rules",
+    "moduleName": "Tax Rules",
+    "name": "Get tax rule",
+    "slug": "tax_rules.get_tax_rule"
+  },
+  {
+    "id": "M34.A03",
+    "module": "tax_rules",
+    "moduleName": "Tax Rules",
+    "name": "List tax rules",
+    "slug": "tax_rules.list_tax_rules"
+  },
+  {
+    "id": "M34.A04",
+    "module": "tax_rules",
+    "moduleName": "Tax Rules",
+    "name": "Set tax rate",
+    "slug": "tax_rules.set_tax_rate"
+  },
+  {
+    "id": "M34.A05",
+    "module": "tax_rules",
+    "moduleName": "Tax Rules",
+    "name": "Set applicable region",
+    "slug": "tax_rules.set_applicable_region"
+  },
+  {
+    "id": "M34.A06",
+    "module": "tax_rules",
+    "moduleName": "Tax Rules",
+    "name": "Set product tax category",
+    "slug": "tax_rules.set_product_tax_category"
+  },
+  {
+    "id": "M34.A07",
+    "module": "tax_rules",
+    "moduleName": "Tax Rules",
+    "name": "Set tax-inclusive pricing",
+    "slug": "tax_rules.set_tax_inclusive_pricing"
+  },
+  {
+    "id": "M34.A08",
+    "module": "tax_rules",
+    "moduleName": "Tax Rules",
+    "name": "Record customer tax exemption",
+    "slug": "tax_rules.record_customer_tax_exemption"
+  },
+  {
+    "id": "M34.A09",
+    "module": "tax_rules",
+    "moduleName": "Tax Rules",
+    "name": "Calculate tax for order",
+    "slug": "tax_rules.calculate_tax_for_order"
+  },
+  {
+    "id": "M34.A10",
+    "module": "tax_rules",
+    "moduleName": "Tax Rules",
+    "name": "Deactivate tax rule",
+    "slug": "tax_rules.deactivate_tax_rule"
+  },
+  {
+    "id": "M35.A01",
+    "module": "websites",
+    "moduleName": "Websites",
+    "name": "Create website",
+    "slug": "websites.create_website"
+  },
+  {
+    "id": "M35.A02",
+    "module": "websites",
+    "moduleName": "Websites",
+    "name": "Get website settings",
+    "slug": "websites.get_website_settings"
+  },
+  {
+    "id": "M35.A03",
+    "module": "websites",
+    "moduleName": "Websites",
+    "name": "List websites",
+    "slug": "websites.list_websites"
+  },
+  {
+    "id": "M35.A04",
+    "module": "websites",
+    "moduleName": "Websites",
+    "name": "Rename website",
+    "slug": "websites.rename_website"
+  },
+  {
+    "id": "M35.A05",
+    "module": "websites",
+    "moduleName": "Websites",
+    "name": "Add website page",
+    "slug": "websites.add_website_page"
+  },
+  {
+    "id": "M35.A06",
+    "module": "websites",
+    "moduleName": "Websites",
+    "name": "Set website home page",
+    "slug": "websites.set_website_home_page"
+  },
+  {
+    "id": "M35.A07",
+    "module": "websites",
+    "moduleName": "Websites",
+    "name": "Update site navigation",
+    "slug": "websites.update_site_navigation"
+  },
+  {
+    "id": "M35.A08",
+    "module": "websites",
+    "moduleName": "Websites",
+    "name": "Set site SEO defaults",
+    "slug": "websites.set_site_seo_defaults"
+  },
+  {
+    "id": "M35.A09",
+    "module": "websites",
+    "moduleName": "Websites",
+    "name": "Publish website",
+    "slug": "websites.publish_website"
+  },
+  {
+    "id": "M35.A10",
+    "module": "websites",
+    "moduleName": "Websites",
+    "name": "Unpublish website",
+    "slug": "websites.unpublish_website"
+  },
+  {
+    "id": "M36.A01",
+    "module": "funnels",
+    "moduleName": "Funnels",
+    "name": "Create funnel",
+    "slug": "funnels.create_funnel"
+  },
+  {
+    "id": "M36.A02",
+    "module": "funnels",
+    "moduleName": "Funnels",
+    "name": "Get funnel definition",
+    "slug": "funnels.get_funnel_definition"
+  },
+  {
+    "id": "M36.A03",
+    "module": "funnels",
+    "moduleName": "Funnels",
+    "name": "List funnels",
+    "slug": "funnels.list_funnels"
+  },
+  {
+    "id": "M36.A04",
+    "module": "funnels",
+    "moduleName": "Funnels",
+    "name": "Add funnel step",
+    "slug": "funnels.add_funnel_step"
+  },
+  {
+    "id": "M36.A05",
+    "module": "funnels",
+    "moduleName": "Funnels",
+    "name": "Reorder funnel steps",
+    "slug": "funnels.reorder_funnel_steps"
+  },
+  {
+    "id": "M36.A06",
+    "module": "funnels",
+    "moduleName": "Funnels",
+    "name": "Remove funnel step",
+    "slug": "funnels.remove_funnel_step"
+  },
+  {
+    "id": "M36.A07",
+    "module": "funnels",
+    "moduleName": "Funnels",
+    "name": "Link landing page to step",
+    "slug": "funnels.link_landing_page_to_step"
+  },
+  {
+    "id": "M36.A08",
+    "module": "funnels",
+    "moduleName": "Funnels",
+    "name": "Set funnel conversion goal",
+    "slug": "funnels.set_funnel_conversion_goal"
+  },
+  {
+    "id": "M36.A09",
+    "module": "funnels",
+    "moduleName": "Funnels",
+    "name": "Publish funnel",
+    "slug": "funnels.publish_funnel"
+  },
+  {
+    "id": "M36.A10",
+    "module": "funnels",
+    "moduleName": "Funnels",
+    "name": "Get funnel conversion metrics",
+    "slug": "funnels.get_funnel_conversion_metrics"
+  },
+  {
+    "id": "M37.A01",
+    "module": "landing_pages",
+    "moduleName": "Landing Pages",
+    "name": "Create landing page",
+    "slug": "landing_pages.create_landing_page"
+  },
+  {
+    "id": "M37.A02",
+    "module": "landing_pages",
+    "moduleName": "Landing Pages",
+    "name": "Get landing page",
+    "slug": "landing_pages.get_landing_page"
+  },
+  {
+    "id": "M37.A03",
+    "module": "landing_pages",
+    "moduleName": "Landing Pages",
+    "name": "Search landing pages",
+    "slug": "landing_pages.search_landing_pages"
+  },
+  {
+    "id": "M37.A04",
+    "module": "landing_pages",
+    "moduleName": "Landing Pages",
+    "name": "Update page content",
+    "slug": "landing_pages.update_page_content"
+  },
+  {
+    "id": "M37.A05",
+    "module": "landing_pages",
+    "moduleName": "Landing Pages",
+    "name": "Add page section",
+    "slug": "landing_pages.add_page_section"
+  },
+  {
+    "id": "M37.A06",
+    "module": "landing_pages",
+    "moduleName": "Landing Pages",
+    "name": "Reorder page sections",
+    "slug": "landing_pages.reorder_page_sections"
+  },
+  {
+    "id": "M37.A07",
+    "module": "landing_pages",
+    "moduleName": "Landing Pages",
+    "name": "Attach form to page",
+    "slug": "landing_pages.attach_form_to_page"
+  },
+  {
+    "id": "M37.A08",
+    "module": "landing_pages",
+    "moduleName": "Landing Pages",
+    "name": "Set page SEO metadata",
+    "slug": "landing_pages.set_page_seo_metadata"
+  },
+  {
+    "id": "M37.A09",
+    "module": "landing_pages",
+    "moduleName": "Landing Pages",
+    "name": "Publish landing page",
+    "slug": "landing_pages.publish_landing_page"
+  },
+  {
+    "id": "M37.A10",
+    "module": "landing_pages",
+    "moduleName": "Landing Pages",
+    "name": "Unpublish landing page",
+    "slug": "landing_pages.unpublish_landing_page"
+  },
+  {
+    "id": "M38.A01",
+    "module": "blogs",
+    "moduleName": "Blogs",
+    "name": "Create blog post",
+    "slug": "blogs.create_blog_post"
+  },
+  {
+    "id": "M38.A02",
+    "module": "blogs",
+    "moduleName": "Blogs",
+    "name": "Get blog post",
+    "slug": "blogs.get_blog_post"
+  },
+  {
+    "id": "M38.A03",
+    "module": "blogs",
+    "moduleName": "Blogs",
+    "name": "Search blog posts",
+    "slug": "blogs.search_blog_posts"
+  },
+  {
+    "id": "M38.A04",
+    "module": "blogs",
+    "moduleName": "Blogs",
+    "name": "Update blog post",
+    "slug": "blogs.update_blog_post"
+  },
+  {
+    "id": "M38.A05",
+    "module": "blogs",
+    "moduleName": "Blogs",
+    "name": "Assign post author",
+    "slug": "blogs.assign_post_author"
+  },
+  {
+    "id": "M38.A06",
+    "module": "blogs",
+    "moduleName": "Blogs",
+    "name": "Set post categories",
+    "slug": "blogs.set_post_categories"
+  },
+  {
+    "id": "M38.A07",
+    "module": "blogs",
+    "moduleName": "Blogs",
+    "name": "Set post SEO metadata",
+    "slug": "blogs.set_post_seo_metadata"
+  },
+  {
+    "id": "M38.A08",
+    "module": "blogs",
+    "moduleName": "Blogs",
+    "name": "Schedule post publication",
+    "slug": "blogs.schedule_post_publication"
+  },
+  {
+    "id": "M38.A09",
+    "module": "blogs",
+    "moduleName": "Blogs",
+    "name": "Publish post",
+    "slug": "blogs.publish_post"
+  },
+  {
+    "id": "M38.A10",
+    "module": "blogs",
+    "moduleName": "Blogs",
+    "name": "Unpublish post",
+    "slug": "blogs.unpublish_post"
+  },
+  {
+    "id": "M39.A01",
+    "module": "media_assets",
+    "moduleName": "Media Assets",
+    "name": "Upload media asset",
+    "slug": "media_assets.upload_media_asset"
+  },
+  {
+    "id": "M39.A02",
+    "module": "media_assets",
+    "moduleName": "Media Assets",
+    "name": "Get asset metadata",
+    "slug": "media_assets.get_asset_metadata"
+  },
+  {
+    "id": "M39.A03",
+    "module": "media_assets",
+    "moduleName": "Media Assets",
+    "name": "Search media assets",
+    "slug": "media_assets.search_media_assets"
+  },
+  {
+    "id": "M39.A04",
+    "module": "media_assets",
+    "moduleName": "Media Assets",
+    "name": "Rename media asset",
+    "slug": "media_assets.rename_media_asset"
+  },
+  {
+    "id": "M39.A05",
+    "module": "media_assets",
+    "moduleName": "Media Assets",
+    "name": "Set asset alt text",
+    "slug": "media_assets.set_asset_alt_text"
+  },
+  {
+    "id": "M39.A06",
+    "module": "media_assets",
+    "moduleName": "Media Assets",
+    "name": "Move asset to folder",
+    "slug": "media_assets.move_asset_to_folder"
+  },
+  {
+    "id": "M39.A07",
+    "module": "media_assets",
+    "moduleName": "Media Assets",
+    "name": "Replace asset file",
+    "slug": "media_assets.replace_asset_file"
+  },
+  {
+    "id": "M39.A08",
+    "module": "media_assets",
+    "moduleName": "Media Assets",
+    "name": "List asset references",
+    "slug": "media_assets.list_asset_references"
+  },
+  {
+    "id": "M39.A09",
+    "module": "media_assets",
+    "moduleName": "Media Assets",
+    "name": "Generate asset access link",
+    "slug": "media_assets.generate_asset_access_link"
+  },
+  {
+    "id": "M39.A10",
+    "module": "media_assets",
+    "moduleName": "Media Assets",
+    "name": "Delete unreferenced asset",
+    "slug": "media_assets.delete_unreferenced_asset"
+  },
+  {
+    "id": "M40.A01",
+    "module": "courses",
+    "moduleName": "Courses",
+    "name": "Create course",
+    "slug": "courses.create_course"
+  },
+  {
+    "id": "M40.A02",
+    "module": "courses",
+    "moduleName": "Courses",
+    "name": "Get course details",
+    "slug": "courses.get_course_details"
+  },
+  {
+    "id": "M40.A03",
+    "module": "courses",
+    "moduleName": "Courses",
+    "name": "Search courses",
+    "slug": "courses.search_courses"
+  },
+  {
+    "id": "M40.A04",
+    "module": "courses",
+    "moduleName": "Courses",
+    "name": "Update course details",
+    "slug": "courses.update_course_details"
+  },
+  {
+    "id": "M40.A05",
+    "module": "courses",
+    "moduleName": "Courses",
+    "name": "Add course section",
+    "slug": "courses.add_course_section"
+  },
+  {
+    "id": "M40.A06",
+    "module": "courses",
+    "moduleName": "Courses",
+    "name": "Reorder course sections",
+    "slug": "courses.reorder_course_sections"
+  },
+  {
+    "id": "M40.A07",
+    "module": "courses",
+    "moduleName": "Courses",
+    "name": "Assign course instructor",
+    "slug": "courses.assign_course_instructor"
+  },
+  {
+    "id": "M40.A08",
+    "module": "courses",
+    "moduleName": "Courses",
+    "name": "Set course prerequisites",
+    "slug": "courses.set_course_prerequisites"
+  },
+  {
+    "id": "M40.A09",
+    "module": "courses",
+    "moduleName": "Courses",
+    "name": "Publish course",
+    "slug": "courses.publish_course"
+  },
+  {
+    "id": "M40.A10",
+    "module": "courses",
+    "moduleName": "Courses",
+    "name": "Archive course",
+    "slug": "courses.archive_course"
+  },
+  {
+    "id": "M41.A01",
+    "module": "lessons",
+    "moduleName": "Lessons",
+    "name": "Create lesson",
+    "slug": "lessons.create_lesson"
+  },
+  {
+    "id": "M41.A02",
+    "module": "lessons",
+    "moduleName": "Lessons",
+    "name": "Get lesson details",
+    "slug": "lessons.get_lesson_details"
+  },
+  {
+    "id": "M41.A03",
+    "module": "lessons",
+    "moduleName": "Lessons",
+    "name": "Search lessons",
+    "slug": "lessons.search_lessons"
+  },
+  {
+    "id": "M41.A04",
+    "module": "lessons",
+    "moduleName": "Lessons",
+    "name": "Update lesson content",
+    "slug": "lessons.update_lesson_content"
+  },
+  {
+    "id": "M41.A05",
+    "module": "lessons",
+    "moduleName": "Lessons",
+    "name": "Attach lesson media",
+    "slug": "lessons.attach_lesson_media"
+  },
+  {
+    "id": "M41.A06",
+    "module": "lessons",
+    "moduleName": "Lessons",
+    "name": "Move lesson to course section",
+    "slug": "lessons.move_lesson_to_course_section"
+  },
+  {
+    "id": "M41.A07",
+    "module": "lessons",
+    "moduleName": "Lessons",
+    "name": "Set lesson release schedule",
+    "slug": "lessons.set_lesson_release_schedule"
+  },
+  {
+    "id": "M41.A08",
+    "module": "lessons",
+    "moduleName": "Lessons",
+    "name": "Set lesson completion criteria",
+    "slug": "lessons.set_lesson_completion_criteria"
+  },
+  {
+    "id": "M41.A09",
+    "module": "lessons",
+    "moduleName": "Lessons",
+    "name": "Publish lesson",
+    "slug": "lessons.publish_lesson"
+  },
+  {
+    "id": "M41.A10",
+    "module": "lessons",
+    "moduleName": "Lessons",
+    "name": "Unpublish lesson",
+    "slug": "lessons.unpublish_lesson"
+  },
+  {
+    "id": "M42.A01",
+    "module": "enrollments",
+    "moduleName": "Enrollments",
+    "name": "Enroll learner in course",
+    "slug": "enrollments.enroll_learner_in_course"
+  },
+  {
+    "id": "M42.A02",
+    "module": "enrollments",
+    "moduleName": "Enrollments",
+    "name": "Get enrollment details",
+    "slug": "enrollments.get_enrollment_details"
+  },
+  {
+    "id": "M42.A03",
+    "module": "enrollments",
+    "moduleName": "Enrollments",
+    "name": "Search enrollments",
+    "slug": "enrollments.search_enrollments"
+  },
+  {
+    "id": "M42.A04",
+    "module": "enrollments",
+    "moduleName": "Enrollments",
+    "name": "Set enrollment expiry",
+    "slug": "enrollments.set_enrollment_expiry"
+  },
+  {
+    "id": "M42.A05",
+    "module": "enrollments",
+    "moduleName": "Enrollments",
+    "name": "Suspend enrollment",
+    "slug": "enrollments.suspend_enrollment"
+  },
+  {
+    "id": "M42.A06",
+    "module": "enrollments",
+    "moduleName": "Enrollments",
+    "name": "Resume enrollment",
+    "slug": "enrollments.resume_enrollment"
+  },
+  {
+    "id": "M42.A07",
+    "module": "enrollments",
+    "moduleName": "Enrollments",
+    "name": "Revoke enrollment",
+    "slug": "enrollments.revoke_enrollment"
+  },
+  {
+    "id": "M42.A08",
+    "module": "enrollments",
+    "moduleName": "Enrollments",
+    "name": "Record lesson completion",
+    "slug": "enrollments.record_lesson_completion"
+  },
+  {
+    "id": "M42.A09",
+    "module": "enrollments",
+    "moduleName": "Enrollments",
+    "name": "Get learner progress",
+    "slug": "enrollments.get_learner_progress"
+  },
+  {
+    "id": "M42.A10",
+    "module": "enrollments",
+    "moduleName": "Enrollments",
+    "name": "Issue course completion certificate",
+    "slug": "enrollments.issue_course_completion_certificate"
+  },
+  {
+    "id": "M43.A01",
+    "module": "communities",
+    "moduleName": "Communities",
+    "name": "Create community",
+    "slug": "communities.create_community"
+  },
+  {
+    "id": "M43.A02",
+    "module": "communities",
+    "moduleName": "Communities",
+    "name": "Get community details",
+    "slug": "communities.get_community_details"
+  },
+  {
+    "id": "M43.A03",
+    "module": "communities",
+    "moduleName": "Communities",
+    "name": "Update community guidelines",
+    "slug": "communities.update_community_guidelines"
+  },
+  {
+    "id": "M43.A04",
+    "module": "communities",
+    "moduleName": "Communities",
+    "name": "Create discussion channel",
+    "slug": "communities.create_discussion_channel"
+  },
+  {
+    "id": "M43.A05",
+    "module": "communities",
+    "moduleName": "Communities",
+    "name": "Join community",
+    "slug": "communities.join_community"
+  },
+  {
+    "id": "M43.A06",
+    "module": "communities",
+    "moduleName": "Communities",
+    "name": "Leave community",
+    "slug": "communities.leave_community"
+  },
+  {
+    "id": "M43.A07",
+    "module": "communities",
+    "moduleName": "Communities",
+    "name": "Create community post",
+    "slug": "communities.create_community_post"
+  },
+  {
+    "id": "M43.A08",
+    "module": "communities",
+    "moduleName": "Communities",
+    "name": "Reply to community post",
+    "slug": "communities.reply_to_community_post"
+  },
+  {
+    "id": "M43.A09",
+    "module": "communities",
+    "moduleName": "Communities",
+    "name": "Pin community post",
+    "slug": "communities.pin_community_post"
+  },
+  {
+    "id": "M43.A10",
+    "module": "communities",
+    "moduleName": "Communities",
+    "name": "Remove reported post",
+    "slug": "communities.remove_reported_post"
+  },
+  {
+    "id": "M44.A01",
+    "module": "memberships",
+    "moduleName": "Memberships",
+    "name": "Create membership plan",
+    "slug": "memberships.create_membership_plan"
+  },
+  {
+    "id": "M44.A02",
+    "module": "memberships",
+    "moduleName": "Memberships",
+    "name": "Get membership plan",
+    "slug": "memberships.get_membership_plan"
+  },
+  {
+    "id": "M44.A03",
+    "module": "memberships",
+    "moduleName": "Memberships",
+    "name": "List membership plans",
+    "slug": "memberships.list_membership_plans"
+  },
+  {
+    "id": "M44.A04",
+    "module": "memberships",
+    "moduleName": "Memberships",
+    "name": "Update plan description",
+    "slug": "memberships.update_plan_description"
+  },
+  {
+    "id": "M44.A05",
+    "module": "memberships",
+    "moduleName": "Memberships",
+    "name": "Add plan entitlement",
+    "slug": "memberships.add_plan_entitlement"
+  },
+  {
+    "id": "M44.A06",
+    "module": "memberships",
+    "moduleName": "Memberships",
+    "name": "Remove plan entitlement",
+    "slug": "memberships.remove_plan_entitlement"
+  },
+  {
+    "id": "M44.A07",
+    "module": "memberships",
+    "moduleName": "Memberships",
+    "name": "Grant membership to contact",
+    "slug": "memberships.grant_membership_to_contact"
+  },
+  {
+    "id": "M44.A08",
+    "module": "memberships",
+    "moduleName": "Memberships",
+    "name": "Set membership expiry",
+    "slug": "memberships.set_membership_expiry"
+  },
+  {
+    "id": "M44.A09",
+    "module": "memberships",
+    "moduleName": "Memberships",
+    "name": "Revoke membership",
+    "slug": "memberships.revoke_membership"
+  },
+  {
+    "id": "M44.A10",
+    "module": "memberships",
+    "moduleName": "Memberships",
+    "name": "Check member access",
+    "slug": "memberships.check_member_access"
+  },
+  {
+    "id": "M45.A01",
+    "module": "reviews",
+    "moduleName": "Reviews",
+    "name": "Create review request",
+    "slug": "reviews.create_review_request"
+  },
+  {
+    "id": "M45.A02",
+    "module": "reviews",
+    "moduleName": "Reviews",
+    "name": "Send review request",
+    "slug": "reviews.send_review_request"
+  },
+  {
+    "id": "M45.A03",
+    "module": "reviews",
+    "moduleName": "Reviews",
+    "name": "Cancel unsent review request",
+    "slug": "reviews.cancel_unsent_review_request"
+  },
+  {
+    "id": "M45.A04",
+    "module": "reviews",
+    "moduleName": "Reviews",
+    "name": "List review requests",
+    "slug": "reviews.list_review_requests"
+  },
+  {
+    "id": "M45.A05",
+    "module": "reviews",
+    "moduleName": "Reviews",
+    "name": "Record simulated customer review",
+    "slug": "reviews.record_simulated_customer_review"
+  },
+  {
+    "id": "M45.A06",
+    "module": "reviews",
+    "moduleName": "Reviews",
+    "name": "Search reviews",
+    "slug": "reviews.search_reviews"
+  },
+  {
+    "id": "M45.A07",
+    "module": "reviews",
+    "moduleName": "Reviews",
+    "name": "Get review details",
+    "slug": "reviews.get_review_details"
+  },
+  {
+    "id": "M45.A08",
+    "module": "reviews",
+    "moduleName": "Reviews",
+    "name": "Draft review response",
+    "slug": "reviews.draft_review_response"
+  },
+  {
+    "id": "M45.A09",
+    "module": "reviews",
+    "moduleName": "Reviews",
+    "name": "Publish review response",
+    "slug": "reviews.publish_review_response"
+  },
+  {
+    "id": "M45.A10",
+    "module": "reviews",
+    "moduleName": "Reviews",
+    "name": "Get review rating summary",
+    "slug": "reviews.get_review_rating_summary"
+  },
+  {
+    "id": "M46.A01",
+    "module": "business_listings",
+    "moduleName": "Business Listings",
+    "name": "Create business listing",
+    "slug": "business_listings.create_business_listing"
+  },
+  {
+    "id": "M46.A02",
+    "module": "business_listings",
+    "moduleName": "Business Listings",
+    "name": "Get listing details",
+    "slug": "business_listings.get_listing_details"
+  },
+  {
+    "id": "M46.A03",
+    "module": "business_listings",
+    "moduleName": "Business Listings",
+    "name": "Search business listings",
+    "slug": "business_listings.search_business_listings"
+  },
+  {
+    "id": "M46.A04",
+    "module": "business_listings",
+    "moduleName": "Business Listings",
+    "name": "Update listing name",
+    "slug": "business_listings.update_listing_name"
+  },
+  {
+    "id": "M46.A05",
+    "module": "business_listings",
+    "moduleName": "Business Listings",
+    "name": "Update listing address",
+    "slug": "business_listings.update_listing_address"
+  },
+  {
+    "id": "M46.A06",
+    "module": "business_listings",
+    "moduleName": "Business Listings",
+    "name": "Update listing phone",
+    "slug": "business_listings.update_listing_phone"
+  },
+  {
+    "id": "M46.A07",
+    "module": "business_listings",
+    "moduleName": "Business Listings",
+    "name": "Set listing business hours",
+    "slug": "business_listings.set_listing_business_hours"
+  },
+  {
+    "id": "M46.A08",
+    "module": "business_listings",
+    "moduleName": "Business Listings",
+    "name": "Set listing categories",
+    "slug": "business_listings.set_listing_categories"
+  },
+  {
+    "id": "M46.A09",
+    "module": "business_listings",
+    "moduleName": "Business Listings",
+    "name": "Publish listing to simulated directory",
+    "slug": "business_listings.publish_listing_to_simulated_directory"
+  },
+  {
+    "id": "M46.A10",
+    "module": "business_listings",
+    "moduleName": "Business Listings",
+    "name": "Get listing sync status",
+    "slug": "business_listings.get_listing_sync_status"
+  },
+  {
+    "id": "M47.A01",
+    "module": "support_tickets",
+    "moduleName": "Support Tickets",
+    "name": "Create support ticket",
+    "slug": "support_tickets.create_support_ticket"
+  },
+  {
+    "id": "M47.A02",
+    "module": "support_tickets",
+    "moduleName": "Support Tickets",
+    "name": "Get ticket details",
+    "slug": "support_tickets.get_ticket_details"
+  },
+  {
+    "id": "M47.A03",
+    "module": "support_tickets",
+    "moduleName": "Support Tickets",
+    "name": "Search tickets",
+    "slug": "support_tickets.search_tickets"
+  },
+  {
+    "id": "M47.A04",
+    "module": "support_tickets",
+    "moduleName": "Support Tickets",
+    "name": "Assign ticket owner",
+    "slug": "support_tickets.assign_ticket_owner"
+  },
+  {
+    "id": "M47.A05",
+    "module": "support_tickets",
+    "moduleName": "Support Tickets",
+    "name": "Set ticket priority",
+    "slug": "support_tickets.set_ticket_priority"
+  },
+  {
+    "id": "M47.A06",
+    "module": "support_tickets",
+    "moduleName": "Support Tickets",
+    "name": "Update ticket status",
+    "slug": "support_tickets.update_ticket_status"
+  },
+  {
+    "id": "M47.A07",
+    "module": "support_tickets",
+    "moduleName": "Support Tickets",
+    "name": "Add internal ticket note",
+    "slug": "support_tickets.add_internal_ticket_note"
+  },
+  {
+    "id": "M47.A08",
+    "module": "support_tickets",
+    "moduleName": "Support Tickets",
+    "name": "Reply to ticket requester",
+    "slug": "support_tickets.reply_to_ticket_requester"
+  },
+  {
+    "id": "M47.A09",
+    "module": "support_tickets",
+    "moduleName": "Support Tickets",
+    "name": "Link ticket to contact",
+    "slug": "support_tickets.link_ticket_to_contact"
+  },
+  {
+    "id": "M47.A10",
+    "module": "support_tickets",
+    "moduleName": "Support Tickets",
+    "name": "Get ticket SLA status",
+    "slug": "support_tickets.get_ticket_sla_status"
+  },
+  {
+    "id": "M48.A01",
+    "module": "users",
+    "moduleName": "Users",
+    "name": "Invite user",
+    "slug": "users.invite_user"
+  },
+  {
+    "id": "M48.A02",
+    "module": "users",
+    "moduleName": "Users",
+    "name": "Get user profile",
+    "slug": "users.get_user_profile"
+  },
+  {
+    "id": "M48.A03",
+    "module": "users",
+    "moduleName": "Users",
+    "name": "List users",
+    "slug": "users.list_users"
+  },
+  {
+    "id": "M48.A04",
+    "module": "users",
+    "moduleName": "Users",
+    "name": "Update user profile",
+    "slug": "users.update_user_profile"
+  },
+  {
+    "id": "M48.A05",
+    "module": "users",
+    "moduleName": "Users",
+    "name": "Assign user role",
+    "slug": "users.assign_user_role"
+  },
+  {
+    "id": "M48.A06",
+    "module": "users",
+    "moduleName": "Users",
+    "name": "Revoke user role",
+    "slug": "users.revoke_user_role"
+  },
+  {
+    "id": "M48.A07",
+    "module": "users",
+    "moduleName": "Users",
+    "name": "Deactivate user",
+    "slug": "users.deactivate_user"
+  },
+  {
+    "id": "M48.A08",
+    "module": "users",
+    "moduleName": "Users",
+    "name": "Reactivate user",
+    "slug": "users.reactivate_user"
+  },
+  {
+    "id": "M48.A09",
+    "module": "users",
+    "moduleName": "Users",
+    "name": "List user permissions",
+    "slug": "users.list_user_permissions"
+  },
+  {
+    "id": "M48.A10",
+    "module": "users",
+    "moduleName": "Users",
+    "name": "View user audit activity",
+    "slug": "users.view_user_audit_activity"
+  },
+  {
+    "id": "M49.A01",
+    "module": "teams",
+    "moduleName": "Teams",
+    "name": "Create team",
+    "slug": "teams.create_team"
+  },
+  {
+    "id": "M49.A02",
+    "module": "teams",
+    "moduleName": "Teams",
+    "name": "Get team details",
+    "slug": "teams.get_team_details"
+  },
+  {
+    "id": "M49.A03",
+    "module": "teams",
+    "moduleName": "Teams",
+    "name": "List teams",
+    "slug": "teams.list_teams"
+  },
+  {
+    "id": "M49.A04",
+    "module": "teams",
+    "moduleName": "Teams",
+    "name": "Rename team",
+    "slug": "teams.rename_team"
+  },
+  {
+    "id": "M49.A05",
+    "module": "teams",
+    "moduleName": "Teams",
+    "name": "Add team member",
+    "slug": "teams.add_team_member"
+  },
+  {
+    "id": "M49.A06",
+    "module": "teams",
+    "moduleName": "Teams",
+    "name": "Remove team member",
+    "slug": "teams.remove_team_member"
+  },
+  {
+    "id": "M49.A07",
+    "module": "teams",
+    "moduleName": "Teams",
+    "name": "Assign team manager",
+    "slug": "teams.assign_team_manager"
+  },
+  {
+    "id": "M49.A08",
+    "module": "teams",
+    "moduleName": "Teams",
+    "name": "Set team assignment strategy",
+    "slug": "teams.set_team_assignment_strategy"
+  },
+  {
+    "id": "M49.A09",
+    "module": "teams",
+    "moduleName": "Teams",
+    "name": "Get team workload",
+    "slug": "teams.get_team_workload"
+  },
+  {
+    "id": "M49.A10",
+    "module": "teams",
+    "moduleName": "Teams",
+    "name": "Archive team",
+    "slug": "teams.archive_team"
+  },
+  {
+    "id": "M50.A01",
+    "module": "reports",
+    "moduleName": "Reports",
+    "name": "Create saved report",
+    "slug": "reports.create_saved_report"
+  },
+  {
+    "id": "M50.A02",
+    "module": "reports",
+    "moduleName": "Reports",
+    "name": "Get report definition",
+    "slug": "reports.get_report_definition"
+  },
+  {
+    "id": "M50.A03",
+    "module": "reports",
+    "moduleName": "Reports",
+    "name": "List saved reports",
+    "slug": "reports.list_saved_reports"
+  },
+  {
+    "id": "M50.A04",
+    "module": "reports",
+    "moduleName": "Reports",
+    "name": "Update report filters",
+    "slug": "reports.update_report_filters"
+  },
+  {
+    "id": "M50.A05",
+    "module": "reports",
+    "moduleName": "Reports",
+    "name": "Set report date range",
+    "slug": "reports.set_report_date_range"
+  },
+  {
+    "id": "M50.A06",
+    "module": "reports",
+    "moduleName": "Reports",
+    "name": "Set report grouping",
+    "slug": "reports.set_report_grouping"
+  },
+  {
+    "id": "M50.A07",
+    "module": "reports",
+    "moduleName": "Reports",
+    "name": "Run report",
+    "slug": "reports.run_report"
+  },
+  {
+    "id": "M50.A08",
+    "module": "reports",
+    "moduleName": "Reports",
+    "name": "Compare report periods",
+    "slug": "reports.compare_report_periods"
+  },
+  {
+    "id": "M50.A09",
+    "module": "reports",
+    "moduleName": "Reports",
+    "name": "Export report results",
+    "slug": "reports.export_report_results"
+  },
+  {
+    "id": "M50.A10",
+    "module": "reports",
+    "moduleName": "Reports",
+    "name": "Schedule report delivery",
+    "slug": "reports.schedule_report_delivery"
+  }
+]
