@@ -343,3 +343,103 @@ describe('runTurn — LLM call budget', () => {
     expect(final && final.t === 'answer.final' && final.text.length).toBeGreaterThan(0);
   });
 });
+
+describe('runTurn — turn timeout (turnTimeoutMs, reviewer I-1)', () => {
+  it('a slow handler crossing a tiny deadline stops BETWEEN strata: status failed, timeout message, memory.snapshot still last', async () => {
+    const queue = queueMockLlm([
+      {
+        kind: 'plan',
+        plan: {
+          goal: 'slow',
+          steps: [
+            { id: 's1', action: 'leads.search_leads', params: {}, dependsOn: [] },
+            { id: 's2', action: 'tasks.create_task', params: {}, dependsOn: ['s1'] },
+          ],
+        },
+      },
+    ]);
+    __setTestFetch(queue.fetch);
+
+    let created = 0;
+    const registry = buildRegistry(
+      [
+        [
+          // Deliberately slow — longer than the 50ms test deadline below —
+          // so the deadline is crossed WHILE this read runs, and the check
+          // (which only ever runs BETWEEN strata) catches it on the very
+          // next loop iteration, before s2's stratum is even scheduled.
+          action('leads.search_leads', 'read', async () => {
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            return { items: [], total: 0 };
+          }),
+          action('tasks.create_task', 'write', async () => {
+            created += 1;
+            return { ok: true };
+          }),
+        ],
+      ],
+      coreOps,
+    );
+
+    const events = await drive(registry, 'find my leads', { turnTimeoutMs: 50 });
+
+    expect(queue.callCount()).toBe(1); // the plan itself was fine — only execution timed out
+    expect(created).toBe(0); // s2's stratum never started
+
+    const completed = completedOf(events);
+    expect(completed.status).toBe('failed');
+    expect(Number.isFinite(completed.metrics.ttfurMs)).toBe(true);
+    expect(Number.isFinite(completed.metrics.totalMs)).toBe(true);
+
+    const final = events.find((e) => e.t === 'answer.final');
+    expect(final && final.t === 'answer.final' && final.text).toMatch(/deadline|timeout/i);
+
+    // memory.snapshot is still emitted LAST, even on a timeout failure.
+    expect(typesOf(events).slice(-3)).toEqual(['answer.final', 'turn.completed', 'memory.snapshot']);
+  });
+});
+
+describe('runTurn — top-level error guard + fast-model escalation (reviewer I-2)', () => {
+  it('a malformed response from the routed FAST model escalates once to the planner model and succeeds — 2 calls', async () => {
+    const queue = queueMockLlm([
+      { nonsense: true }, // fails `planOutcomeSchema` → NoObjectGeneratedError
+      { kind: 'plan', plan: { goal: 'ok', steps: [{ id: 's1', action: 'leads.search_leads', params: {}, dependsOn: [] }] } },
+    ]);
+    __setTestFetch(queue.fetch);
+
+    const registry = buildRegistry(
+      [[action('leads.search_leads', 'read', async () => ({ items: [{ id: 'l1' }], total: 1 }))]],
+      coreOps,
+    );
+
+    // "create a contact" scores 0.70 (> τ) against the REAL catalog's
+    // contacts.create_contact, is ≤12 words, and carries no multi-intent
+    // marker → router.ts routes this turn to FAST_MODEL.
+    const events = await drive(registry, 'create a contact');
+
+    expect(queue.callCount()).toBe(2);
+    const completed = completedOf(events);
+    expect(completed.status).toBe('done');
+    expect(completed.metrics.llmCalls).toBe(2);
+  });
+
+  it('a malformed response from the routed PLANNER model has no further escalation — fails honestly, completed+snapshot still emitted', async () => {
+    const queue = queueMockLlm([{ nonsense: true }]);
+    __setTestFetch(queue.fetch);
+
+    const registry = buildRegistry([], coreOps);
+
+    // A comma + "and"/"then" forces the multi-intent branch regardless of
+    // retrieval score → router.ts routes this turn to PLANNER_MODEL, so
+    // there is no weaker model left to escalate FROM.
+    const events = await drive(registry, 'create a contact, and then do something else');
+
+    expect(queue.callCount()).toBe(1); // no retry attempted
+    const completed = completedOf(events);
+    expect(completed.status).toBe('failed');
+    expect(completed.metrics.llmCalls).toBe(1);
+
+    // the generic top-level guard still gets the turn to a clean finish.
+    expect(typesOf(events).slice(-3)).toEqual(['answer.final', 'turn.completed', 'memory.snapshot']);
+  });
+});

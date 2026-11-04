@@ -129,6 +129,15 @@ export interface ExecuteInput {
    * (`checkStratum` + `joinerRepair`, both LLM/budget-aware) lives in
    * `agent/pipeline.ts` — this module stays LLM-free. */
   onWriteStratum?: (ctx: WriteStratumCtx) => Promise<WriteStratumDecision>;
+  /** LLD §5.1/§5.3 `turnTimeoutMs` — real wall-clock (`performance.now()`)
+   * deadline, checked BETWEEN strata (never mid-handler: a slow handler
+   * call itself always runs to completion, the NEXT stratum just never
+   * starts). Optional: omitted entirely (as every Task 11 test does), the
+   * loop runs exactly as before — no timeout is ever enforced. On breach:
+   * every still-`'pending'` step is marked `'skipped'`, no further steps
+   * run, and the turn ends `status:'failed'` with an explicit timeout
+   * `abortReason`. */
+  deadlineAtMs?: number;
 }
 
 const DRIFT_RECONFIRM_THRESHOLD = 0.25; // LLD §2.5: drift >25% forces re-confirm
@@ -320,6 +329,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
   let clarifyQuestion: string | undefined;
   let aborted = false;
   let abortReason: string | undefined;
+  let timedOut = false;
 
   const terminal = (s: StepLifecycle): boolean =>
     s === 'done' || s === 'failed' || s === 'skipped' || s === 'cancelled';
@@ -713,6 +723,14 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
   for (;;) {
     if (halted || aborted || clarifyQuestion !== undefined) break;
 
+    // LLD §5.3 "loop until all terminal or TIMEOUT" — checked BETWEEN
+    // strata (i.e. at the top of every loop iteration, before computing
+    // the next stratum's frontier), never mid-handler.
+    if (input.deadlineAtMs !== undefined && performance.now() >= input.deadlineAtMs) {
+      timedOut = true;
+      break;
+    }
+
     const frontier = plan.steps.filter((step) => {
       const rec = states.get(step.id);
       if (!rec || rec.state !== 'pending') return false;
@@ -803,6 +821,17 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
   }
 
   // --- final status ---------------------------------------------------------
+
+  // Timeout breach: every not-yet-started step is explicitly marked
+  // 'skipped' (never silently left 'pending') — the reviewer's ask, and
+  // the honest signal that nothing further was even attempted.
+  if (timedOut) {
+    for (const [id, rec] of states) {
+      if (rec.state === 'pending') states.set(id, { state: 'skipped' });
+    }
+    aborted = true;
+    abortReason = 'Turn exceeded its wall-clock deadline (turnTimeoutMs) — stopped before scheduling further work.';
+  }
 
   const stepStates: Record<string, StepRecord> = {};
   for (const [id, rec] of states) stepStates[id] = rec;

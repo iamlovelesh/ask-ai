@@ -18,6 +18,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { NoObjectGeneratedError } from 'ai';
 import type { Registry } from '../catalog/registry.js';
 import type { Crm } from '../store/db.js';
 import { VirtualClock } from '../store/clock.js';
@@ -35,7 +36,7 @@ import {
 import { retrieve, renderCards, type Card, type SessionCtx } from './retrieval.js';
 import type { Playbook } from '../playbooks/loader.js';
 import { matchPlaybook } from '../playbooks/loader.js';
-import { buildPlannerPrompt, plan as plannerPlan, type PlannerPromptCtx } from './planner.js';
+import { buildPlannerPrompt, plan as plannerPlan, type PlannerPromptCtx, type PlanResult } from './planner.js';
 import { validate, repairPrompt, BUDGETS, type HandleRef, type ValidationError } from './validator.js';
 import { checkStratum, joinerRepair } from './joiner.js';
 import { compose, type ComposeInput, type ComposeStepState } from './composer.js';
@@ -49,7 +50,7 @@ import {
 } from './memory.js';
 import { llmCall, BudgetExceededError } from '../llm/client.js';
 import { planOutcomeSchema, type Plan, type PlanOutcome, type Step } from './plan-schema.js';
-import { pickPlannerModel, escalate } from '../llm/router.js';
+import { pickPlannerModel, escalate, fastModel } from '../llm/router.js';
 
 // --- public contract (Task 13) ----------------------------------------------
 
@@ -63,6 +64,10 @@ export interface SessionDeps {
   /** Reserved for Task 14's baseline agent to share `SessionDeps`' shape —
    * `runTurn` itself only ever implements the optimized path. */
   agent?: 'optimized';
+  /** Test-only override of `BUDGETS.turnTimeoutMs` (LLD §5.1's 120_000ms is
+   * too long to exercise in a unit test). Production callers omit this —
+   * it defaults to the canonical budget. */
+  turnTimeoutMs?: number;
 }
 
 export interface RunTurnInput {
@@ -163,8 +168,23 @@ class TurnBudget {
   tokensOut = 0;
   costUsd = 0;
 
+  readonly deadlineAtMs: number;
+
+  constructor(
+    startedAtMs: number,
+    readonly turnTimeoutMs: number,
+  ) {
+    this.deadlineAtMs = startedAtMs + turnTimeoutMs;
+  }
+
   exceeded(): boolean {
     return this.llmCalls >= BUDGETS.maxLlmCallsPerTurn;
+  }
+
+  /** LLD §5.3 "loop until all terminal or TIMEOUT" / §5.1 `turnTimeoutMs` —
+   * real wall-clock (`performance.now()`), never the pinned `VirtualClock`. */
+  timedOut(): boolean {
+    return performance.now() >= this.deadlineAtMs;
   }
 
   record(usage: LlmUsage): void {
@@ -173,22 +193,48 @@ class TurnBudget {
     this.tokensOut += usage.tokensOut;
     this.costUsd += usage.costUsd;
   }
+
+  /** Counts an LLM call that WAS made (a real request went out) but threw
+   * before producing a usable result — e.g. `NoObjectGeneratedError` — so
+   * it still consumes a slot in `maxLlmCallsPerTurn`, even though there's
+   * no `LlmUsage` to add to tokens/cost. */
+  recordFailedCall(): void {
+    this.llmCalls += 1;
+  }
+
+  describeReason(reason: BudgetReason): string {
+    if (reason === 'callBudget') return `LLM call budget exceeded for this turn (max ${BUDGETS.maxLlmCallsPerTurn} calls).`;
+    if (reason === 'timeout') return `Turn exceeded its ${this.turnTimeoutMs}ms wall-clock budget (turnTimeoutMs).`;
+    return 'The session cost budget (EVAL_BUDGET_USD) was exceeded.';
+  }
 }
 
-type BudgetedCall<T> = { ok: true; value: T } | { ok: false; reason: 'callBudget' | 'costBudget' };
+type BudgetReason = 'callBudget' | 'costBudget' | 'timeout';
+type BudgetedCall<T> = { ok: true; value: T } | { ok: false; reason: BudgetReason };
 
-/** Wraps every LLM-consuming call (plan/search-replan/repair/joinerRepair)
- * with the SAME two enforcement points: (1) refuse to even dial out once
+/** The two non-LLM-specific pre-call gates every LLM-consuming call shares:
+ * the call-count ceiling and the turn's wall-clock deadline. Shared by
+ * `callBudgeted` and `attemptPlannerCall` so both enforce identically. */
+function budgetPreCheck(budget: TurnBudget): 'ok' | 'callBudget' | 'timeout' {
+  if (budget.exceeded()) return 'callBudget';
+  if (budget.timedOut()) return 'timeout';
+  return 'ok';
+}
+
+/** Wraps every LLM-consuming call (search-replan/repair/joinerRepair) with
+ * the SAME enforcement points: (1) refuse to even dial out once
  * `maxLlmCallsPerTurn` is reached — this is what makes "the 7th scripted
- * call never happens" true; (2) catch `BudgetExceededError` (the
- * process-wide $ ceiling `llm/client.ts` enforces) so it NEVER escapes as an
- * uncaught exception — LLD: "BudgetExceededError anywhere → turn.completed
- * {status:'failed'}... never a crash." */
+ * call never happens" true; (2) refuse once the turn's wall-clock deadline
+ * has passed (LLD §5.1 `turnTimeoutMs`); (3) catch `BudgetExceededError`
+ * (the process-wide $ ceiling `llm/client.ts` enforces) so it NEVER escapes
+ * as an uncaught exception — LLD: "BudgetExceededError anywhere →
+ * turn.completed{status:'failed'}... never a crash." */
 async function callBudgeted<T extends { usage: LlmUsage }>(
   budget: TurnBudget,
   fn: () => Promise<T>,
 ): Promise<BudgetedCall<T>> {
-  if (budget.exceeded()) return { ok: false, reason: 'callBudget' };
+  const pre = budgetPreCheck(budget);
+  if (pre !== 'ok') return { ok: false, reason: pre };
   try {
     const value = await fn();
     budget.record(value.usage);
@@ -199,17 +245,50 @@ async function callBudgeted<T extends { usage: LlmUsage }>(
   }
 }
 
-function budgetReason(reason: 'callBudget' | 'costBudget'): string {
-  return reason === 'callBudget'
-    ? `LLM call budget exceeded for this turn (max ${BUDGETS.maxLlmCallsPerTurn} calls).`
-    : 'The session cost budget (EVAL_BUDGET_USD) was exceeded.';
-}
-
 // --- planning phase (plan → search loop → repair loop) ----------------------
 
 type PlanningOutcome =
   | { kind: 'ready'; outcome: PlanOutcome; planHash?: string; stepOrder?: string[] }
   | { kind: 'failed'; reason: string };
+
+type PlanAttempt =
+  | { outcome: 'ok'; result: PlanResult }
+  | { outcome: 'budget'; reason: BudgetReason }
+  | { outcome: 'parseError' };
+
+/**
+ * One attempt at the TOP-level planner call (the initial call, or a
+ * re-plan after a `search` round — never repair/joinerRepair, which
+ * already always use `escalate(model)`). Distinguishes a budget/timeout
+ * refusal from a genuine parse/validation failure
+ * (`NoObjectGeneratedError` — the AI SDK's catch-all for "the model's
+ * response didn't parse or didn't validate against the schema", the
+ * failure mode most likely to hit a weak `FAST_MODEL`) so the caller can
+ * decide whether an escalated retry is worth trying. A caught parse error
+ * still counts toward `maxLlmCallsPerTurn` (a real request went out, it
+ * just didn't produce a usable `PlanOutcome`).
+ */
+async function attemptPlannerCall(
+  budget: TurnBudget,
+  ctx: PlannerPromptCtx,
+  turnId: string,
+  model: string,
+): Promise<PlanAttempt> {
+  const pre = budgetPreCheck(budget);
+  if (pre !== 'ok') return { outcome: 'budget', reason: pre };
+  try {
+    const result = await plannerPlan({ ...ctx, turnId }, model);
+    budget.record(result.usage);
+    return { outcome: 'ok', result };
+  } catch (err) {
+    if (err instanceof BudgetExceededError) return { outcome: 'budget', reason: 'costBudget' };
+    if (NoObjectGeneratedError.isInstance(err)) {
+      budget.recordFailedCall();
+      return { outcome: 'parseError' };
+    }
+    throw err;
+  }
+}
 
 interface PlanningPhaseArgs {
   turnId: string;
@@ -235,10 +314,24 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
   let searchRounds = 0;
 
   for (;;) {
-    const attempt = await callBudgeted(budget, () => plannerPlan({ ...ctx, turnId }, model));
-    if (!attempt.ok) return { kind: 'failed', reason: budgetReason(attempt.reason) };
-    const rawOutcome = attempt.value.outcome;
-    let llmUsage = attempt.value.usage;
+    let attempt = await attemptPlannerCall(budget, ctx, turnId, model);
+    if (attempt.outcome === 'parseError' && model === fastModel() && budgetPreCheck(budget) === 'ok') {
+      // LLD §5.5 "misroute escalates" extended to an outright malformed
+      // response, not just a validator-caught structural plan: a weak
+      // FAST_MODEL that couldn't produce a schema-conforming object at
+      // all gets exactly ONE retry on the full planner model before the
+      // turn gives up.
+      attempt = await attemptPlannerCall(budget, ctx, turnId, escalate(model));
+    }
+    if (attempt.outcome === 'parseError') {
+      return {
+        kind: 'failed',
+        reason: 'The planner returned a response that could not be parsed or validated against the schema, and no further escalation is available.',
+      };
+    }
+    if (attempt.outcome === 'budget') return { kind: 'failed', reason: budget.describeReason(attempt.reason) };
+    const rawOutcome = attempt.result.outcome;
+    let llmUsage = attempt.result.usage;
 
     if (rawOutcome.kind === 'search' && searchRounds < BUDGETS.maxSearchRounds) {
       searchRounds += 1;
@@ -264,6 +357,12 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
         : rawOutcome;
 
     if (outcome.kind !== 'plan') {
+      // `plan.ready` is REUSED here, not a separate event — LLD §2.3's
+      // event union only has ONE "the planning phase settled" event, and it
+      // carries whatever `PlanOutcome` was decided (search/clarify/
+      // unsupported/respond included, not only `kind:'plan'`); see
+      // `hashOutcome`'s doc comment for why `planHash` is a content hash
+      // rather than `validate()`'s real plan hash in this branch.
       const ev: Event = {
         t: 'plan.ready',
         turnId,
@@ -322,7 +421,7 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
           turnId,
         }),
       );
-      if (!repairAttempt.ok) return { kind: 'failed', reason: budgetReason(repairAttempt.reason) };
+      if (!repairAttempt.ok) return { kind: 'failed', reason: budget.describeReason(repairAttempt.reason) };
       const repairEvent: Event = {
         t: 'repair',
         turnId,
@@ -405,7 +504,7 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
   const { registry, crm, refs, eventLog, confirm, playbooks } = sessionDeps;
   const clock = new VirtualClock();
   const startedAtMs = performance.now();
-  const budget = new TurnBudget();
+  const budget = new TurnBudget(startedAtMs, sessionDeps.turnTimeoutMs ?? BUDGETS.turnTimeoutMs);
 
   // first-useful-event timestamp for TTFUR (LLD: plan.ready for plan-led
   // turns, first answer.delta for respond/clarify/refused/failed turns).
@@ -475,163 +574,181 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
     return { status, metrics };
   }
 
-  // --- 1. fold prior events → WorkingState; rewrite ONCE; retrieve ---------
+  // The ENTIRE pipeline body runs under one top-level guard: ANY unexpected
+  // error (a bug, a DB failure, an `ai` SDK error that isn't
+  // `BudgetExceededError`/`NoObjectGeneratedError` — anything at all) is
+  // caught here and routed through `finalize('failed', ...)` rather than
+  // left to crash the generator. Without this, a turn that hits e.g. a
+  // schema-parse failure the planning-phase retry couldn't recover from
+  // would propagate all the way out with NO `turn.completed` and NO
+  // `memory.snapshot` ever emitted — exactly the failure mode this guards
+  // against (every turn, however it ends, gets both).
+  try {
+    // --- 1. fold prior events → WorkingState; rewrite ONCE; retrieve -------
 
-  const priorEvents = eventLog.list(sessionId);
-  const priorState: WorkingState = foldMemory(priorEvents);
-  const transcripts = buildTranscripts(priorEvents);
-  const sessionCtx = buildSessionCtx(priorEvents);
+    const priorEvents = eventLog.list(sessionId);
+    const priorState: WorkingState = foldMemory(priorEvents);
+    const transcripts = buildTranscripts(priorEvents);
+    const sessionCtx = buildSessionCtx(priorEvents);
 
-  record({ t: 'turn.started', turnId, sessionId, userText, ts: clock.now() });
+    record({ t: 'turn.started', turnId, sessionId, userText, ts: clock.now() });
 
-  const rewrittenQuery = rewriteQuery(userText, priorState);
+    const rewrittenQuery = rewriteQuery(userText, priorState);
 
-  const retrieval = retrieve(rewrittenQuery, sessionCtx);
-  const matched = matchPlaybook(rewrittenQuery, playbooks);
-  const retrievalEvent: Event = {
-    t: 'retrieval.done',
-    turnId,
-    candidates: retrieval.cards.map((c) => c.slug),
-    ms: retrieval.ms,
-  };
-  if (matched) retrievalEvent.playbook = matched.name;
-  record(retrievalEvent);
-
-  const shortlist = new Set(retrieval.cards.map((c) => c.slug));
-  const handleRefs: HandleRef[] = priorState.handles.map((h) => ({ ref: h.ref, entityType: h.entityType }));
-
-  const baseCtx: PlannerPromptCtx = {
-    workingStateBlock: renderWorkingState(priorState),
-    maskedTurns: maskTurns(transcripts),
-    cards: renderCards(retrieval.cards),
-    rewrittenRequest: rewrittenQuery,
-    rawRequest: userText,
-    nowIso: clock.iso(),
-  };
-  if (matched) baseCtx.playbookBody = matched.body;
-
-  const model = pickPlannerModel({
-    rewrittenQuery,
-    topCardScore: retrieval.cards[0]?.score ?? 0,
-    cardCount: retrieval.cards.length,
-  });
-
-  // --- 2. plan (+ search/repair loops) --------------------------------------
-
-  const planning = await runPlanningPhase({
-    turnId,
-    baseCtx,
-    model,
-    shortlist,
-    session: sessionCtx,
-    registry,
-    handleRefs,
-    budget,
-    emit: record,
-    markPlanReady: () => {
-      if (ttfurAtMs === undefined) ttfurAtMs = performance.now();
-    },
-  });
-
-  if (planning.kind === 'failed') {
-    return yield* finalize('failed', { outcome: 'failed', reason: planning.reason });
-  }
-
-  const outcome = planning.outcome;
-
-  if (outcome.kind !== 'plan') {
-    const { composeInput, finalText, status } = composeInputFor(outcome);
-    return yield* finalize(status, composeInput, finalText);
-  }
-
-  // --- 3. execute (joiner checkpoints, replan ≤2) ---------------------------
-
-  const plan = outcome.plan;
-  const planHash = planning.planHash as string;
-  const stepOrder = planning.stepOrder ?? plan.steps.map((s) => s.id);
-
-  let replanRounds = 0;
-
-  const onWriteStratum = async (ctx: WriteStratumCtx): Promise<WriteStratumDecision> => {
-    const verdict = checkStratum(ctx.plan, ctx.completed, ctx.upcoming);
-    if (verdict.ok) return { decision: 'proceed' };
-
-    if (replanRounds >= BUDGETS.maxReplans) {
-      return {
-        decision: 'abort',
-        reason: `Joiner checkpoint violated and the replan budget (${BUDGETS.maxReplans}) is exhausted: ${verdict.violation.summary}`,
-      };
-    }
-    replanRounds += 1;
-
-    const repairModel = escalate(model);
-    const summaries = buffer.filter((e): e is Extract<Event, { t: 'step.finished' }> => e.t === 'step.finished').map((e) => e.summary);
-    const attempt = await callBudgeted(budget, () =>
-      joinerRepair({ plan: ctx.plan, violation: verdict.violation, summaries, model: repairModel, turnId }),
-    );
-    if (!attempt.ok) {
-      return { decision: 'abort', reason: budgetReason(attempt.reason) };
-    }
-    budget.replans += 1;
-    const repairResult = attempt.value;
-    const replanEvent: Event = {
-      t: 'replan',
+    const retrieval = retrieve(rewrittenQuery, sessionCtx);
+    const matched = matchPlaybook(rewrittenQuery, playbooks);
+    const retrievalEvent: Event = {
+      t: 'retrieval.done',
       turnId,
-      round: replanRounds,
-      reason: verdict.violation.summary,
-      llm: repairResult.usage,
+      candidates: retrieval.cards.map((c) => c.slug),
+      ms: retrieval.ms,
     };
-    record(replanEvent);
+    if (matched) retrievalEvent.playbook = matched.name;
+    record(retrievalEvent);
 
-    if (repairResult.decision === 'proceed') return { decision: 'proceed' };
-    if (repairResult.decision === 'clarify') {
-      return { decision: 'clarify', question: repairResult.question ?? 'Could you clarify your request?' };
-    }
-    if (repairResult.decision === 'abort') {
-      return { decision: 'abort', reason: verdict.violation.summary };
+    const shortlist = new Set(retrieval.cards.map((c) => c.slug));
+    const handleRefs: HandleRef[] = priorState.handles.map((h) => ({ ref: h.ref, entityType: h.entityType }));
+
+    const baseCtx: PlannerPromptCtx = {
+      workingStateBlock: renderWorkingState(priorState),
+      maskedTurns: maskTurns(transcripts),
+      cards: renderCards(retrieval.cards),
+      rewrittenRequest: rewrittenQuery,
+      rawRequest: userText,
+      nowIso: clock.iso(),
+    };
+    if (matched) baseCtx.playbookBody = matched.body;
+
+    const model = pickPlannerModel({
+      rewrittenQuery,
+      topCardScore: retrieval.cards[0]?.score ?? 0,
+      cardCount: retrieval.cards.length,
+    });
+
+    // --- 2. plan (+ search/repair loops) ------------------------------------
+
+    const planning = await runPlanningPhase({
+      turnId,
+      baseCtx,
+      model,
+      shortlist,
+      session: sessionCtx,
+      registry,
+      handleRefs,
+      budget,
+      emit: record,
+      markPlanReady: () => {
+        if (ttfurAtMs === undefined) ttfurAtMs = performance.now();
+      },
+    });
+
+    if (planning.kind === 'failed') {
+      return yield* finalize('failed', { outcome: 'failed', reason: planning.reason });
     }
 
-    // decision === 'patch' → re-validate the patched steps against the
-    // registry BEFORE handing them back to the executor (LLD §5.4's
-    // "patch (bumps planRev)" — the executor adopts planRev, this callback
-    // computes it). Approximation: "kept" steps are those with a recorded
-    // result at this checkpoint — good enough for a sanity re-check; the
-    // executor itself computes the authoritative kept/terminal set from its
-    // own step-lifecycle map when it applies the patch.
-    const keptSteps = ctx.plan.steps.filter((s) => Object.prototype.hasOwnProperty.call(ctx.completed, s.id));
-    const candidatePlan: Plan = { goal: ctx.plan.goal, steps: [...keptSteps, ...(repairResult.patchedSteps as Step[])] };
-    const revalidated = validate({ kind: 'plan', plan: candidatePlan }, shortlist, handleRefs, registry);
-    if (!revalidated.ok) {
-      return {
-        decision: 'abort',
-        reason: `Patched plan failed re-validation: ${describeErrors(revalidated.errors)}`,
+    const outcome = planning.outcome;
+
+    if (outcome.kind !== 'plan') {
+      const { composeInput, finalText, status } = composeInputFor(outcome);
+      return yield* finalize(status, composeInput, finalText);
+    }
+
+    // --- 3. execute (joiner checkpoints, replan ≤2) -------------------------
+
+    const plan = outcome.plan;
+    const planHash = planning.planHash as string;
+    const stepOrder = planning.stepOrder ?? plan.steps.map((s) => s.id);
+
+    let replanRounds = 0;
+
+    const onWriteStratum = async (ctx: WriteStratumCtx): Promise<WriteStratumDecision> => {
+      const verdict = checkStratum(ctx.plan, ctx.completed, ctx.upcoming);
+      if (verdict.ok) return { decision: 'proceed' };
+
+      if (replanRounds >= BUDGETS.maxReplans) {
+        return {
+          decision: 'abort',
+          reason: `Joiner checkpoint violated and the replan budget (${BUDGETS.maxReplans}) is exhausted: ${verdict.violation.summary}`,
+        };
+      }
+      replanRounds += 1;
+
+      const repairModel = escalate(model);
+      const summaries = buffer
+        .filter((e): e is Extract<Event, { t: 'step.finished' }> => e.t === 'step.finished')
+        .map((e) => e.summary);
+      const attempt = await callBudgeted(budget, () =>
+        joinerRepair({ plan: ctx.plan, violation: verdict.violation, summaries, model: repairModel, turnId }),
+      );
+      if (!attempt.ok) {
+        return { decision: 'abort', reason: budget.describeReason(attempt.reason) };
+      }
+      budget.replans += 1;
+      const repairResult = attempt.value;
+      const replanEvent: Event = {
+        t: 'replan',
+        turnId,
+        round: replanRounds,
+        reason: verdict.violation.summary,
+        llm: repairResult.usage,
       };
-    }
-    budget.planRev += 1;
-    return { decision: 'patch', patchedSteps: repairResult.patchedSteps as Step[], planRev: budget.planRev };
-  };
+      record(replanEvent);
 
-  const executeInput: ExecuteInput = {
-    plan,
-    planHash,
-    planRev: budget.planRev,
-    stepOrder,
-    turnId,
-    sessionId,
-    registry,
-    crm,
-    refs,
-    handles: priorState.handles,
-    onEvent: record,
-    confirm,
-    onWriteStratum,
-  };
+      if (repairResult.decision === 'proceed') return { decision: 'proceed' };
+      if (repairResult.decision === 'clarify') {
+        return { decision: 'clarify', question: repairResult.question ?? 'Could you clarify your request?' };
+      }
+      if (repairResult.decision === 'abort') {
+        return { decision: 'abort', reason: verdict.violation.summary };
+      }
 
-  const execResult = await execute(executeInput);
+      // decision === 'patch' → re-validate the patched steps against the
+      // registry BEFORE handing them back to the executor (LLD §5.4's
+      // "patch (bumps planRev)" — the executor adopts planRev, this
+      // callback computes it). Approximation: "kept" steps are those with
+      // a recorded result at this checkpoint — good enough for a sanity
+      // re-check; the executor itself computes the authoritative
+      // kept/terminal set from its own step-lifecycle map when it applies
+      // the patch.
+      const keptSteps = ctx.plan.steps.filter((s) => Object.prototype.hasOwnProperty.call(ctx.completed, s.id));
+      const candidatePlan: Plan = { goal: ctx.plan.goal, steps: [...keptSteps, ...(repairResult.patchedSteps as Step[])] };
+      const revalidated = validate({ kind: 'plan', plan: candidatePlan }, shortlist, handleRefs, registry);
+      if (!revalidated.ok) {
+        return {
+          decision: 'abort',
+          reason: `Patched plan failed re-validation: ${describeErrors(revalidated.errors)}`,
+        };
+      }
+      budget.planRev += 1;
+      return { decision: 'patch', patchedSteps: repairResult.patchedSteps as Step[], planRev: budget.planRev };
+    };
 
-  const stepsOk = Object.values(execResult.stepStates).filter((s) => s.state === 'done').length;
-  const stepsFailed = Object.values(execResult.stepStates).filter((s) => s.state === 'failed').length;
+    const executeInput: ExecuteInput = {
+      plan,
+      planHash,
+      planRev: budget.planRev,
+      stepOrder,
+      turnId,
+      sessionId,
+      registry,
+      crm,
+      refs,
+      handles: priorState.handles,
+      onEvent: record,
+      confirm,
+      onWriteStratum,
+      deadlineAtMs: budget.deadlineAtMs,
+    };
 
-  const { composeInput, status } = composeInputForExecution(plan, execResult);
-  return yield* finalize(status, composeInput, undefined, stepsOk, stepsFailed);
+    const execResult = await execute(executeInput);
+
+    const stepsOk = Object.values(execResult.stepStates).filter((s) => s.state === 'done').length;
+    const stepsFailed = Object.values(execResult.stepStates).filter((s) => s.state === 'failed').length;
+
+    const { composeInput, status } = composeInputForExecution(plan, execResult);
+    return yield* finalize(status, composeInput, undefined, stepsOk, stepsFailed);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return yield* finalize('failed', { outcome: 'failed', reason: `Unexpected error: ${message}` });
+  }
 }
