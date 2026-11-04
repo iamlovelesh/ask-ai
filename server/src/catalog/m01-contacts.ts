@@ -24,18 +24,12 @@ import type { ActionDef, ActionContext } from './types.js';
 import { ActionError } from './types.js';
 import type { StoreTx, Row } from '../store/db.js';
 import { withIdempotentWrite } from './idempotency.js';
-import { listOutputSchema, toListOrSpill, type ListOrSpill } from './list-output.js';
+import { listOutputSchema, toListOrSpill, SPILL_CAP, type ListOrSpill } from './list-output.js';
 import type { DiscriminationCheck } from './discrimination.js';
+import { nextId } from './next-id.js';
+import type { SynthHints } from './synth-hints.js';
 
 const MODULE = 'contacts';
-
-function nextContactId(db: StoreTx): string {
-  const row = db.get(
-    `SELECT MAX(CAST(SUBSTR(id, 5) AS INTEGER)) AS max_n FROM contacts WHERE id LIKE 'con_%'`,
-  );
-  const maxN = row && typeof row['max_n'] === 'number' ? (row['max_n'] as number) : 0;
-  return `con_${maxN + 1}`;
-}
 
 function parseJsonArray(value: unknown): string[] {
   if (typeof value !== 'string' || value.length === 0) return [];
@@ -171,7 +165,7 @@ const createContact: ActionDef<CreateContactInput, CreateContactOutput> = {
     if (name.length === 0) {
       throw new ActionError('VALIDATION', 'A contact needs either `name` or `first_name`/`last_name`.');
     }
-    const id = nextContactId(ctx.db);
+    const id = nextId(ctx.db, 'contacts', 'con');
     const now = ctx.clock.now();
     ctx.db.run(
       `INSERT INTO contacts (id, created_at, updated_at, archived, name, first_name, last_name,
@@ -338,7 +332,7 @@ const updateContactDetails: ActionDef<UpdateContactDetailsInput, ContactView> = 
 
 const archiveContactInput = z.strictObject({ id: z.string() });
 type ArchiveContactInput = z.infer<typeof archiveContactInput>;
-const archiveContactOutput = z.object({ id: z.string(), archived: z.literal(true) });
+const archiveContactOutput = z.object({ id: z.string(), name: z.string(), archived: z.literal(true) });
 type ArchiveContactOutput = z.infer<typeof archiveContactOutput>;
 
 const archiveContact: ActionDef<ArchiveContactInput, ArchiveContactOutput> = {
@@ -356,12 +350,12 @@ const archiveContact: ActionDef<ArchiveContactInput, ArchiveContactOutput> = {
     examplePhrasings: ['Archive this contact', 'Delete the duplicate contact'],
   },
   handler: withIdempotentWrite(async (input, ctx) => {
-    getContactRow(ctx.db, input.id);
+    const row = getContactRow(ctx.db, input.id);
     ctx.db.run(`UPDATE contacts SET archived = 1, updated_at = ? WHERE id = ?`, [
       ctx.clock.now(),
       input.id,
     ]);
-    return { id: input.id, archived: true };
+    return { id: input.id, name: row['name'] as string, archived: true };
   }),
 };
 
@@ -374,6 +368,7 @@ const mergeDuplicateContactsInput = z.strictObject({
 type MergeDuplicateContactsInput = z.infer<typeof mergeDuplicateContactsInput>;
 const mergeDuplicateContactsOutput = z.object({
   id: z.string(),
+  name: z.string(),
   merged_from: z.string(),
   tags: z.array(z.string()),
 });
@@ -421,7 +416,12 @@ const mergeDuplicateContacts: ActionDef<
       now,
       input.duplicate_contact_id,
     ]);
-    return { id: input.primary_contact_id, merged_from: input.duplicate_contact_id, tags: mergedTags };
+    return {
+      id: input.primary_contact_id,
+      name: primary.name,
+      merged_from: input.duplicate_contact_id,
+      tags: mergedTags,
+    };
   }),
 };
 
@@ -464,6 +464,7 @@ const setCommunicationPreferencesInput = z.strictObject({
 type SetCommunicationPreferencesInput = z.infer<typeof setCommunicationPreferencesInput>;
 const setCommunicationPreferencesOutput = z.object({
   id: z.string(),
+  name: z.string(),
   communication_preferences: z.record(z.string(), z.unknown()),
 });
 type SetCommunicationPreferencesOutput = z.infer<typeof setCommunicationPreferencesOutput>;
@@ -496,7 +497,7 @@ const setCommunicationPreferences: ActionDef<
       ctx.clock.now(),
       input.id,
     ]);
-    return { id: input.id, communication_preferences: merged };
+    return { id: input.id, name: row['name'] as string, communication_preferences: merged };
   }),
 };
 
@@ -511,6 +512,7 @@ type AddContactRelationshipInput = z.infer<typeof addContactRelationshipInput>;
 const relationshipEntry = z.object({ contact_id: z.string(), type: z.string() });
 const addContactRelationshipOutput = z.object({
   id: z.string(),
+  name: z.string(),
   relationships: z.array(relationshipEntry),
 });
 type AddContactRelationshipOutput = z.infer<typeof addContactRelationshipOutput>;
@@ -552,7 +554,7 @@ const addContactRelationship: ActionDef<
       ctx.clock.now(),
       input.id,
     ]);
-    return { id: input.id, relationships };
+    return { id: input.id, name: row['name'] as string, relationships };
   }),
 };
 
@@ -593,18 +595,40 @@ const viewContactActivityTimeline: ActionDef<
     getContactRow(ctx.db, input.id); // existence check
     const limit = input.limit ?? 20;
 
+    // Each source is counted (for the TRUE total, independent of any LIMIT
+    // below — list-output.ts's spill decision needs the real total) and
+    // fetched with its OWN `ORDER BY ... DESC LIMIT` — list-output.ts's
+    // contract is that rows arriving at `toListOrSpill` are ALREADY bounded
+    // by SQL, not fetched unbounded and sliced in JS. `SOURCE_FETCH_LIMIT`
+    // (> SPILL_CAP) guarantees the merged-and-sorted candidate pool still
+    // contains the true newest `SPILL_CAP` items overall even though each
+    // source is queried independently.
+    const SOURCE_FETCH_LIMIT = 200;
+
+    const countOf = (table: string, extra = ''): number => {
+      const row = ctx.db.get(
+        `SELECT COUNT(*) AS n FROM ${table} WHERE contact_id = ? AND archived = 0${extra}`,
+        [input.id],
+      );
+      return typeof row?.['n'] === 'number' ? (row['n'] as number) : 0;
+    };
+    const total = countOf('notes') + countOf('tasks') + countOf('messages');
+
     const notes = ctx.db.all(
-      `SELECT id, created_at, body FROM notes WHERE contact_id = ? AND archived = 0`,
-      [input.id],
+      `SELECT id, created_at, body FROM notes WHERE contact_id = ? AND archived = 0
+       ORDER BY created_at DESC LIMIT ?`,
+      [input.id, SOURCE_FETCH_LIMIT],
     );
     const tasks = ctx.db.all(
-      `SELECT id, created_at, title FROM tasks WHERE contact_id = ? AND archived = 0`,
-      [input.id],
+      `SELECT id, created_at, title FROM tasks WHERE contact_id = ? AND archived = 0
+       ORDER BY created_at DESC LIMIT ?`,
+      [input.id, SOURCE_FETCH_LIMIT],
     );
     const messages = ctx.db.all(
       `SELECT id, created_at, sent_at, subject, body FROM messages
-       WHERE contact_id = ? AND archived = 0`,
-      [input.id],
+       WHERE contact_id = ? AND archived = 0
+       ORDER BY COALESCE(sent_at, created_at) DESC LIMIT ?`,
+      [input.id, SOURCE_FETCH_LIMIT],
     );
 
     const items = [
@@ -628,8 +652,8 @@ const viewContactActivityTimeline: ActionDef<
       })),
     ].sort((a, b) => b.at - a.at);
 
-    const capped = items.slice(0, Math.min(limit, 50));
-    return toListOrSpill(capped, items.length);
+    const capped = items.slice(0, Math.min(limit, SPILL_CAP));
+    return toListOrSpill(capped, total);
   },
 };
 
@@ -662,3 +686,36 @@ export const m01DiscriminationChecks: DiscriminationCheck[] = [
     expectDifferentCounts: true,
   },
 ];
+
+/**
+ * `synthesizeInput` kind-resolution hints (synth-hints.ts) for this
+ * module's id-shaped fields. M01 needs NONE — every id field it declares
+ * (`id`, `owner_id`, `company_id`, `*_contact_id`, `related_contact_id`)
+ * resolves against a plain (non-kind-discriminated) table, already covered
+ * by `testing.ts`'s built-in defaults. Exported as `{}` anyway: every
+ * module file exports `synthHints` (required, not optional) so
+ * `module-index.ts`'s import list stays uniform.
+ *
+ * WORKED EXAMPLE for a module that DOES need one (reference for Tasks
+ * 9-11 — M01 has no `structures`-backed field, so this is illustrative,
+ * not live code here): a hypothetical `coupons.get_coupon_details` action
+ * with an `id` field meaning "the coupon's own id" would need NO hint
+ * (`entities[0] === 'structures'` isn't kind-filterable via the bare `id`
+ * path — see the note in testing.ts). But an action like
+ * `orders.apply_coupon_to_order` taking a `coupon_id` field DOES need one,
+ * because `coupon_id` must resolve to a `structures` row whose `kind`
+ * is `'coupon'`, not an arbitrary `structures` row (which could just as
+ * easily be a `tag` or `pipeline`):
+ * ```ts
+ * export const m32SynthHints: SynthHints = {
+ *   coupon_id: { table: 'structures', kind: 'coupon' },
+ * };
+ * ```
+ * `testing.ts` already ships this exact hint as a built-in default (since
+ * `coupon_id` is unambiguous catalog-wide), so M32 wouldn't actually need
+ * to redeclare it — but a field name that ISN'T already covered by
+ * `testing.ts`'s `DEFAULT_HINTS` (e.g. a `membership_id` resolving to
+ * `participations` with `kind: 'membership'`) WOULD need its module to
+ * declare it here.
+ */
+export const m01SynthHints: SynthHints = {};

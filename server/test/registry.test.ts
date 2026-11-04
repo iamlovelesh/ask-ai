@@ -247,7 +247,11 @@ describe('M01 contacts module — end-to-end against a real CRM store', () => {
       const ctx: ActionContext = { db, clock: new VirtualClock(), idempotencyKey: 'k4', format: 'concise' };
       return archiveDef!.handler({ id: (created as { id: string }).id }, ctx);
     });
-    expect(archived).toEqual({ id: (created as { id: string }).id, archived: true });
+    expect(archived).toEqual({
+      id: (created as { id: string }).id,
+      name: 'Ada Lovelace',
+      archived: true,
+    });
   });
 
   it('get_contact_details throws a NOT_FOUND ActionError for a missing id', async () => {

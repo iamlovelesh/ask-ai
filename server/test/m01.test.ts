@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { existsSync, rmSync } from 'node:fs';
 import { registry } from '../src/catalog/registry';
-import { m01Contacts, m01DiscriminationChecks } from '../src/catalog/m01-contacts';
+import { m01Contacts, m01DiscriminationChecks, m01SynthHints } from '../src/catalog/m01-contacts';
 import type { ActionContext } from '../src/catalog/types';
 import { openCrm, crmDbPath, closeRegistered, type Crm, type StoreTx } from '../src/store/db';
 import { VirtualClock } from '../src/store/clock';
@@ -46,6 +46,10 @@ describe('M01 contacts — module shape', () => {
   it('exports at least one Tier-A discrimination check for search_contacts', () => {
     expect(m01DiscriminationChecks.length).toBeGreaterThan(0);
     expect(m01DiscriminationChecks[0]?.action).toBe('contacts.search_contacts');
+  });
+
+  it('exports a synthHints map (empty — all M01 ids resolve against plain tables)', () => {
+    expect(m01SynthHints).toEqual({});
   });
 });
 
@@ -214,7 +218,7 @@ describe('archive_contact', () => {
     );
     const id = (created as { id: string }).id;
     const result = await crm.tx((db) => def('contacts.archive_contact').handler({ id }, ctx(db)));
-    expect(result).toEqual({ id, archived: true });
+    expect(result).toEqual({ id, name: 'Archive Me', archived: true });
 
     const row = crm.tx((db) => db.get('SELECT archived FROM contacts WHERE id = ?', [id]));
     expect(row?.['archived']).toBe(1);
@@ -267,7 +271,7 @@ describe('merge_duplicate_contacts', () => {
         ctx(db),
       ),
     );
-    expect(result).toMatchObject({ id: primary.id, merged_from: duplicate.id });
+    expect(result).toMatchObject({ id: primary.id, name: 'Primary', merged_from: duplicate.id });
     expect((result as { tags: string[] }).tags.sort()).toEqual(['lead', 'vip']);
 
     const relations = crm.tx((db) => ({
@@ -306,7 +310,11 @@ describe('set_communication_preferences', () => {
         ctx(db),
       ),
     );
-    expect(first).toEqual({ id: created.id, communication_preferences: { sms: 'opt_out' } });
+    expect(first).toEqual({
+      id: created.id,
+      name: 'Prefs Target',
+      communication_preferences: { sms: 'opt_out' },
+    });
 
     const second = await crm.tx((db) =>
       def('contacts.set_communication_preferences').handler(
@@ -316,6 +324,7 @@ describe('set_communication_preferences', () => {
     );
     expect(second).toEqual({
       id: created.id,
+      name: 'Prefs Target',
       communication_preferences: { sms: 'opt_out', email: 'opt_in' },
     });
   });
@@ -351,6 +360,7 @@ describe('add_contact_relationship', () => {
     );
     expect(result).toEqual({
       id: a.id,
+      name: 'A',
       relationships: [{ contact_id: b.id, type: 'spouse' }],
     });
   });

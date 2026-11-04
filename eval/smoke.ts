@@ -8,8 +8,12 @@
  * CRM transaction, and assert EITHER a typed success (output passes
  * `outputSchema.safeParse`) OR an expected `ActionError`. Writes additionally
  * assert a state delta: at least one of the action's declared `entities`
- * tables changed row count or `MAX(updated_at)` — this is how a handler that
- * silently no-ops (accepts input, mutates nothing) gets caught.
+ * tables changed row count, or gained a row stamped at the handler's exact
+ * pinned write time — this is how a handler that silently no-ops (accepts
+ * input, mutates nothing) gets caught. Id-shaped input fields are resolved
+ * via `MODULE_SYNTH_HINTS` (synth-hints.ts) so fields backed by a
+ * kind-discriminated shared table (`structures`/`records`/`participations`)
+ * resolve to the RIGHT kind of row, not just any row in that table.
  *
  * Tier-A filter-discrimination (`MODULE_DISCRIMINATION_CHECKS`, LLD §9.3):
  * for every `{action, paramsA, paramsB}` pair, call `action` twice and
@@ -30,7 +34,7 @@ import { performance } from 'node:perf_hooks';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registry } from '../server/src/catalog/registry.js';
-import { MODULE_DISCRIMINATION_CHECKS } from '../server/src/catalog/module-index.js';
+import { MODULE_DISCRIMINATION_CHECKS, MODULE_SYNTH_HINTS } from '../server/src/catalog/module-index.js';
 import { synthesizeInput } from '../server/src/catalog/testing.js';
 import { ActionError } from '../server/src/catalog/types.js';
 import type { ActionDef, ActionContext } from '../server/src/catalog/types.js';
@@ -154,7 +158,7 @@ async function smokeAction(def: ActionDef, crm: Crm, clock: VirtualClock): Promi
       };
     }
 
-    const input = crm.tx((db) => synthesizeInput(def, db));
+    const input = crm.tx((db) => synthesizeInput(def, db, MODULE_SYNTH_HINTS));
 
     let before: EntitySnapshot[] = [];
     if (isWrite) {
