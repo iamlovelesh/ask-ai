@@ -165,3 +165,74 @@ describe('synthesizeInput — action-scoped (`${slug}:${field}`) hint precedence
     expect(input.id).toBe('struct_0');
   });
 });
+
+describe('synthesizeInput — column-aware hint resolution (`SynthHint.column`, task 9 batch 2 addition)', () => {
+  // `messages` (M12 SMS / M13 Email) is a second "shared mega-table" case:
+  // it's discriminated by a `channel` column, not `kind` — `SynthHint`'s
+  // `column` field (defaults to `'kind'` when omitted) names that column
+  // explicitly. Adversarial fixture: id ordering is DELIBERATE — the
+  // lowest id ('msg_0') is the WRONG channel ('sms'), so a column-blind
+  // resolver (or one that still hardcoded `WHERE kind = ?`, which would
+  // outright fail against a table with no `kind` column) would never
+  // correctly land on an 'email' row, while a column-aware resolver
+  // correctly skips past it to 'msg_1'.
+  beforeAll(() => {
+    crm.tx((db) => {
+      const rows: Array<[string, string]> = [
+        ['msg_0', 'sms'],
+        ['msg_1', 'email'],
+        ['msg_2', 'sms'],
+        ['msg_3', 'email'],
+      ];
+      for (const [id, channel] of rows) {
+        db.run(
+          `INSERT INTO messages (id, created_at, updated_at, archived, channel)
+           VALUES (?, 1, 1, 0, ?)`,
+          [id, channel],
+        );
+      }
+      return undefined;
+    });
+  });
+
+  it('characterization: the lexicographically-first `messages` row is channel=\'sms\'', () => {
+    const row = crm.tx((db) => db.get('SELECT id, channel FROM messages ORDER BY id LIMIT 1'));
+    expect(row).toMatchObject({ id: 'msg_0', channel: 'sms' });
+  });
+
+  it("resolves a `message_id` field to a channel='email' row via an explicit `column:'channel'` hint", () => {
+    const def = fakeDef(z.strictObject({ message_id: z.string() }));
+    const input = crm.tx((db) =>
+      synthesizeInput(def, db, {
+        message_id: { table: 'messages', kind: 'email', column: 'channel' },
+      }),
+    ) as { message_id: string };
+    // NOT 'msg_0' — the lexicographically-first row overall is the WRONG
+    // channel; the column-aware hint must skip past it.
+    expect(input.message_id).toBe('msg_1');
+
+    const resolved = crm.tx((db) =>
+      db.get('SELECT channel FROM messages WHERE id = ?', [input.message_id]),
+    );
+    expect(resolved?.['channel']).toBe('email');
+  });
+
+  it('omitting `column` still defaults to `\'kind\'` behavior on a `structures` fixture (backward-compat pin)', () => {
+    // Reuses the adversarial `structures` fixture from the outer
+    // `beforeAll` (struct_0/struct_2 = 'tag', struct_1/struct_3 =
+    // 'coupon') — a hint with NO `column` field must behave EXACTLY as it
+    // did before this task's `SynthHint.column` addition: filter on the
+    // `kind` column. Pins that every pre-existing (M02-M10) hint, which
+    // never declares `column`, is unaffected by this change.
+    const def = fakeDef(z.strictObject({ widget_id: z.string() }));
+    const input = crm.tx((db) =>
+      synthesizeInput(def, db, { widget_id: { table: 'structures', kind: 'coupon' } }),
+    ) as { widget_id: string };
+    expect(input.widget_id).toBe('struct_1');
+
+    const resolved = crm.tx((db) =>
+      db.get('SELECT kind FROM structures WHERE id = ?', [input.widget_id]),
+    );
+    expect(resolved?.['kind']).toBe('coupon');
+  });
+});
