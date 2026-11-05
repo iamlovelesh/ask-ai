@@ -127,6 +127,13 @@ search/lookup action and reference that result — never put the name in an
          orders.apply_coupon_to_order {"id":"$s0.id","coupon_id":"$s1.items[*].id"}
          (use "$s1.id" instead when the resolving step returns a single record).
 
+Worked example (ref usage across a 3-step plan):
+  s1 leads.search_leads {}                       -> {"items":[{"id":..}],"total":N}
+  s2 tasks.create_task {"contact_id":"$item.id"} forEach:"$s1.items" dependsOn:["s1"]
+  s3 leads.get_lead_summary {"lead_id":"$s2.id"} dependsOn:["s2"]
+     // $item = one row of s1; s2 here returns ONE record, so ".id" (no
+     // items[*]) is right — use "$s1.items[*].id" instead for a pluck.
+
 Built-in data ops (deterministic, zero cost, risk=read — always available,
 not part of the candidate list because they never change):
 ${CORE_OPS_TEXT}
