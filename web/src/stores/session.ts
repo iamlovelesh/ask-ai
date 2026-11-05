@@ -9,7 +9,7 @@
 import { defineStore } from 'pinia';
 import { fetchSse, SseHttpError } from '../lib/sse.js';
 import { applyEvent, emptyChatState, type SessionChatState } from '../lib/fold.js';
-import type { AppEvent } from '../lib/events.js';
+import { normalizeEvent, type AppEvent } from '../lib/events.js';
 import type { Span } from '../lib/trace.js';
 
 export interface SessionSummary {
@@ -20,6 +20,11 @@ export interface SessionSummary {
   cost_usd: number;
 }
 
+/** Sidebar page size. The DB can hold hundreds of eval-generated sessions;
+ * we render the newest page and reveal older ones on demand via the
+ * cursor-based `GET /api/sessions?limit&cursor` the server already supports
+ * (cursor = id of the last row currently shown). */
+const SESSIONS_PAGE_SIZE = 30;
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_BASE_DELAY_MS = 500;
 /** Hard ceiling on how long a SINGLE reconnect attempt's `GET .../stream`
@@ -64,6 +69,12 @@ export const useSessionStore = defineStore('session', {
      * app-level "server unreachable" retry screen (distinct from a
      * per-session SSE-drop banner, which uses `chat.error`). */
     serverUnreachable: false,
+    /** True when the last sessions page came back full — there may be older
+     * sessions to reveal via `loadMoreSessions`. */
+    sessionsHasMore: false,
+    /** True while an older-sessions page is being fetched (drives the
+     * "Show older" affordance's disabled/label state). */
+    sessionsLoadingMore: false,
     toasts: [] as { id: number; text: string }[],
     toastSeq: 0,
   }),
@@ -90,12 +101,38 @@ export const useSessionStore = defineStore('session', {
 
     async loadSessions(): Promise<void> {
       try {
-        const res = await fetch('/api/sessions');
+        const res = await fetch(`/api/sessions?limit=${SESSIONS_PAGE_SIZE}`);
         if (!res.ok) throw new Error(`GET /api/sessions failed: ${res.status}`);
-        this.sessions = (await res.json()) as SessionSummary[];
+        const rows = (await res.json()) as SessionSummary[];
+        this.sessions = rows;
+        this.sessionsHasMore = rows.length === SESSIONS_PAGE_SIZE;
         this.serverUnreachable = false;
       } catch {
         this.serverUnreachable = true;
+      }
+    },
+
+    /** Reveals the next page of older sessions (cursor = last-shown id),
+     * appending to the current list. Best-effort: a failure surfaces a toast
+     * and leaves the list as-is. */
+    async loadMoreSessions(): Promise<void> {
+      if (this.sessionsLoadingMore || !this.sessionsHasMore) return;
+      const cursor = this.sessions.at(-1)?.id;
+      if (!cursor) return;
+      this.sessionsLoadingMore = true;
+      try {
+        const res = await fetch(`/api/sessions?limit=${SESSIONS_PAGE_SIZE}&cursor=${cursor}`);
+        if (!res.ok) throw new Error(`GET /api/sessions failed: ${res.status}`);
+        const rows = (await res.json()) as SessionSummary[];
+        // Guard against the cursor row reappearing (id-stable paging already
+        // excludes it, but dedupe defensively so a row can never double).
+        const seen = new Set(this.sessions.map((s) => s.id));
+        this.sessions = [...this.sessions, ...rows.filter((r) => !seen.has(r.id))];
+        this.sessionsHasMore = rows.length === SESSIONS_PAGE_SIZE;
+      } catch {
+        this.pushToast('Could not load older sessions.');
+      } finally {
+        this.sessionsLoadingMore = false;
       }
     },
 
@@ -131,8 +168,8 @@ export const useSessionStore = defineStore('session', {
       try {
         const res = await fetch(`/api/sessions/${id}/events`);
         if (!res.ok) throw new Error(`GET events failed: ${res.status}`);
-        const events = (await res.json()) as AppEvent[];
-        for (const ev of events) applyEvent(chat, ev);
+        const events = (await res.json()) as unknown[];
+        for (const ev of events) applyEvent(chat, normalizeEvent(ev));
         chat.loaded = true;
         this.serverUnreachable = false;
         // A session whose last-known turn never reached `turn.completed`
@@ -329,8 +366,12 @@ export const useSessionStore = defineStore('session', {
      * never blocks the chat itself. */
     async refreshSessionMeta(): Promise<void> {
       try {
-        const res = await fetch('/api/sessions');
-        if (res.ok) this.sessions = (await res.json()) as SessionSummary[];
+        const res = await fetch(`/api/sessions?limit=${SESSIONS_PAGE_SIZE}`);
+        if (res.ok) {
+          const rows = (await res.json()) as SessionSummary[];
+          this.sessions = rows;
+          this.sessionsHasMore = rows.length === SESSIONS_PAGE_SIZE;
+        }
       } catch {
         // Best-effort — the active chat state already reflects reality;
         // only the sidebar's summary row would be stale.

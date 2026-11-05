@@ -35,28 +35,51 @@ function onOpen(id: string): void {
 }
 
 function titleOf(title: string | null): string {
-  return title && title.length > 0 ? title : '(untitled)';
+  return title && title.length > 0 ? title : 'Untitled session';
+}
+
+function timeOf(updatedAt: number): string {
+  return new Date(updatedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+async function onShowOlder(): Promise<void> {
+  await store.loadMoreSessions();
 }
 </script>
 
 <template>
   <aside class="sidebar">
     <div class="sidebar-header">
-      <button class="new-chat-btn" @click="onNewChat">+ New chat</button>
+      <div class="sidebar-brand">
+        <span class="sidebar-brand-mark">Ask AI</span>
+      </div>
+      <button class="new-chat-btn" @click="onNewChat">New chat</button>
     </div>
 
-    <div v-if="store.sessions.length === 0" class="sidebar-empty">No sessions yet.</div>
+    <div class="sidebar-list">
+      <div v-if="store.sessions.length === 0" class="sidebar-empty">No sessions yet.</div>
 
-    <template v-for="[label, rows] in groups" :key="label">
-      <div class="sidebar-group-label">{{ label }}</div>
+      <template v-for="[label, rows] in groups" :key="label">
+        <div class="sidebar-group-label">{{ label }}</div>
+        <button
+          v-for="row in rows"
+          :key="row.id"
+          :class="['sidebar-item', { active: row.id === activeId }]"
+          @click="onOpen(row.id)"
+        >
+          <span class="sidebar-item-title">{{ titleOf(row.title) }}</span>
+          <span class="sidebar-item-time">{{ timeOf(row.updated_at) }}</span>
+        </button>
+      </template>
+
       <button
-        v-for="row in rows"
-        :key="row.id"
-        :class="['sidebar-item', { active: row.id === activeId }]"
-        @click="onOpen(row.id)"
+        v-if="store.sessionsHasMore"
+        class="sidebar-more"
+        :disabled="store.sessionsLoadingMore"
+        @click="onShowOlder"
       >
-        {{ titleOf(row.title) }}
+        {{ store.sessionsLoadingMore ? 'Loading…' : 'Show older' }}
       </button>
-    </template>
+    </div>
   </aside>
 </template>

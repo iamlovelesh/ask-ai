@@ -1,48 +1,99 @@
-/* Ask AI web client — plain CSS, functional over decorative (Task 18). */
+/*
+ * Ask AI — "flight recorder for an AI agent" design system.
+ * Precision machinery made legible: paper + ink, a single petrol accent,
+ * amber reserved for confirmation gates, red reserved for failures.
+ * Status colour is information, never decoration. One motion only (the
+ * timeline tick fill). IBM Plex Sans for UI, IBM Plex Mono for every
+ * number / id / cost / slug.
+ */
 
 :root {
-  --text: #3a3a3a;
-  --text-dim: #6b6b6b;
-  --text-h: #0b0b0b;
-  --bg: #fff;
-  --bg-sunken: #f5f5f5;
-  --bg-raised: #fff;
-  --border: #d9d9d9;
-  --accent: #5b4bda;
-  --accent-contrast: #fff;
-  --ok: #1a7f37;
-  --ok-bg: #e9f8ee;
-  --warn: #9a6700;
-  --warn-bg: #fff6e0;
-  --err: #b42318;
-  --err-bg: #fdecea;
-  --mono: ui-monospace, Consolas, monospace;
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  /* surfaces */
+  --paper: #fbfbf9;
+  --rail: #f3f2ed;
+  --raised: #ffffff;
+  --sunken: #f3f2ee;
+  /* ink */
+  --ink: #1c2024;
+  --slate: #5a6472;
+  --slate-soft: #8b93a0;
+  /* hairlines */
+  --hair: #e6e3db;
+  --hair-strong: #d7d3c8;
+  /* petrol — the single interactive accent */
+  --petrol: #0f6b62;
+  --petrol-ink: #0c5750;
+  --petrol-wash: #eaf2f0;
+  --petrol-contrast: #ffffff;
+  /* amber — confirmation gates ONLY */
+  --amber: #b07508;
+  --amber-text: #7a5106;
+  --amber-wash: #fbf3e2;
+  --amber-contrast: #ffffff;
+  /* red — failures ONLY */
+  --red: #b3362c;
+  --red-wash: #fbeceb;
 
-  font: 15px/1.45 var(--sans);
+  --mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+  --sans: 'IBM Plex Sans', system-ui, 'Segoe UI', Roboto, sans-serif;
+
+  --tick-ease: 240ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  font: 400 14px/1.5 var(--sans);
   color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
+  color: var(--ink);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
+/* Dark theme follows the OS preference unless the viewer's toggle has
+ * stamped an explicit data-theme on <html>. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --text: #d6d6d6;
-    --text-dim: #9a9a9a;
-    --text-h: #f5f5f5;
-    --bg: #15161a;
-    --bg-sunken: #1b1c21;
-    --bg-raised: #202127;
-    --border: #33343c;
-    --accent: #8f82ff;
-    --accent-contrast: #15161a;
-    --ok: #4cb66b;
-    --ok-bg: #163322;
-    --warn: #d8ab2d;
-    --warn-bg: #352c12;
-    --err: #e5695e;
-    --err-bg: #3a1a17;
+  :root:not([data-theme='light']) {
+    --paper: #16181a;
+    --rail: #121416;
+    --raised: #1d2023;
+    --sunken: #1a1d1f;
+    --ink: #e7e9ea;
+    --slate: #9aa2ad;
+    --slate-soft: #6e7682;
+    --hair: #2a2e32;
+    --hair-strong: #363b40;
+    --petrol: #3fa396;
+    --petrol-ink: #57b4a8;
+    --petrol-wash: #142a28;
+    --petrol-contrast: #0b1413;
+    --amber: #d59a2e;
+    --amber-text: #e0ab4a;
+    --amber-wash: #2c2412;
+    --amber-contrast: #1b1507;
+    --red: #e0695e;
+    --red-wash: #2e1817;
   }
+}
+
+/* Explicit dark override (theme toggle stamps data-theme on <html>). */
+:root[data-theme='dark'] {
+  --paper: #16181a;
+  --rail: #121416;
+  --raised: #1d2023;
+  --sunken: #1a1d1f;
+  --ink: #e7e9ea;
+  --slate: #9aa2ad;
+  --slate-soft: #6e7682;
+  --hair: #2a2e32;
+  --hair-strong: #363b40;
+  --petrol: #3fa396;
+  --petrol-ink: #57b4a8;
+  --petrol-wash: #142a28;
+  --petrol-contrast: #0b1413;
+  --amber: #d59a2e;
+  --amber-text: #e0ab4a;
+  --amber-wash: #2c2412;
+  --amber-contrast: #1b1507;
+  --red: #e0695e;
+  --red-wash: #2e1817;
 }
 
 * {
@@ -56,6 +107,13 @@ body {
 button {
   font: inherit;
   cursor: pointer;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--petrol);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
 #app {
@@ -65,12 +123,13 @@ button {
   overflow: hidden;
 }
 
-/* --- layout -------------------------------------------------------- */
+/* --- layout ---------------------------------------------------------- */
 
 .app-layout {
   display: flex;
   width: 100%;
   height: 100%;
+  position: relative;
 }
 
 .app-main {
@@ -79,75 +138,186 @@ button {
   flex-direction: column;
   min-width: 0;
   position: relative;
+  background: var(--paper);
 }
 
-/* --- sidebar --------------------------------------------------------- */
+/* --- session rail ---------------------------------------------------- */
 
 .sidebar {
   width: 260px;
   flex-shrink: 0;
-  border-right: 1px solid var(--border);
-  background: var(--bg-sunken);
+  border-right: 1px solid var(--hair);
+  background: var(--rail);
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .sidebar-header {
-  padding: 12px;
-  border-bottom: 1px solid var(--border);
+  padding: 14px 14px 10px;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 2px 12px;
+}
+
+.sidebar-brand-mark {
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.01em;
 }
 
 .new-chat-btn {
   width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: var(--accent-contrast);
+  padding: 8px 12px;
+  border: 1px solid var(--petrol);
+  background: transparent;
+  color: var(--petrol);
   border-radius: 6px;
-  font-weight: 600;
+  font-weight: 500;
+  font-size: 13px;
+  transition: background-color 120ms ease;
+}
+
+.new-chat-btn:hover {
+  background: var(--petrol-wash);
+}
+
+.sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 12px;
 }
 
 .sidebar-group-label {
-  padding: 10px 12px 4px;
+  padding: 14px 16px 5px;
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-dim);
+  color: var(--slate-soft);
+  font-weight: 500;
 }
 
 .sidebar-item {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   width: 100%;
   text-align: left;
-  padding: 8px 12px;
+  padding: 6px 16px;
   border: none;
   background: transparent;
-  color: var(--text);
+  color: var(--ink);
   border-radius: 0;
+  border-left: 2px solid transparent;
   font-size: 13px;
+  line-height: 1.4;
+}
+
+.sidebar-item:hover {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+.sidebar-item.active {
+  background: var(--raised);
+  border-left: 2px solid var(--petrol);
+  font-weight: 500;
+}
+
+.sidebar-item-title {
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.sidebar-item:hover {
-  background: var(--bg-raised);
-}
-
-.sidebar-item.active {
-  background: var(--bg-raised);
-  border-left: 3px solid var(--accent);
-  font-weight: 600;
+.sidebar-item-time {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--slate-soft);
 }
 
 .sidebar-empty {
-  padding: 16px 12px;
-  color: var(--text-dim);
+  padding: 18px 16px;
+  color: var(--slate);
   font-size: 13px;
 }
 
-/* --- chat view --------------------------------------------------------- */
+.sidebar-more {
+  display: block;
+  width: calc(100% - 28px);
+  margin: 8px 14px 4px;
+  padding: 7px 10px;
+  border: 1px solid var(--hair-strong);
+  background: transparent;
+  color: var(--slate);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.sidebar-more:hover:not(:disabled) {
+  border-color: var(--petrol);
+  color: var(--petrol);
+}
+
+.sidebar-more:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* --- transcript head ------------------------------------------------- */
+
+.transcript-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--hair);
+  background: var(--paper);
+}
+
+.nav-toggle {
+  display: none;
+  border: 1px solid var(--hair-strong);
+  background: transparent;
+  border-radius: 6px;
+  width: 32px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  color: var(--slate);
+}
+
+.transcript-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ghost-btn {
+  border: 1px solid var(--hair-strong);
+  background: transparent;
+  color: var(--slate);
+  border-radius: 6px;
+  padding: 5px 11px;
+  font-size: 12px;
+}
+
+.ghost-btn:hover,
+.ghost-btn.is-on {
+  border-color: var(--petrol);
+  color: var(--petrol);
+}
+
+/* --- transcript column ----------------------------------------------- */
 
 .chat-view {
   flex: 1;
@@ -156,180 +326,236 @@ button {
   min-height: 0;
 }
 
-.chat-scroll {
+.transcript {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 20px;
+  padding: 28px 24px 40px;
+}
+
+.transcript-inner {
+  max-width: 760px;
+  margin: 0 auto;
 }
 
 .chat-empty {
-  color: var(--text-dim);
-  padding: 32px;
+  color: var(--slate);
+  padding: 40px 24px;
   text-align: center;
 }
 
-.turn-block {
-  margin-bottom: 24px;
+/* turns */
+.turn {
+  margin-bottom: 30px;
 }
 
-.bubble {
-  max-width: 70ch;
-  padding: 10px 14px;
-  border-radius: 10px;
-  margin-bottom: 8px;
+.speaker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+
+.speaker-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--slate);
+  flex-shrink: 0;
+}
+
+.speaker-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--hair);
+}
+
+.turn-status {
+  font-size: 12px;
+  color: var(--slate);
+  font-family: var(--mono);
+  flex-shrink: 0;
+}
+
+.turn-status.is-fail {
+  color: var(--red);
+}
+
+.said {
+  font-size: 15px;
+  line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+  color: var(--ink);
 }
 
-.bubble-user {
-  background: var(--accent);
-  color: var(--accent-contrast);
-  margin-left: auto;
+.said-user {
+  padding-left: 14px;
+  border-left: 2px solid var(--petrol);
+  color: var(--ink);
 }
 
-.bubble-agent {
-  background: var(--bg-sunken);
-  border: 1px solid var(--border);
+.agent-section + .agent-section {
+  margin-top: 12px;
 }
 
-.bubble-agent.status-failed,
-.bubble-agent.status-cancelled {
-  border-color: var(--err);
+.agent-body {
+  margin-top: 2px;
 }
 
-.agent-block {
-  max-width: 70ch;
+.said-agent.is-fail {
+  color: var(--red);
 }
 
-.goal-line {
-  font-size: 13px;
-  color: var(--text-dim);
-  margin-bottom: 6px;
+/* --- task tracker: vertical timeline spine --------------------------- */
+
+.tracker {
+  margin: 6px 0 2px;
+  padding: 0;
+  list-style: none;
 }
 
-.activity-log {
-  font-size: 12px;
-  color: var(--text-dim);
-  margin: 4px 0;
+.tracker-goal {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  margin-bottom: 10px;
 }
 
-.status-pill {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 999px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  margin-bottom: 8px;
-}
-
-.status-pill.done {
-  color: var(--ok);
-  background: var(--ok-bg);
-}
-.status-pill.clarify {
-  color: var(--warn);
-  background: var(--warn-bg);
-}
-.status-pill.refused,
-.status-pill.failed,
-.status-pill.cancelled {
-  color: var(--err);
-  background: var(--err-bg);
-}
-
-/* --- task tracker --------------------------------------------------- */
-
-.task-tracker {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-raised);
-  padding: 8px 12px;
-  margin-bottom: 8px;
-}
-
-.step-row {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 4px 0;
+.tracker-step {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  column-gap: 12px;
+  padding: 5px 0;
+  position: relative;
   font-size: 13px;
 }
 
-.step-icon {
-  flex-shrink: 0;
-  width: 1.4em;
-  text-align: center;
+/* the spine: a hairline connecting consecutive nodes */
+.tracker-step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 16px;
+  bottom: -6px;
+  width: 1.5px;
+  background: var(--hair-strong);
+}
+
+.tracker-node {
+  grid-column: 1;
+  width: 11px;
+  height: 11px;
+  margin-top: 4px;
+  border-radius: 50%;
+  border: 1.5px solid var(--slate-soft);
+  background: var(--paper);
+  z-index: 1;
+  transition:
+    background-color var(--tick-ease),
+    border-color var(--tick-ease);
+}
+
+.tracker-step.status-running .tracker-node {
+  border-color: var(--petrol);
+  box-shadow: inset 0 0 0 2px var(--petrol);
+}
+
+.tracker-step.status-done .tracker-node {
+  background: var(--petrol);
+  border-color: var(--petrol);
+}
+
+.tracker-step.status-failed .tracker-node {
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.tracker-step.status-skipped .tracker-node {
+  border-style: dashed;
+  border-color: var(--slate-soft);
+  background: transparent;
+}
+
+.tracker-label {
+  grid-column: 2;
   font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink);
+  align-self: center;
 }
 
-.step-row.status-pending .step-icon {
-  color: var(--text-dim);
-}
-.step-row.status-running .step-icon {
-  color: var(--accent);
-}
-.step-row.status-done .step-icon {
-  color: var(--ok);
-}
-.step-row.status-failed {
-  /* LLD §6: "turn `failed` → red step card" — a tinted/bordered row so a
-     failed step reads as a distinct card, not just a recolored icon. */
-  background: var(--err-bg);
-  border-left: 3px solid var(--err);
-  border-radius: 4px;
-  padding-left: 6px;
-  margin: 2px 0;
-}
-.step-row.status-failed .step-icon {
-  color: var(--err);
-}
-.step-row.status-skipped .step-icon,
-.step-row.status-skipped .step-action {
-  color: var(--text-dim);
+.tracker-step.status-skipped .tracker-label {
+  color: var(--slate-soft);
 }
 
-.step-action {
+.tracker-dur {
+  grid-column: 3;
   font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--slate);
+  align-self: center;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tracker-detail {
+  grid-column: 2 / 4;
   font-size: 12px;
+  color: var(--slate);
+  margin-top: 2px;
 }
 
-.step-summary,
-.step-error {
-  color: var(--text-dim);
-  font-size: 12px;
+.tracker-detail.is-fail {
+  color: var(--red);
 }
 
-.step-error {
-  color: var(--err);
+.tracker-activity {
+  grid-column: 2 / 4;
+  font-size: 11.5px;
+  color: var(--slate-soft);
+  font-family: var(--mono);
+  padding: 2px 0;
 }
 
-/* --- confirm / clarify cards ------------------------------------------ */
+/* --- confirmation gate — THE amber moment ---------------------------- */
 
-.confirm-card,
-.clarify-card {
-  border: 1px solid var(--warn);
-  background: var(--warn-bg);
-  border-radius: 8px;
-  padding: 10px 14px;
+.confirm-card {
+  border-left: 3px solid var(--amber);
+  background: var(--amber-wash);
+  border-radius: 0 6px 6px 0;
+  padding: 14px 16px;
+  margin: 6px 0;
+}
+
+.confirm-desc {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--amber-text);
   margin-bottom: 8px;
-  font-size: 13px;
 }
 
-.confirm-card-desc {
-  margin-bottom: 6px;
-}
-
-.confirm-card-meta {
-  color: var(--text-dim);
+.confirm-meta {
   font-size: 12px;
-  margin-bottom: 8px;
+  color: var(--amber-text);
+  margin-bottom: 10px;
+}
+
+.confirm-count {
+  font-family: var(--mono);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
 .confirm-sample {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.confirm-sample li {
   font-family: var(--mono);
   font-size: 12px;
+  color: var(--amber-text);
+  padding: 1px 0;
 }
 
 .confirm-actions {
@@ -337,129 +563,259 @@ button {
   gap: 8px;
 }
 
-.btn {
-  padding: 6px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-raised);
-  color: var(--text);
-  font-size: 13px;
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: default;
+.confirm-resolved {
+  font-size: 12px;
+  color: var(--amber-text);
+  font-family: var(--mono);
 }
 
 .btn-approve {
-  border-color: var(--ok);
-  color: var(--ok);
+  padding: 7px 16px;
+  border: 1px solid var(--amber);
+  background: var(--amber);
+  color: var(--amber-contrast);
+  border-radius: 6px;
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.btn-approve:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .btn-deny {
-  border-color: var(--err);
-  color: var(--err);
+  padding: 7px 16px;
+  border: 1px solid var(--amber);
+  background: transparent;
+  color: var(--amber-text);
+  border-radius: 6px;
+  font-size: 13px;
 }
 
-.confirm-resolved {
+.btn-deny:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* --- clarify card ---------------------------------------------------- */
+
+.clarify-card {
+  border-left: 2px solid var(--slate-soft);
+  padding: 8px 0 8px 14px;
+  margin: 6px 0;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.clarify-card .clarify-lead {
+  color: var(--slate);
   font-size: 12px;
-  color: var(--text-dim);
+  display: block;
+  margin-bottom: 2px;
 }
 
-/* --- cost badge ---------------------------------------------------- */
+/* --- turn footer + cost strip ---------------------------------------- */
+
+.turn-foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 10px;
+  min-height: 20px;
+}
 
 .cost-badge {
-  display: inline-flex;
-  gap: 10px;
-  font-size: 11px;
-  color: var(--text-dim);
   font-family: var(--mono);
-  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--slate);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-/* --- trace view (per-turn span waterfall, Task 19) -------------------- */
-
-.trace-view {
-  margin-top: 4px;
+.foot-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 14px;
 }
 
-.trace-toggle {
+.foot-btn {
   border: none;
   background: transparent;
-  color: var(--text-dim);
+  color: var(--slate);
+  font-size: 12px;
+  padding: 0;
+}
+
+.foot-btn:hover {
+  color: var(--petrol);
+}
+
+/* --- inspector drawer ------------------------------------------------ */
+
+.inspector-scrim {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+  z-index: 40;
+}
+
+.inspector {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  max-width: 92vw;
+  background: var(--raised);
+  border-left: 1px solid var(--hair);
+  box-shadow: -8px 0 28px color-mix(in srgb, var(--ink) 14%, transparent);
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .inspector {
+    animation: inspector-in 180ms ease;
+  }
+}
+
+@keyframes inspector-in {
+  from {
+    transform: translateX(16px);
+    opacity: 0.4;
+  }
+}
+
+.inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--hair);
+}
+
+.inspector-title {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.inspector-close {
+  border: none;
+  background: transparent;
+  color: var(--slate);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+}
+
+.inspector-close:hover {
+  color: var(--ink);
+}
+
+.inspector-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 16px 0;
+}
+
+.inspector-tab {
+  border: none;
+  background: transparent;
+  color: var(--slate);
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 6px;
+}
+
+.inspector-tab:hover {
+  color: var(--ink);
+}
+
+.inspector-tab.is-on {
+  background: var(--petrol-wash);
+  color: var(--petrol);
+  font-weight: 500;
+}
+
+.inspector-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px 24px;
+}
+
+.inspector-hint {
+  font-size: 12px;
+  color: var(--slate);
+}
+
+/* --- trace waterfall (restyled) -------------------------------------- */
+
+.trace-note {
   font-size: 11px;
-  padding: 2px 0;
-}
-
-.trace-toggle:hover {
-  color: var(--text);
-}
-
-.trace-panel {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-raised);
-  padding: 8px 12px;
-  margin-top: 4px;
+  color: var(--slate-soft);
+  margin-bottom: 12px;
+  line-height: 1.5;
 }
 
 .trace-status {
   font-size: 12px;
-  color: var(--text-dim);
+  color: var(--slate);
 }
 
 .trace-status-error {
-  color: var(--err);
-}
-
-.trace-note {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin-bottom: 8px;
+  color: var(--red);
 }
 
 .trace-row {
-  margin-bottom: 6px;
+  margin-bottom: 10px;
 }
 
 .trace-row-label {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 7px;
   font-size: 12px;
-  margin-bottom: 2px;
+  margin-bottom: 3px;
 }
 
 .trace-row-name {
   font-family: var(--mono);
+  color: var(--ink);
 }
 
 .trace-row-meta {
-  color: var(--text-dim);
+  margin-left: auto;
+  color: var(--slate);
   font-size: 11px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .trace-row-failed {
-  color: var(--err);
+  color: var(--red);
 }
 
 .trace-row-running {
-  color: var(--accent);
+  color: var(--petrol);
 }
 
 .trace-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
+  align-self: center;
 }
 
 .trace-track {
   position: relative;
-  height: 8px;
-  border-radius: 4px;
-  background: var(--bg-sunken);
+  height: 6px;
+  border-radius: 3px;
+  background: var(--sunken);
   overflow: hidden;
 }
 
@@ -467,74 +823,60 @@ button {
   position: absolute;
   top: 0;
   bottom: 0;
-  border-radius: 4px;
+  border-radius: 3px;
 }
 
 .trace-bar-failed {
-  outline: 1px solid var(--err);
+  outline: 1px solid var(--red);
 }
 
+/* span kinds — petrol llm, slate step, outline retrieval */
 .trace-dot.kind-llm,
 .trace-bar.kind-llm {
-  background: var(--accent);
-}
-.trace-dot.kind-retrieval,
-.trace-bar.kind-retrieval {
-  background: var(--ok);
+  background: var(--petrol);
 }
 .trace-dot.kind-step,
 .trace-bar.kind-step {
-  background: var(--warn);
+  background: var(--slate);
+}
+.trace-dot.kind-retrieval {
+  background: transparent;
+  border: 1.5px solid var(--slate);
+}
+.trace-bar.kind-retrieval {
+  background: transparent;
+  border: 1.5px solid var(--slate);
 }
 .trace-dot.kind-joiner,
 .trace-bar.kind-joiner {
-  background: var(--err);
+  background: var(--amber);
 }
 .trace-dot.kind-compose,
 .trace-bar.kind-compose {
-  background: var(--text-dim);
+  background: var(--slate-soft);
 }
 
-/* --- audit feed (session-level write/confirm panel, Task 19) --------- */
-
-.chat-toolbar {
-  padding: 6px 20px 0;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.audit-toggle {
-  font-size: 12px;
-}
-
-.audit-feed {
-  margin: 6px 20px 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-sunken);
-  padding: 10px 14px;
-  max-height: 220px;
-  overflow-y: auto;
-}
+/* --- audit ledger (restyled as a quiet table) ------------------------ */
 
 .audit-feed-note {
   font-size: 11px;
-  color: var(--text-dim);
-  margin-bottom: 8px;
+  color: var(--slate-soft);
+  margin-bottom: 12px;
+  line-height: 1.5;
 }
 
 .audit-feed-empty {
   font-size: 12px;
-  color: var(--text-dim);
+  color: var(--slate);
 }
 
 .audit-row {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 4px 10px;
   font-size: 12px;
-  padding: 3px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--hair);
 }
 
 .audit-row:last-child {
@@ -542,81 +884,165 @@ button {
 }
 
 .audit-kind {
-  flex-shrink: 0;
-  width: 110px;
-  color: var(--text-dim);
   font-family: var(--mono);
   font-size: 11px;
+  color: var(--slate);
 }
 
 .audit-label {
   font-family: var(--mono);
+  color: var(--ink);
 }
 
 .audit-detail {
-  color: var(--text-dim);
+  grid-column: 2;
+  color: var(--slate);
 }
 
 .audit-confirmation-required .audit-kind,
 .audit-confirmation-resolved .audit-kind {
-  color: var(--warn);
+  color: var(--amber-text);
 }
 
 .audit-step-failed .audit-kind {
-  color: var(--err);
+  color: var(--red);
 }
 
 /* --- composer -------------------------------------------------------- */
 
 .composer {
-  border-top: 1px solid var(--border);
-  padding: 10px 20px;
+  border-top: 1px solid var(--hair);
+  padding: 16px 24px;
+  background: var(--paper);
+}
+
+.composer-inner {
+  max-width: 760px;
+  margin: 0 auto;
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: flex-end;
 }
 
 .composer textarea {
   flex: 1;
   resize: none;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-raised);
-  color: var(--text);
+  padding: 11px 13px;
+  border: 1px solid var(--hair-strong);
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--ink);
   font: inherit;
-  min-height: 2.6em;
-  max-height: 8em;
+  font-size: 15px;
+  min-height: 2.8em;
+  max-height: 9em;
 }
 
-.composer .btn-send {
-  border-color: var(--accent);
-  color: var(--accent-contrast);
-  background: var(--accent);
+.composer textarea::placeholder {
+  color: var(--slate-soft);
+}
+
+.composer textarea:focus-visible {
+  outline: 2px solid var(--petrol);
+  outline-offset: 0;
+  border-color: var(--petrol);
+}
+
+.btn-send {
+  padding: 10px 18px;
+  border: 1px solid var(--petrol);
+  background: var(--petrol);
+  color: var(--petrol-contrast);
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.btn-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-cancel {
+  padding: 10px 16px;
+  border: 1px solid var(--hair-strong);
+  background: transparent;
+  color: var(--slate);
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+/* --- empty state + example chips ------------------------------------- */
+
+.start {
+  max-width: 540px;
+  margin: 8vh auto 0;
+  text-align: center;
+}
+
+.start-name {
+  font-size: 20px;
   font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: 8px;
 }
 
-/* --- banners / toasts ------------------------------------------------- */
+.start-line {
+  color: var(--slate);
+  font-size: 14px;
+  margin-bottom: 22px;
+}
+
+.start-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.chip {
+  border: 1px solid var(--petrol);
+  background: transparent;
+  color: var(--petrol);
+  border-radius: 6px;
+  padding: 7px 13px;
+  font-size: 13px;
+}
+
+.chip:hover {
+  background: var(--petrol-wash);
+}
+
+/* --- banners / toasts / retry ---------------------------------------- */
 
 .banner {
-  padding: 8px 20px;
+  padding: 10px 24px;
   font-size: 13px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--hair);
 }
 
 .banner-error {
-  background: var(--err-bg);
-  color: var(--err);
+  background: var(--red-wash);
+  color: var(--red);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+}
+
+.banner-error .btn {
+  border: 1px solid var(--red);
+  background: transparent;
+  color: var(--red);
+  border-radius: 6px;
+  padding: 4px 11px;
+  font-size: 12px;
 }
 
 .toasts {
   position: fixed;
-  bottom: 16px;
-  right: 16px;
+  bottom: 18px;
+  right: 18px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -624,15 +1050,13 @@ button {
 }
 
 .toast {
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 14px;
+  background: var(--raised);
+  border: 1px solid var(--hair-strong);
+  border-radius: 8px;
+  padding: 9px 15px;
   font-size: 13px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--ink) 16%, transparent);
 }
-
-/* --- retry screen ------------------------------------------------------ */
 
 .retry-screen {
   flex: 1;
@@ -640,6 +1064,52 @@ button {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  color: var(--text-dim);
+  gap: 14px;
+  color: var(--slate);
+}
+
+.retry-screen .btn {
+  border: 1px solid var(--petrol);
+  background: transparent;
+  color: var(--petrol);
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+}
+
+/* --- responsive: rail collapses to overlay at 900px ------------------ */
+
+@media (max-width: 900px) {
+  .nav-toggle {
+    display: inline-flex;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 51;
+    transform: translateX(-100%);
+    transition: transform 200ms ease;
+    box-shadow: 8px 0 28px color-mix(in srgb, var(--ink) 16%, transparent);
+  }
+
+  .app-layout.nav-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .nav-scrim {
+    position: fixed;
+    inset: 0;
+    background: color-mix(in srgb, var(--ink) 28%, transparent);
+    z-index: 50;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
 }

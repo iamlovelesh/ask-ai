@@ -10,7 +10,8 @@ defineProps<{ question: string }>();
 </script>
 
 <template>
-  <div class="clarify-card">
-    <strong>Needs clarification:</strong> {{ question }}
+  <div class="clarify-card agent-section">
+    <span class="clarify-lead">Needs clarification</span>
+    {{ question }}
   </div>
 </template>

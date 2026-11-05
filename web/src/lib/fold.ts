@@ -25,6 +25,10 @@ export interface StepView {
   status: StepStatus;
   summary?: string;
   error?: { code: string; message: string };
+  /** Wall-clock duration of the step, from the `step.finished`/`step.failed`
+   * event's `ms`. Rendered right-aligned in mono by the task tracker;
+   * `undefined` while still pending/running. */
+  ms?: number;
   /** `seq` of the `step.finished`/`step.failed` event that last updated this
    * step — `undefined` while still `pending`/`running`. Only consumed by
    * Task 19's AuditFeed (`lib/audit.ts`) to order entries chronologically;
@@ -186,6 +190,7 @@ export function applyEvent(chat: SessionChatState, ev: AppEvent): void {
       const step = findOrCreateStep(turn, ev.stepId, turn.steps[ev.stepId]?.action ?? '');
       step.status = 'done';
       step.summary = ev.summary;
+      step.ms = ev.ms;
       step.seq = ev.seq;
       return;
     }
@@ -194,6 +199,7 @@ export function applyEvent(chat: SessionChatState, ev: AppEvent): void {
       const step = findOrCreateStep(turn, ev.stepId, turn.steps[ev.stepId]?.action ?? '');
       step.status = 'failed';
       step.error = ev.error;
+      step.ms = ev.ms;
       step.seq = ev.seq;
       return;
     }
