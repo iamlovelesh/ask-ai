@@ -18,6 +18,19 @@
 #     parent_id='evt_13' AND waitlisted=1 AND status != 'cancelled' ORDER
 #     BY joined_at ASC LIMIT 1;
 #   -> part_211, contact_id='con_10586' (earliest-joined, FIFO-first)
+#
+# VACUOUS-FLOOR FIX (Task 17 hardening, defect 3 — `eval/scripts/floor-
+# sweep.ts`): `part_211`'s seed row already has `status='attended'` even
+# though `waitlisted=1` (an independently-randomized seed column, not a
+# real FIFO-cycle artifact) — `SELECT status FROM participations WHERE
+# id='part_211'` equals `'attended'` on the UNTOUCHED pristine template,
+# so that check would have passed even if `check_in_attendee` never ran.
+# Replaced with a single COUNT query that requires BOTH actions' effects
+# at once (`waitlisted=0` only from `promote_waitlisted_attendee`,
+# `status='attended'` from `check_in_attendee`) and asserts it via
+# `countDelta` (baseline 0 -> 1), the LLD-preferred baseline-relative
+# form — can't be vacuously satisfied by seed data alone since the
+# combined row doesn't exist pre-turn (`waitlisted=1` there).
 
 id: multistep-events-002
 category: multistep
@@ -40,8 +53,8 @@ turns:
       state:
         - query: "SELECT waitlisted FROM participations WHERE id='part_211'"
           equals: 0
-        - query: "SELECT status FROM participations WHERE id='part_211'"
-          equals: attended
+        - query: "SELECT COUNT(*) AS n FROM participations WHERE id='part_211' AND waitlisted=0 AND status='attended'"
+          countDelta: 1
       behavior:
         confirmation: false
       response:
