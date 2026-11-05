@@ -49,6 +49,20 @@ describe('buildPlannerPrompt — SYSTEM is byte-stable', () => {
       expect(system).toContain(kind);
     }
   });
+
+  it('hardens the id-resolution rule with a concrete name→search→$ref example', () => {
+    const { system } = buildPlannerPrompt(baseCtx());
+    expect(system).toContain('<prefix>_<number>');
+    expect(system).toContain('coupons.search_coupons');
+    expect(system).toMatch(/WRONG:[\s\S]*SPRING20/);
+    expect(system).toMatch(/RIGHT:[\s\S]*\$s1\.items\[\*\]\.id/);
+  });
+
+  it('teaches the entity-match rule (act on the module that owns the record)', () => {
+    const { system } = buildPlannerPrompt(baseCtx());
+    expect(system).toContain('support_tickets');
+    expect(system).toContain('conversations/tasks');
+  });
 });
 
 describe('buildPlannerPrompt — USER layout (LLD §5.2)', () => {

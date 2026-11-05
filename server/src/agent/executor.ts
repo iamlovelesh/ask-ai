@@ -254,6 +254,48 @@ function resolveWholeRef(ref: string, rctx: ResolveCtx): unknown {
   return traverse({ ids: result.ids, items: handle?.sample ?? [] }, parsed.path);
 }
 
+/** Thrown when a whole-value param ref parses as a legal ref but resolves to
+ * `undefined` at run time (e.g. `$s1.id` where `s1`'s result is a LIST, so
+ * `.id` does not exist on it). Surfaced by `runStep`/`runForEachStep` as a
+ * step-level `REF_RESOLUTION` failure (repairable context, dependents
+ * skipped) — the fix for the "unresolved ref string leaks into the handler"
+ * defect (TRIAGE multistep-enrollments-001): an invalid ref must fail the
+ * step LOUDLY, never silently pass a literal/undefined into the action. */
+export class RefResolutionError extends Error {
+  readonly code = 'REF_RESOLUTION' as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'RefResolutionError';
+  }
+}
+
+/** Human-readable (repair-usable) description of WHY a whole-value ref did
+ * not resolve: the ref itself plus the fields actually available on its
+ * base, and the usual fix (pluck a field off a list with `items[*].<field>`
+ * rather than indexing a scalar field off the whole list). */
+function describeUnresolvedRef(ref: string, rctx: ResolveCtx): string {
+  const parsed = parseRefGrammar(ref);
+  let base: unknown;
+  let label = 'the referenced result';
+  if (parsed?.form === 'step') {
+    base = rctx.stepResults.get(parsed.stepId);
+    label = `step ${parsed.stepId}'s result`;
+  } else if (parsed?.form === 'item') {
+    base = rctx.item;
+    label = 'the current $item';
+  }
+  let hint: string;
+  if (Array.isArray(base)) {
+    hint = `${label} is an array of ${base.length} item(s) — a scalar field cannot be read off a list directly; pluck it with 'items[*].<field>' instead`;
+  } else if (base !== null && typeof base === 'object') {
+    const keys = Object.keys(base as Record<string, unknown>);
+    hint = `available fields on ${label}: ${keys.length > 0 ? keys.join(', ') : '(none)'}`;
+  } else {
+    hint = `${label} is ${base === undefined ? 'absent' : JSON.stringify(base)}`;
+  }
+  return `Ref '${ref}' did not resolve (${hint}). A search/list result exposes rows under '.items[*]' — reference a per-row field as '…items[*].<field>', and never type in or infer a literal id.`;
+}
+
 const EMBEDDED_REF_RE = /\$(?:item|s\d+|r_t\d+_s\d+)(?:\.[A-Za-z_][A-Za-z0-9_]*(?:\[\*\])?)*/g;
 
 /** Interpolate `$ref` substrings inside a larger literal string (e.g. the
@@ -269,6 +311,14 @@ function resolveValue(value: unknown, rctx: ResolveCtx): unknown {
   if (typeof value === 'string') {
     if (value.startsWith('$') && parseRefGrammar(value) !== null) {
       const resolved = resolveWholeRef(value, rctx);
+      // A legal ref that resolves to `undefined` is a HARD step failure, not
+      // a literal to pass through: `$s1.id` on a list result, a typo'd path,
+      // etc. (TRIAGE multistep-enrollments-001). Fail loudly with a
+      // repairable hint rather than silently feeding undefined/the template
+      // string into the handler.
+      if (resolved === undefined) {
+        throw new RefResolutionError(describeUnresolvedRef(value, rctx));
+      }
       if (Array.isArray(resolved)) {
         rctx.meta.maxArrayLen = Math.max(rctx.meta.maxArrayLen, resolved.length);
       }
@@ -606,7 +656,19 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
 
     // --- scalar (non-forEach) step ---
     const rctx = makeResolveCtx(undefined, false);
-    const params = resolveValue(step.params, rctx) as Record<string, unknown>;
+    let params: Record<string, unknown>;
+    try {
+      params = resolveValue(step.params, rctx) as Record<string, unknown>;
+    } catch (err) {
+      if (err instanceof RefResolutionError) {
+        const ms = clock.now() - started;
+        const error = { code: err.code, message: err.message };
+        const { hint } = recordStuck(step.action, stableHash(step.params), err.code);
+        emitFailed(step.id, hint ? { ...error, message: `${error.message} [${hint}]` } : error, ms);
+        return;
+      }
+      throw err;
+    }
     const drift = rctx.meta.drift;
     const affectedCount = isWrite ? Math.max(rctx.meta.maxArrayLen, 1) : rctx.meta.maxArrayLen;
 
@@ -695,7 +757,18 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     const perItemResults: unknown[] = [];
     for (let i = 0; i < items.length; i += 1) {
       const rctx = makeResolveCtx(items[i], true);
-      const params = resolveValue(step.params, rctx) as Record<string, unknown>;
+      let params: Record<string, unknown>;
+      try {
+        params = resolveValue(step.params, rctx) as Record<string, unknown>;
+      } catch (err) {
+        if (err instanceof RefResolutionError) {
+          const error = { code: err.code, message: err.message };
+          const { hint } = recordStuck(step.action, stableHash(step.params), err.code);
+          emitFailed(step.id, hint ? { ...error, message: `${error.message} [${hint}]` } : error, clock.now() - started);
+          return;
+        }
+        throw err;
+      }
       const key = `${turnId}:${planRev}:${step.id}:${i}`;
       const res = await invoke(action, params, key, isCore);
       if (!res.ok) {

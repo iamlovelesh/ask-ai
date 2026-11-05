@@ -154,6 +154,16 @@ describe('validator — unknown slug (Review Focus 3: repairable, never throws)'
     expect(prompt).toContain('"params":"{\\"status\\":\\"open\\"}"');
     expect(prompt).not.toContain('"params":{"status":"open"}');
   });
+
+  it('forbids downgrading to clarify when the plan can simply be fixed (Fix 3c)', () => {
+    const plan: Plan = {
+      goal: 'g',
+      steps: [{ id: 's1', action: 'leads.search_leads', params: { status: 'open' }, dependsOn: [] }],
+    };
+    const prompt = repairPrompt(plan, [{ code: 'UNKNOWN_SLUG', stepId: 's1', message: 'irrelevant' }]);
+    expect(prompt).toContain('Do NOT downgrade to `clarify`');
+    expect(prompt.toLowerCase()).toContain('genuinely missing');
+  });
 });
 
 describe('validator — $item outside forEach', () => {
@@ -563,6 +573,83 @@ describe('validator — literal param schema compile', () => {
       },
     };
     const result = validate(outcome, new Set(), noHandles(), conformanceRegistry);
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('validator — id-fabrication guard (ID_NOT_RESOLVED)', () => {
+  const idRegistry = buildRegistry(
+    [
+      [
+        stubAction('orders.apply_coupon_to_order', z.strictObject({ id: z.string(), coupon_id: z.string() })),
+        // an `*_id` field typed as an ENUM (non-id semantic) — the guard's
+        // allow-list must leave it untouched (only PLAIN strings are checked).
+        stubAction('billing.set_tier', z.strictObject({ id: z.string(), tier_id: z.enum(['free', 'paid']) })),
+      ],
+    ],
+    coreOps,
+  );
+
+  it('a quoted NAME in a coupon_id field is ID_NOT_RESOLVED (repairable)', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'orders.apply_coupon_to_order', params: { id: 'order_1', coupon_id: 'coupon 5' }, dependsOn: [] },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), idRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'ID_NOT_RESOLVED')).toBe(true);
+    }
+  });
+
+  it('an entity-shaped literal id (struct_200) is accepted', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'orders.apply_coupon_to_order', params: { id: 'order_1', coupon_id: 'struct_200' }, dependsOn: [] },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), idRegistry);
+    expect(result.ok).toBe(true);
+  });
+
+  it('a $ref in an id field is accepted (never a fabricated literal)', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's0', action: 'orders.apply_coupon_to_order', params: { id: 'order_1', coupon_id: 'struct_1' }, dependsOn: [] },
+          {
+            id: 's1',
+            action: 'orders.apply_coupon_to_order',
+            params: { id: 'order_2', coupon_id: '$s0.items[*].id' },
+            dependsOn: ['s0'],
+          },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), idRegistry);
+    expect(result.ok).toBe(true);
+  });
+
+  it('an enum-typed *_id field is left untouched (allow-list: only plain strings)', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [{ id: 's1', action: 'billing.set_tier', params: { id: 'struct_1', tier_id: 'free' }, dependsOn: [] }],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), idRegistry);
     expect(result.ok).toBe(true);
   });
 });

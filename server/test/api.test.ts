@@ -393,7 +393,7 @@ describe('SSE drop + reconnect (Review Focus 1)', () => {
       coreOps,
     );
     const queue = queueMockLlm([
-      { kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'c1' }, dependsOn: [] }] } },
+      { kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'con_1' }, dependsOn: [] }] } },
     ]);
     __setTestFetch(queue.fetch);
 
@@ -470,7 +470,7 @@ describe('POST /api/sessions/:id/confirm/:confirmId — wrong/stale ids', () => 
     expect(unknownRes.statusCode).toBe(404);
 
     const queue = queueMockLlm([
-      { kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'c1' }, dependsOn: [] }] } },
+      { kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'con_1' }, dependsOn: [] }] } },
     ]);
     __setTestFetch(queue.fetch);
 
@@ -521,7 +521,7 @@ describe('POST /api/sessions/:id/messages — one turn at a time', () => {
       coreOps,
     );
     const queue = queueMockLlm([
-      { kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'c1' }, dependsOn: [] }] } },
+      { kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'con_1' }, dependsOn: [] }] } },
     ]);
     __setTestFetch(queue.fetch);
 
@@ -576,7 +576,7 @@ describe('POST /api/sessions/:id/cancel', () => {
       coreOps,
     );
     const queue = queueMockLlm([
-      { kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'c1' }, dependsOn: [] }] } },
+      { kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'con_1' }, dependsOn: [] }] } },
     ]);
     __setTestFetch(queue.fetch);
 
@@ -604,7 +604,7 @@ describe('POST /api/sessions/:id/cancel', () => {
     expect(handlerCalls).toBe(0);
 
     // the session's running-flag must have cleared — a brand new turn is accepted.
-    const queue2 = queueMockLlm([{ kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'c1' }, dependsOn: [] }] } }]);
+    const queue2 = queueMockLlm([{ kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'con_1' }, dependsOn: [] }] } }]);
     __setTestFetch(queue2.fetch);
     const res2 = await app.inject({
       method: 'POST',
@@ -639,7 +639,7 @@ describe('POST /api/sessions/:id/cancel', () => {
       coreOps,
     );
     const queue = queueMockLlm([
-      { kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'c1' }, dependsOn: [] }] } },
+      { kind: 'plan', plan: { goal: 'archive contact', steps: [{ id: 's1', action: 'contacts.archive_contact', params: { id: 'con_1' }, dependsOn: [] }] } },
     ]);
     __setTestFetch(queue.fetch);
 

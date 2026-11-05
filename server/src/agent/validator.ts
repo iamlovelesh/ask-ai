@@ -9,6 +9,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { z } from 'zod';
 import type { Registry } from '../catalog/registry.js';
 import {
   planOutcomeSchema,
@@ -25,6 +26,7 @@ export type ValidationErrorCode =
   | 'UNKNOWN_SLUG'
   | 'UNKNOWN_PARAM'
   | 'PARAM_SCHEMA'
+  | 'ID_NOT_RESOLVED'
   | 'REF_GRAMMAR'
   | 'ITEM_OUTSIDE_FOREACH'
   | 'FOREACH_NOT_REF'
@@ -159,6 +161,46 @@ function isObjectShape(schema: unknown): schema is ShapeLike {
     'shape' in schema &&
     typeof (schema as { shape?: unknown }).shape === 'object'
   );
+}
+
+// --- id-fabrication guard (TRIAGE conditional-coupons-001) -----------------
+//
+// Entity ids in this CRM are minted as `<prefix>_<n>` (e.g. `con_123`,
+// `struct_200`, `course_2`). A LITERAL value sitting in an `*_id`/`id` param
+// that does NOT look like an id (e.g. a quoted name "coupon 5") is almost
+// always the planner typing in a name it should have RESOLVED via a search
+// action first — a repairable mistake, not a crash. Refs (`$s1.items[*].id`,
+// `$r_t3_s1`) are never literals and are excluded before this check runs.
+
+const ENTITY_ID_SHAPE = /^[a-z]+_\d+$/;
+
+/** True when `key` is an entity-id param by name (`id` or `*_id`), but NOT
+ * a plural id-LIST param (`*_ids`) — an array of ids is a different shape
+ * handled via refs, not a single fabricated literal. */
+function isIdParamName(key: string): boolean {
+  return key === 'id' || (key.endsWith('_id') && key !== '_id');
+}
+
+/** Unwrap optional/nullable/default wrappers to the inner schema, then test
+ * whether it is a PLAIN `z.string()` — the allow-list guard from the brief:
+ * the id check applies ONLY when the field expects a free-form string (never
+ * an enum, number, or other id-semantic schema). An enum like `discount_type`
+ * is a `ZodEnum`, not a `ZodString`, so it is left untouched. */
+function isPlainStringSchema(schema: unknown): boolean {
+  let s = schema;
+  // Bounded unwrap of optional/nullable/default wrappers.
+  for (let i = 0; i < 5 && s != null; i += 1) {
+    if (s instanceof z.ZodString) return true;
+    if (
+      (s instanceof z.ZodOptional || s instanceof z.ZodNullable || s instanceof z.ZodDefault) &&
+      typeof (s as { unwrap?: () => unknown }).unwrap === 'function'
+    ) {
+      s = (s as { unwrap: () => unknown }).unwrap();
+      continue;
+    }
+    break;
+  }
+  return false;
 }
 
 // --- topological sort / cycle detection -------------------------------------
@@ -395,6 +437,23 @@ export function validate(
             stepId: step.id,
             message: `Step '${step.id}': param '${key}' for '${step.action}' failed validation (${fieldResult.error?.message ?? 'invalid'}).`,
           });
+          continue;
+        }
+        // id-fabrication guard: a literal string in an `id`/`*_id` field (on
+        // a plain-string, non-enum schema) that is NOT shaped like an entity
+        // id (`<prefix>_<n>`) is almost certainly a NAME the planner should
+        // have resolved via a search action — repairable, not a crash.
+        if (
+          typeof value === 'string' &&
+          isIdParamName(key) &&
+          isPlainStringSchema(shape[key]) &&
+          !ENTITY_ID_SHAPE.test(value)
+        ) {
+          errors.push({
+            code: 'ID_NOT_RESOLVED',
+            stepId: step.id,
+            message: `Step '${step.id}': param '${key}' for '${step.action}' is the literal '${value}', which does not look like an entity id (expected '<prefix>_<number>', e.g. 'con_123') — it looks like a name. Resolve it via a search action first (e.g. a '*.search_*' action) and reference its result with a $ref, never a typed-in id.`,
+          });
         }
       }
     }
@@ -504,9 +563,13 @@ export function repairPrompt(plan: Plan, errors: readonly ValidationError[]): st
     'resend the COMPLETE corrected plan as the same PlanOutcome JSON shape',
     '(normally `{"kind":"plan","plan":{...}}` with the FULL `plan.steps` array —',
     'not a diff — and the SAME wire shape shown below: `params` as a',
-    'JSON-encoded STRING, and `forEach`/`when`/`expects` always present). If',
-    'the request can no longer be satisfied as a plan, you may instead return',
-    'a different `kind` (search/clarify/unsupported/respond).',
+    'JSON-encoded STRING, and `forEach`/`when`/`expects` always present).',
+    'These are VALIDATION errors in YOUR plan — fix the plan and resend it.',
+    'Do NOT downgrade to `clarify`: clarify is valid ONLY when information is',
+    'genuinely missing from the request/conversation, never as a way to avoid',
+    'correcting a plan whose inputs are all present. If (and only if) the',
+    'request truly cannot be satisfied by any plan, you may return a different',
+    '`kind` (search/clarify/unsupported/respond) with an honest reason.',
     '',
     'Previous plan:',
     JSON.stringify(toWirePlan(plan)),

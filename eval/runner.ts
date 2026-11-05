@@ -57,6 +57,11 @@ export interface RunnerOptions {
   serverUrl?: string;
   profile?: string;
   scenariosDir: string;
+  /** Optional allow-list of scenario ids (`--scenario-ids a,b,c`) — when
+   * present, only these scenarios run (after dir load, before quick/shard/
+   * tuple planning). Useful for re-running just the scenarios a triage
+   * flagged without spinning the whole corpus. */
+  scenarioIds?: string[];
   runId: string;
   port: number;
   mockLlmScript?: string;
@@ -127,6 +132,11 @@ export function parseArgs(argv: readonly string[]): RunnerOptions {
   const mockLlmScriptRaw = flagValue(argv, '--mock-llm-script');
   const mockLlmScript = mockLlmScriptRaw ? resolve(REPO_ROOT, mockLlmScriptRaw) : undefined;
 
+  const scenarioIdsRaw = flagValue(argv, '--scenario-ids');
+  const scenarioIds = scenarioIdsRaw
+    ? scenarioIdsRaw.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
+    : undefined;
+
   // Built via conditional spreads (not `field: maybeUndefined`) because
   // `exactOptionalPropertyTypes` makes `shard?: ShardSpec` mean "present
   // with a real value, or absent" — never "present and explicitly
@@ -141,6 +151,7 @@ export function parseArgs(argv: readonly string[]): RunnerOptions {
     ...(serverUrl ? { serverUrl } : {}),
     ...(profile ? { profile } : {}),
     scenariosDir: resolve(REPO_ROOT, flagValue(argv, '--scenarios') ?? 'eval/scenarios'),
+    ...(scenarioIds && scenarioIds.length > 0 ? { scenarioIds } : {}),
     runId,
     port,
     ...(mockLlmScript ? { mockLlmScript } : {}),
@@ -311,7 +322,18 @@ async function metricsCostTotal(baseUrl: string): Promise<number> {
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   const opts = parseArgs(argv);
-  const scenarios = loadScenarios(opts.scenariosDir);
+  let scenarios = loadScenarios(opts.scenariosDir);
+  if (opts.scenarioIds && opts.scenarioIds.length > 0) {
+    const want = new Set(opts.scenarioIds);
+    const available = new Set(scenarios.map((s) => s.id));
+    const missing = opts.scenarioIds.filter((id) => !available.has(id));
+    if (missing.length > 0) {
+      throw new Error(
+        `--scenario-ids: no scenario(s) found with id(s): ${missing.join(', ')} (in ${opts.scenariosDir}).`,
+      );
+    }
+    scenarios = scenarios.filter((s) => want.has(s.id));
+  }
   let tuples = planTuples(scenarios, {
     agent: opts.agent,
     trials: opts.trials,

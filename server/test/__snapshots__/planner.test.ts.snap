@@ -76,7 +76,16 @@ to another result (anything else is a plain JSON literal):
                         array — only valid as the LAST path segment)
 There is no "$turnN.sM" syntax. Never fabricate an id or a ref that was not
 shown to you — always resolve data through steps/refs, never by typing in a
-literal id you merely inferred from a result.
+literal id you merely inferred from a result. Entity ids look like
+"<prefix>_<number>" (e.g. "con_123", "struct_200", "course_2"); a human name
+or quoted label is NOT an id. If the user names a record ("the coupon
+SPRING20", "Marketing Automation 101"), you MUST resolve it first via a
+search/lookup action and reference that result — never put the name in an
+"*_id" field:
+  WRONG: {"action":"orders.apply_coupon_to_order","params":{"id":"$s0.id","coupon_id":"SPRING20"}}
+  RIGHT: s1 = coupons.search_coupons {"query":"SPRING20"}; then
+         orders.apply_coupon_to_order {"id":"$s0.id","coupon_id":"$s1.items[*].id"}
+         (use "$s1.id" instead when the resolving step returns a single record).
 
 Built-in data ops (deterministic, zero cost, risk=read — always available,
 not part of the candidate list because they never change):
@@ -89,6 +98,13 @@ core.distribute {items: Ref, across: Ref, strategy: "round_robin"}
                 -> {items: Array<{item, assignee}>}        // shape is normative
 
 Guidance:
+- Only use actions whose module/entities match the record type you are
+  acting on. To act on CONVERSATIONS, use conversations/tasks actions (e.g.
+  queue follow-up with tasks.create_task); do NOT pick a support_tickets.*
+  action just because it sounds similar — support tickets are a DIFFERENT
+  entity, and a conversation id cannot be passed to one. When no action in
+  the acting-on module does what's asked, prefer core.* composition or
+  tasks.create_task over a plausible-looking action from an unrelated module.
 - Prefer the fewest steps that correctly satisfy the request.
 - Use "dependsOn" to express ordering; a step may read another step's
   output only if it depends on it (directly or transitively).

@@ -399,6 +399,56 @@ describe('executor — confirmation gate', () => {
   });
 });
 
+describe('executor — unresolved ref (REF_RESOLUTION)', () => {
+  it('a param ref to a missing field fails the step with REF_RESOLUTION; the literal never reaches the handler', async () => {
+    let handlerCalls = 0;
+    let handlerSawParams: unknown;
+    const registry = buildRegistry(
+      [
+        [
+          // a search/list result — `.id` does NOT exist on it (the rows do)
+          action('courses.search_courses', 'read', async () => ({
+            items: [{ id: 'course_1' }, { id: 'course_2' }],
+            total: 2,
+          })),
+          action('enrollments.enroll_learner_in_course', 'write', async (i) => {
+            handlerCalls += 1;
+            handlerSawParams = i;
+            return { ok: true };
+          }),
+        ],
+      ],
+      coreOps,
+    );
+    const plan: Plan = {
+      goal: 'unresolved-ref',
+      steps: [
+        { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+        // `$s1.id` is invalid — s1's result is a LIST, so `.id` resolves to
+        // undefined. Must fail LOUDLY, never leak `$s1.id`/undefined through.
+        {
+          id: 's2',
+          action: 'enrollments.enroll_learner_in_course',
+          params: { contact_id: 'con_1', course_id: '$s1.id' },
+          dependsOn: ['s1'],
+        },
+      ],
+    };
+    const input = baseInput(plan, registry);
+    const result = await execute(input);
+
+    expect(result.status).toBe('failed');
+    expect(result.stepStates['s2']?.state).toBe('failed');
+    expect(result.stepStates['s2']?.error?.code).toBe('REF_RESOLUTION');
+    expect(result.stepStates['s2']?.error?.message).toContain('$s1.id');
+    // the handler was never invoked — the literal/undefined never reached it
+    expect(handlerCalls).toBe(0);
+    expect(handlerSawParams).toBeUndefined();
+    // no confirmation gate fired either (resolution throws before the gate)
+    expect(eventsOf(input).some((e) => e.t === 'confirmation.required')).toBe(false);
+  });
+});
+
 describe('executor — resilience', () => {
   it('TRANSIENT error retries once with the SAME key, then succeeds (one result)', async () => {
     const keys: string[] = [];
