@@ -19,6 +19,34 @@ const itemsOutput = z.object({ items: z.array(rowSchema) });
 const compareOp = z.enum(['eq', 'neq', 'gt', 'lt', 'contains']);
 type CompareOp = z.infer<typeof compareOp>;
 
+// Strict ISO-8601 shape: date, optional time/zone. Deliberately narrow so a
+// bare numeric-looking string ("5") or an arbitrary label ("acme") never
+// parses as a date (TRIAGE C5 requires non-date strings untouched).
+const ISO_8601_RE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
+
+/** TRIAGE C5 (date type-mismatch): an ordered comparison where exactly one
+ * operand is an ISO-8601 date string and the other is numeric (epoch-ms).
+ * Coerce BOTH to epoch-ms so e.g. `created_at` (epoch-ms number) compares
+ * correctly against `"2026-10-04T.."`. Returns `null` when the pair is not
+ * this strict one-numeric/one-ISO shape (callers then fall back to the
+ * original number/number comparison — non-date strings stay untouched). */
+function coerceDatePair(a: unknown, b: unknown): [number, number] | null {
+  const asEpoch = (v: unknown): number | null => {
+    if (typeof v !== 'string' || !ISO_8601_RE.test(v)) return null;
+    const ms = Date.parse(v);
+    return Number.isNaN(ms) ? null : ms;
+  };
+  if (typeof a === 'number') {
+    const bMs = asEpoch(b);
+    return bMs === null ? null : [a, bMs];
+  }
+  if (typeof b === 'number') {
+    const aMs = asEpoch(a);
+    return aMs === null ? null : [aMs, b];
+  }
+  return null;
+}
+
 function matches(row: Row, field: string, op: CompareOp, value: unknown): boolean {
   const actual = row[field];
   switch (op) {
@@ -26,10 +54,16 @@ function matches(row: Row, field: string, op: CompareOp, value: unknown): boolea
       return actual === value;
     case 'neq':
       return actual !== value;
-    case 'gt':
-      return typeof actual === 'number' && typeof value === 'number' && actual > value;
-    case 'lt':
-      return typeof actual === 'number' && typeof value === 'number' && actual < value;
+    case 'gt': {
+      if (typeof actual === 'number' && typeof value === 'number') return actual > value;
+      const pair = coerceDatePair(actual, value);
+      return pair !== null && pair[0] > pair[1];
+    }
+    case 'lt': {
+      if (typeof actual === 'number' && typeof value === 'number') return actual < value;
+      const pair = coerceDatePair(actual, value);
+      return pair !== null && pair[0] < pair[1];
+    }
     case 'contains':
       if (Array.isArray(actual)) return actual.includes(value);
       if (typeof actual === 'string' && typeof value === 'string') return actual.includes(value);
