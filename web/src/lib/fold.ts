@@ -64,9 +64,23 @@ export interface SessionChatState {
   running: boolean;
   /** True while an automatic reconnect loop is active. */
   reconnecting: boolean;
-  /** User-facing banner text — set on an unexpected drop, cleared on a
-   * clean reconnect/turn completion. */
+  /** User-facing banner text for a MID-STREAM drop (≥1 frame already
+   * received for the in-flight turn, so the turn genuinely started
+   * server-side and GET /stream?afterSeq can resume it) — cleared on a
+   * clean reconnect/turn completion. Distinct from `sendError` below: this
+   * one drives the auto-reconnect path. */
   error: string | null;
+  /** User-facing banner text for a message that NEVER reached the server
+   * (the POST itself failed/rejected before a single frame arrived — e.g.
+   * offline, or a non-409 HTTP error). No turn was ever started, so there
+   * is nothing to reconnect/resume: reconnecting here would open
+   * `GET /stream` against a session with no new events, which would just
+   * sit on heartbeats forever. The fix is to retry the SEND itself
+   * (`lastFailedText`), not to reconnect. */
+  sendError: string | null;
+  /** The text of the message that failed to ever reach the server — kept
+   * so a "retry send" control can resubmit it without the user retyping. */
+  lastFailedText: string | null;
 }
 
 export function emptyChatState(): SessionChatState {
@@ -78,6 +92,8 @@ export function emptyChatState(): SessionChatState {
     running: false,
     reconnecting: false,
     error: null,
+    sendError: null,
+    lastFailedText: null,
   };
 }
 

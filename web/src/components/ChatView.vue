@@ -61,10 +61,22 @@ async function onResolveConfirm(confirmId: string, approved: boolean): Promise<v
 async function onRetryConnection(): Promise<void> {
   await store.reconnect(props.sessionId);
 }
+
+async function onRetrySend(): Promise<void> {
+  await store.retrySend();
+}
 </script>
 
 <template>
   <div class="chat-view" v-if="chat">
+    <!-- The message never reached the server (no turn was ever started) —
+         retrying means re-sending, not reconnecting to a stream. -->
+    <div v-if="chat.sendError" class="banner banner-error">
+      <span>{{ chat.sendError }}</span>
+      <button class="btn" @click="onRetrySend">Retry send</button>
+    </div>
+    <!-- A turn DID start server-side and then the connection dropped —
+         auto-reconnect already ran; this banner means every attempt failed. -->
     <div v-if="chat.error" class="banner banner-error">
       <span>{{ chat.error }}</span>
       <button class="btn" @click="onRetryConnection">Retry now</button>

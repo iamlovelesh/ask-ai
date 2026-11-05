@@ -18,6 +18,23 @@
  * anywhere — including mid-frame, mid-line, or mid-UTF-8-byte-sequence — so
  * this parser buffers across `read()` calls and only emits once a full
  * `\n\n`-terminated frame has arrived.
+ *
+ * Deliberately NOT a full SSE-spec parser — two simplifications, both safe
+ * because they match `server/src/api/sse.ts` exactly (the only producer
+ * this client will ever talk to) and are documented here so nobody "fixes"
+ * them into spec-completeness by accident:
+ *   1. **LF-only framing.** The spec also treats bare `\r` and `\r\n` as
+ *      line terminators; this parser only ever splits on `\n`. The server
+ *      writer builds every frame with literal `\n` (never `\r`), so this is
+ *      a non-issue in practice — but a hand-written mock stream using `\r\n`
+ *      line endings would NOT parse correctly here.
+ *   2. **Single `data:` line per frame.** The spec allows multiple `data:`
+ *      lines in one frame, concatenated with `\n` between them. The server
+ *      only ever emits exactly one `data:` line per frame (one JSON blob),
+ *      so this parser just takes the LAST `data:` line it sees in a block
+ *      rather than concatenating — correct for every real frame, but it
+ *      would silently drop earlier `data:` lines if a multi-line frame ever
+ *      showed up.
  */
 
 export interface SseFrame {

@@ -21,10 +21,27 @@ export interface SessionSummary {
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_BASE_DELAY_MS = 500;
+/** Hard ceiling on how long a SINGLE reconnect attempt's `GET .../stream`
+ * request is allowed to sit open with no frame arriving. Without this, a
+ * stream that opens fine (200 OK) but then only ever sends heartbeats —
+ * e.g. the server accepted the connection but the turn it's meant to
+ * resume never produces another event (crashed mid-handler, or there is
+ * genuinely nothing new to replay) — would hang the `for await` loop
+ * forever: no exception, no timer, nothing for the attempt-counter/backoff
+ * logic below to ever see. Aborting at this ceiling turns that silent hang
+ * into a normal failed attempt, so it always counts toward
+ * `MAX_RECONNECT_ATTEMPTS` and the loop can still bail with a manual-retry
+ * banner — no path is allowed to spin forever. */
+const RECONNECT_ATTEMPT_TIMEOUT_MS = 20_000;
 const TOAST_LIFETIME_MS = 4000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function describeSendFailure(err: unknown): string {
+  if (err instanceof SseHttpError) return `Failed to send — the server returned HTTP ${err.status}.`;
+  return 'Failed to send — could not reach the server.';
 }
 
 export const useSessionStore = defineStore('session', {
@@ -130,7 +147,12 @@ export const useSessionStore = defineStore('session', {
         return;
       }
       chat.error = null;
+      chat.sendError = null;
       chat.running = true;
+      // Tracks whether the POST ever produced a single frame. This is the
+      // bit that decides which failure path below applies — see the two
+      // branches in `catch` for why it matters.
+      let receivedAnyFrame = false;
       try {
         const frames = await fetchSse(`/api/sessions/${id}/messages`, {
           method: 'POST',
@@ -138,9 +160,11 @@ export const useSessionStore = defineStore('session', {
           body: JSON.stringify({ text }),
         });
         for await (const frame of frames) {
+          receivedAnyFrame = true;
           applyEvent(chat, frame.data as AppEvent);
         }
         chat.running = false; // stream closed normally at this turn's memory.snapshot
+        chat.lastFailedText = null;
         void this.refreshSessionMeta();
       } catch (err) {
         if (err instanceof SseHttpError && err.status === 409) {
@@ -148,28 +172,70 @@ export const useSessionStore = defineStore('session', {
           this.pushToast('A turn is already running.');
           return;
         }
+        if (!receivedAnyFrame) {
+          // The POST never produced a single frame: either it never
+          // reached the server at all (offline/connection refused — a
+          // plain `fetch` rejection) or the server rejected it outright
+          // with a non-409 HTTP error (4xx/5xx). Either way, NO turn was
+          // ever started server-side for this attempt, so there is
+          // nothing for `GET .../stream` to resume — reconnecting here
+          // would open a stream against a session with no new events and
+          // just sit on heartbeats forever. Reset `running` and surface a
+          // distinct "failed to send" control that retries the SEND
+          // itself, not a stream reconnect.
+          chat.running = false;
+          chat.lastFailedText = text;
+          chat.sendError = describeSendFailure(err);
+          return;
+        }
+        // At least one frame arrived (we saw turn.started, at minimum) —
+        // a real turn WAS started server-side and the connection then
+        // dropped mid-stream. This IS resumable via the reconnect channel
+        // using the latest known seq (never 0 — Task 15's binding ruling).
         chat.error = 'Connection dropped — reconnecting…';
         await this.reconnect(id);
       }
     },
 
+    /** Resubmits the message that failed to ever reach the server
+     * (`chat.sendError`/`chat.lastFailedText`) — a plain retry of `send`,
+     * not a stream reconnect (see `send`'s catch branch for why those are
+     * different failure modes). */
+    async retrySend(): Promise<void> {
+      const id = this.activeId;
+      if (!id) return;
+      const chat = this.chats[id];
+      const text = chat?.lastFailedText;
+      if (!text) return;
+      chat.sendError = null;
+      await this.send(text);
+    },
+
     /** Reconnect channel (`GET .../stream?afterSeq`) — used both after an
-     * unexpected drop and when opening a session that was left mid-turn.
-     * Always passes the latest known `seq`, retries with backoff, and
-     * surfaces a banner (via `chat.error`) if every attempt fails. */
+     * unexpected MID-STREAM drop and when opening a session that was left
+     * mid-turn. Always passes the latest known `seq`, retries with capped
+     * exponential backoff, bounds EACH attempt with
+     * `RECONNECT_ATTEMPT_TIMEOUT_MS` (so a stream that opens but never
+     * yields anything can't hang the loop forever), and surfaces a banner
+     * (via `chat.error`) with a manual-retry control if every attempt
+     * fails — no path here can spin forever. */
     async reconnect(id: string): Promise<void> {
       const chat = this.ensureChat(id);
       if (chat.reconnecting) return;
       chat.reconnecting = true;
 
       for (let attempt = 1; attempt <= MAX_RECONNECT_ATTEMPTS; attempt += 1) {
+        const timeoutController = new AbortController();
+        const timeoutId = setTimeout(() => timeoutController.abort(), RECONNECT_ATTEMPT_TIMEOUT_MS);
         try {
           const frames = await fetchSse(`/api/sessions/${id}/stream?afterSeq=${chat.lastSeq}`, {
             method: 'GET',
+            signal: timeoutController.signal,
           });
           for await (const frame of frames) {
             applyEvent(chat, frame.data as AppEvent);
           }
+          clearTimeout(timeoutId);
           // Stream closed cleanly (server closes on the first memory.snapshot
           // it sees). If the turn is now finished, we're done; if the server
           // closed on some OTHER turn's snapshot while this one is still
@@ -181,7 +247,10 @@ export const useSessionStore = defineStore('session', {
             return;
           }
         } catch {
-          // fall through to backoff/retry below
+          clearTimeout(timeoutId);
+          // Covers both a real network failure AND the per-attempt timeout
+          // above firing on a silently-hung stream — both fall through to
+          // the same bounded backoff/retry below.
         }
         if (attempt < MAX_RECONNECT_ATTEMPTS) {
           chat.error = 'Connection dropped — reconnecting…';

@@ -97,6 +97,17 @@ describe('readSseStream', () => {
     expect(out).toEqual([{ seq: 2, type: 'turn.started' }]);
   });
 
+  it('skips a frame with an id:/event: pair but no data: line at all', async () => {
+    // Distinct from the heartbeat case (a `:`-prefixed comment-only block)
+    // and from the malformed-JSON case above — this is a well-formed block
+    // that simply never had a `data:` line, which real frames always do;
+    // still must not throw or desync the buffer for the frame after it.
+    const chunk =
+      'id: 1\nevent: ping\n\n' + 'id: 2\nevent: turn.started\ndata: {"seq":2,"t":"turn.started"}\n\n';
+    const out = await collect(streamFromChunks([chunk]));
+    expect(out).toEqual([{ seq: 2, type: 'turn.started' }]);
+  });
+
   it('stops yielding once the stream closes', async () => {
     const chunk = 'id: 1\nevent: turn.started\ndata: {"seq":1,"t":"turn.started"}\n\n';
     const stream = streamFromChunks([chunk]);

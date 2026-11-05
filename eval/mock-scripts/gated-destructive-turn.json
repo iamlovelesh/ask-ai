@@ -1,0 +1,44 @@
+[
+  {
+    "kind": "plan",
+    "plan": {
+      "goal": "Archive the contact Dante Lindqvist",
+      "steps": [
+        {
+          "id": "s1",
+          "action": "contacts.archive_contact",
+          "params": "{\"id\":\"con_2\"}",
+          "dependsOn": [],
+          "forEach": "",
+          "when": { "ref": "", "op": "eq", "value": null },
+          "expects": { "nonEmpty": null, "maxCount": null, "minCount": null }
+        }
+      ]
+    },
+    "queries": [],
+    "question": null,
+    "reason": null,
+    "text": null
+  },
+  {
+    "kind": "plan",
+    "plan": {
+      "goal": "Archive the contact Freya Volkov",
+      "steps": [
+        {
+          "id": "s1",
+          "action": "contacts.archive_contact",
+          "params": "{\"id\":\"con_3\"}",
+          "dependsOn": [],
+          "forEach": "",
+          "when": { "ref": "", "op": "eq", "value": null },
+          "expects": { "nonEmpty": null, "maxCount": null, "minCount": null }
+        }
+      ]
+    },
+    "queries": [],
+    "question": null,
+    "reason": null,
+    "text": null
+  }
+]
