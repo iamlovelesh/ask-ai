@@ -1174,9 +1174,74 @@ describe('validator — ISO date coercion for date-named numeric params (TRIAGE 
     if (!result.ok) expect(result.errors.some((e) => e.code === 'PARAM_SCHEMA')).toBe(true);
   });
 
-  it('leaves a plain epoch-ms integer unchanged (still valid)', () => {
+  // Fix 3 (task-quickwins, humantest round-3 "2024 regression"): a literal
+  // epoch-ms number in a date-shaped param (field name matches
+  // `DATE_FIELD_RE`, schema is `z.number()`) is now ALWAYS rejected — the
+  // model must never compute the arithmetic itself (coupon struct_398
+  // valid_until=2024-11-05, two Nov-2024 webinar start times: the model
+  // guessed an epoch from its training-era clock and got the year wrong).
+  // This supersedes the old "still valid" behavior the test name used to
+  // assert.
+  it('REJECTS a literal epoch-ms integer in a date-shaped param (Fix 3)', () => {
     const result = validate(planWithParam({ created_after: 1793577600000 }), new Set(), noHandles(), dateRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'DATE_EPOCH_LITERAL')).toBe(true);
+      const err = result.errors.find((e) => e.code === 'DATE_EPOCH_LITERAL');
+      expect(err?.message).toContain('ISO-8601');
+      expect(err?.message).toContain('@end_of_month');
+    }
+  });
+
+  it('a plain NON-date-named number param is unaffected by the epoch-literal guard', () => {
+    // `name` isn't date-shaped at all (it's a string param here, and the
+    // guard only ever fires for a ZodNumber schema + DATE_FIELD_RE name) —
+    // sanity-check the guard doesn't over-fire on an unrelated field.
+    const result = validate(planWithParam({ name: 'Jane' }), new Set(), noHandles(), dateRegistry);
     expect(result.ok).toBe(true);
+  });
+
+  it('a $ref in a date-shaped param is NEVER flagged as a literal epoch (Fix 3: refs always allowed)', () => {
+    // `$s0...` doesn't resolve to a real step in this single-step plan, so
+    // the result is still `ok:false` (an unrelated dangling-ref error) —
+    // the point of this test is narrower: DATE_EPOCH_LITERAL must NEVER be
+    // among the errors for a ref-shaped (non-literal-number) value, because
+    // `containsRef` short-circuits the literal-epoch check before it runs.
+    const result = validate(planWithParam({ created_after: '$s0.created_at' }), new Set(), noHandles(), dateRegistry);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'DATE_EPOCH_LITERAL')).toBe(false);
+    }
+  });
+
+  // Fix 3's relative `@…` expression grammar — resolved deterministically
+  // against the pinned "now" the validator is given, never computed by the
+  // model.
+  const NOW_MS = Date.UTC(2026, 10, 18, 15, 0, 0); // 2026-11-18T15:00:00Z (Wed)
+
+  it.each([
+    ['@now', NOW_MS],
+    ['@today', Date.UTC(2026, 10, 18)],
+    ['@start_of_week', Date.UTC(2026, 10, 16)], // Monday
+    ['@end_of_week', Date.UTC(2026, 10, 23) - 1], // just before next Monday
+    ['@start_of_month', Date.UTC(2026, 10, 1)],
+    ['@end_of_month', Date.UTC(2026, 11, 1) - 1],
+    ['@start_of_quarter', Date.UTC(2026, 9, 1)], // Oct 1 (Q4 starts Oct)
+    ['@end_of_quarter', Date.UTC(2027, 0, 1) - 1],
+    ['@start_of_year', Date.UTC(2026, 0, 1)],
+    ['@end_of_year', Date.UTC(2027, 0, 1) - 1],
+    ['@now-7d', NOW_MS - 7 * 24 * 60 * 60 * 1000],
+    ['@now+3h', NOW_MS + 3 * 60 * 60 * 1000],
+  ])('accepts the relative expression %s and resolves it against the pinned now', (expr, expected) => {
+    const result = validate(
+      planWithParam({ created_after: expr }),
+      new Set(),
+      noHandles(),
+      dateRegistry,
+      undefined,
+      NOW_MS,
+    );
+    expect(result.ok).toBe(true);
+    expect(coerceDateParamValue(expr, z.number(), NOW_MS)).toBe(expected);
   });
 
   it('coerceDateParamValue converts ISO→epoch-ms only for a number schema', () => {
@@ -1204,6 +1269,19 @@ describe('validator — ISO date coercion for date-named numeric params (TRIAGE 
     expect(out['valid_until']).toBe(Date.parse('2026-12-31')); // coerced despite no name match
     expect(out['snoozed_thru']).toBe(Date.parse('2027-01-15')); // coerced despite never-seen name
     expect(out['name']).toBe('2026-10-28'); // string schema → untouched (shape, not name, is the gate)
+  });
+
+  it('coerceDateParamValue/coerceDateParams also resolve a Fix-3 relative expression against an explicit nowMs', () => {
+    const nowMs = Date.UTC(2026, 10, 18, 15, 0, 0);
+    expect(coerceDateParamValue('@now', z.number(), nowMs)).toBe(nowMs);
+    expect(coerceDateParamValue('@start_of_month', z.number(), nowMs)).toBe(Date.UTC(2026, 10, 1));
+    // a non-matching string is left alone, same as before (no regression to
+    // the plain-ISO path).
+    expect(coerceDateParamValue('@bogus_expr', z.number(), nowMs)).toBe('@bogus_expr');
+
+    const schema = z.strictObject({ created_after: z.number() });
+    const out = coerceDateParams({ created_after: '@now-7d' }, schema, nowMs);
+    expect(out['created_after']).toBe(nowMs - 7 * 24 * 60 * 60 * 1000);
   });
 });
 

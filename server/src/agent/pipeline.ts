@@ -314,6 +314,12 @@ interface PlanningPhaseArgs {
   /** Engine-wave E4: id-provenance context (known ids + text the planner
    * saw) so a fabricated literal id is caught. */
   provenance: Provenance;
+  /** Fix 3: the pinned `VirtualClock`'s "now" (ms), threaded into every
+   * `validate()` call here so a relative `@…` date-expression param
+   * resolves against the turn's ACTUAL pinned time, never a fresh
+   * `VirtualClock`'s default (same value today, but this is the correct
+   * place to source it from). */
+  nowMs: number;
   emit: (e: Event) => void;
   /** Called exactly once, at the moment a VALID plan's `plan.ready` is
    * emitted — never for search/clarify/unsupported/respond (LLD metrics:
@@ -323,7 +329,7 @@ interface PlanningPhaseArgs {
 }
 
 async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcome> {
-  const { turnId, model, registry, handleRefs, budget, emit } = args;
+  const { turnId, model, registry, handleRefs, budget, emit, nowMs } = args;
   let ctx = args.baseCtx;
   let shortlist = args.shortlist;
   let searchRounds = 0;
@@ -440,7 +446,7 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
     // grammar issue that round 1's repair didn't clear.
     let refRepairEscalated = false;
     for (;;) {
-      const verdict = validate(candidateOutcome, shortlist, handleRefs, registry, args.provenance);
+      const verdict = validate(candidateOutcome, shortlist, handleRefs, registry, args.provenance, nowMs);
       if (verdict.ok) {
         const planHash = verdict.planHash as string;
         const ev: Event = {
@@ -836,6 +842,7 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
       handleRefs,
       budget,
       provenance,
+      nowMs: clock.now(),
       emit: record,
       markPlanReady: () => {
         if (ttfurAtMs === undefined) ttfurAtMs = performance.now();
@@ -916,7 +923,14 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
       // the patch.
       const keptSteps = ctx.plan.steps.filter((s) => Object.prototype.hasOwnProperty.call(ctx.completed, s.id));
       const candidatePlan: Plan = { goal: ctx.plan.goal, steps: [...keptSteps, ...(repairResult.patchedSteps as Step[])] };
-      const revalidated = validate({ kind: 'plan', plan: candidatePlan }, shortlist, handleRefs, registry, provenance);
+      const revalidated = validate(
+        { kind: 'plan', plan: candidatePlan },
+        shortlist,
+        handleRefs,
+        registry,
+        provenance,
+        clock.now(),
+      );
       if (!revalidated.ok) {
         return {
           decision: 'abort',

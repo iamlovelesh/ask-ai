@@ -869,9 +869,11 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
       }
       throw err;
     }
-    // TRIAGE fix #6: ISO-8601 date strings → epoch-ms for date-named numeric
-    // params, so the typed handler receives the ms number it expects.
-    params = coerceDateParams(params, action.inputSchema);
+    // TRIAGE fix #6 / Fix 3: ISO-8601 date strings, or a relative `@…`
+    // expression, → epoch-ms for date-named numeric params, so the typed
+    // handler receives the ms number it expects. `clock.now()` (the pinned
+    // VirtualClock, never wall-clock) resolves any `@…` expression.
+    params = coerceDateParams(params, action.inputSchema, clock.now());
     const drift = rctx.meta.drift;
     const affectedCount = isWrite ? Math.max(rctx.meta.maxArrayLen, 1) : rctx.meta.maxArrayLen;
 
@@ -971,7 +973,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
       const rctx = makeResolveCtx(items[i], true, true);
       try {
         resolvedParams.push(
-          coerceDateParams(resolveValue(step.params, rctx) as Record<string, unknown>, action.inputSchema),
+          coerceDateParams(resolveValue(step.params, rctx) as Record<string, unknown>, action.inputSchema, clock.now()),
         );
       } catch (err) {
         if (err instanceof RefResolutionError || err instanceof TruncatedInputError) {

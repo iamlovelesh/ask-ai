@@ -12,6 +12,8 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { Registry } from '../catalog/registry.js';
 import { ENTITY_MODEL } from '../entities/model.js';
+import { VirtualClock } from '../store/clock.js';
+import { DATE_FIELD_RE, resolveRelativeDate } from './date-expr.js';
 import {
   planOutcomeSchema,
   toWirePlan,
@@ -29,6 +31,7 @@ export type ValidationErrorCode =
   | 'PARAM_SCHEMA'
   | 'ID_NOT_RESOLVED'
   | 'ID_NOT_PROVENANCED'
+  | 'DATE_EPOCH_LITERAL'
   | 'PLAN_MINIMALITY'
   | 'FIELD_NOT_IN_SCHEMA'
   | 'REF_PATH_MISMATCH'
@@ -362,6 +365,14 @@ function unwrapSchema(schema: unknown): unknown {
 // and any never-seen date field slip through uncoerced. A plain number
 // ("5") or arbitrary label never matches `ISO_DATE_RE`, and a non-number
 // schema is left untouched, so this stays safe without enumerating names.
+//
+// Fix 3 (humantest round-3 "2024 regression") extends this with a SECOND
+// accepted string shape — `agent/date-expr.ts`'s relative `@now`/
+// `@start_of_month`/`@now-7d`/… grammar, resolved against `nowMs` (the
+// pinned `VirtualClock`'s "now", defaulted below so every pre-existing
+// 2-arg caller/test keeps working unchanged) — so the model never has to
+// compute a date itself; it writes either a literal ISO date or a relative
+// expression and this file does the arithmetic.
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
 
@@ -369,31 +380,44 @@ function isNumberSchema(schema: unknown): boolean {
   return unwrapSchema(schema) instanceof z.ZodNumber;
 }
 
-/** If `value` is an ISO-8601 date/datetime string and `schema` expects a
- * number, return its epoch-ms; otherwise return `value` unchanged. */
-export function coerceDateParamValue(value: unknown, schema: unknown): unknown {
-  if (typeof value !== 'string' || !ISO_DATE_RE.test(value)) return value;
+/** If `value` is an ISO-8601 date/datetime string, or a Fix-3 relative
+ * `@…` expression, and `schema` expects a number, return its epoch-ms;
+ * otherwise return `value` unchanged. `nowMs` defaults to the pinned
+ * `VirtualClock`'s "now" — never wall-clock — so relative expressions
+ * resolve deterministically. */
+export function coerceDateParamValue(
+  value: unknown,
+  schema: unknown,
+  nowMs: number = new VirtualClock().now(),
+): unknown {
+  if (typeof value !== 'string') return value;
   if (!isNumberSchema(schema)) return value;
-  const ms = Date.parse(value);
-  return Number.isNaN(ms) ? value : ms;
+  if (ISO_DATE_RE.test(value)) {
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? value : ms;
+  }
+  const relative = resolveRelativeDate(value, nowMs);
+  return relative !== null ? relative : value;
 }
 
 /** Immutably coerce every date-named, number-typed param whose literal value
- * is an ISO-8601 string to epoch-ms. Returns the SAME object reference when
- * nothing changed. */
+ * is an ISO-8601 string OR a Fix-3 relative `@…` expression to epoch-ms.
+ * Returns the SAME object reference when nothing changed. */
 export function coerceDateParams(
   params: Record<string, unknown>,
   inputSchema: unknown,
+  nowMs: number = new VirtualClock().now(),
 ): Record<string, unknown> {
   if (!isObjectShape(inputSchema)) return params;
   const shape = inputSchema.shape;
   let changed = false;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(params)) {
-    // E3: coerce by SCHEMA shape (number param + ISO string value), for ANY
-    // param name — `coerceDateParamValue` is a no-op unless both hold.
+    // E3: coerce by SCHEMA shape (number param + ISO/relative-expr string
+    // value), for ANY param name — `coerceDateParamValue` is a no-op
+    // unless both hold.
     if (k in shape) {
-      const coerced = coerceDateParamValue(v, shape[k]);
+      const coerced = coerceDateParamValue(v, shape[k], nowMs);
       out[k] = coerced;
       if (coerced !== v) changed = true;
     } else {
@@ -1011,6 +1035,12 @@ export function computePlanHash(plan: Plan): string {
  * callers/tests have a documented place to pass it, and so a future
  * "slug outside shortlist" WARNING (not an error) has somewhere to read it
  * from without a signature change.
+ *
+ * `nowMs` (Fix 3) is the pinned `VirtualClock`'s "now", used ONLY to
+ * resolve a relative `@…` date expression in a literal param to epoch-ms
+ * for the per-field `safeParse` check below — it defaults to a fresh
+ * `VirtualClock().now()` so every pre-existing 4/5-arg caller/test keeps
+ * working unchanged.
  */
 export function validate(
   outcome: PlanOutcome,
@@ -1018,6 +1048,7 @@ export function validate(
   handles: readonly HandleRef[],
   registry: Registry,
   provenance?: Provenance,
+  nowMs: number = new VirtualClock().now(),
 ): Valid | Invalid {
   void shortlist; // see doc comment above
 
@@ -1208,10 +1239,28 @@ export function validate(
           });
           continue;
         }
-        // A number-typed param accepts an ISO-8601 string (coerced to
-        // epoch-ms at execution time, E3) — validate the coerced form so a
-        // well-formed date string on ANY number field isn't rejected.
-        const valueToCheck = coerceDateParamValue(value, shape[key]);
+        // Fix 3 (humantest round-3 "2024 regression"): a LITERAL raw number
+        // in a date-shaped param (same field-name + ZodNumber classification
+        // `agent/retrieval.ts`'s card renderer uses to label it
+        // "date(ISO|@expr)") is ALWAYS rejected — the model must never
+        // compute an epoch-ms literal itself (it gets the year wrong from
+        // its training-era clock; coupon struct_398 valid_until=2024-11-05,
+        // two Nov-2024 webinar start times). A $ref is excluded above
+        // (`containsRef`), so only a genuine model-authored literal reaches
+        // here.
+        if (typeof value === 'number' && DATE_FIELD_RE.test(key) && isNumberSchema(shape[key])) {
+          errors.push({
+            code: 'DATE_EPOCH_LITERAL',
+            stepId: step.id,
+            message: `Step '${step.id}': param '${key}' for '${step.action}' is the literal epoch-ms number ${value}. Write dates as ISO-8601 ('2026-11-30') or a relative expression ('@end_of_month'); never epoch numbers.`,
+          });
+          continue;
+        }
+        // A number-typed param accepts an ISO-8601 string, or a relative
+        // `@…` expression (Fix 3), coerced to epoch-ms at execution time
+        // (E3) — validate the coerced form so a well-formed date string on
+        // ANY number field isn't rejected.
+        const valueToCheck = coerceDateParamValue(value, shape[key], nowMs);
         const fieldResult = shape[key]?.safeParse(valueToCheck);
         if (fieldResult && !fieldResult.success) {
           errors.push({

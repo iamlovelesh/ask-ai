@@ -16,6 +16,7 @@ import MiniSearch from 'minisearch';
 import { z } from 'zod';
 import { registry } from '../catalog/registry.js';
 import type { ActionDef } from '../catalog/types.js';
+import { DATE_FIELD_RE } from './date-expr.js';
 
 export interface SessionCtx {
   /** Action slugs used earlier in this session — direct reuse signal. */
@@ -207,7 +208,6 @@ export function diversify<T extends { module: string }>(sorted: readonly T[], ca
 // schemas — no hand-written card content — so a module added later is
 // described the same way without touching this file.
 
-const DATE_FIELD_RE = /_(at|date|until|from|after|before)$/;
 const MAX_OUTPUT_FIELDS = 10;
 
 /** Strip optional/nullable/default wrappers (bounded); report whether any
@@ -236,17 +236,29 @@ function arrayElementSchema(schema: unknown): unknown | undefined {
 
 /** Compact, generic type label for a param/field schema. `fieldName` (when
  * given) upgrades a bare number following the catalog's timestamp-suffix
- * convention to `date-ms`, the single most useful hint for the planner. */
-function compactType(schema: unknown, fieldName?: string): string {
+ * convention to a date label. `isParam` picks WHICH label: INPUT params
+ * (`isParam:true`, from `inputSignature`) render `date(ISO|@expr)` — Fix 3
+ * (humantest round-3 "2024 regression"): labeling an input date param
+ * `date-ms` told the model it could type a raw epoch number, which it then
+ * computed from its training-era clock and got the year wrong. OUTPUT row
+ * fields (`isParam:false`, the default, from `outputPreview`) keep
+ * `date-ms` — they describe DATA the action returns, never a value the
+ * model has to author itself, so the epoch label is accurate there. */
+function compactType(schema: unknown, fieldName?: string, isParam = false): string {
   const { schema: s } = unwrapType(schema);
   if (s instanceof z.ZodString) return 'str';
-  if (s instanceof z.ZodNumber) return fieldName !== undefined && DATE_FIELD_RE.test(fieldName) ? 'date-ms' : 'num';
+  if (s instanceof z.ZodNumber) {
+    if (fieldName !== undefined && DATE_FIELD_RE.test(fieldName)) {
+      return isParam ? 'date(ISO|@expr)' : 'date-ms';
+    }
+    return 'num';
+  }
   if (s instanceof z.ZodBoolean) return 'bool';
   if (s instanceof z.ZodEnum) {
     const opts = (s as { options?: readonly string[] }).options ?? [];
     return opts.length > 0 ? `(${opts.join('|')})` : 'enum';
   }
-  if (s instanceof z.ZodArray) return `${compactType(arrayElementSchema(s))}[]`;
+  if (s instanceof z.ZodArray) return `${compactType(arrayElementSchema(s), undefined, isParam)}[]`;
   if (s instanceof z.ZodObject) return 'obj';
   return 'any';
 }
@@ -321,7 +333,7 @@ export function inputSignature(inputSchema: unknown): string {
   if (!shape) return '';
   const parts = Object.entries(shape).map(([k, v]) => {
     const { optional } = unwrapType(v);
-    return `${k}${optional ? '?' : ''}:${compactType(v, k)}`;
+    return `${k}${optional ? '?' : ''}:${compactType(v, k, true)}`;
   });
   return parts.length > 0 ? `[${parts.join(', ')}]` : '';
 }

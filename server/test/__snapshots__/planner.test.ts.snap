@@ -126,9 +126,10 @@ core.distribute {items: Ref, across: Ref, strategy: "round_robin"}
                 -> {items: Array<{item, assignee}>}        // shape is normative
 
 Guidance:
-- For date/time parameters, ALWAYS write ISO-8601 strings (e.g. "2026-10-28")
-  computed from the "now" given in context. NEVER write epoch-millisecond
-  numbers yourself.
+- For date/time parameters, write an ISO-8601 string (e.g. "2026-10-28") or
+  a relative expression (@now, @today, @start_of_week, @end_of_month,
+  @start_of_quarter, @end_of_year, @now-7d) — NEVER a literal epoch-ms
+  number; you will always get the year wrong computing one yourself.
 - Only use actions whose module/entities match the record type you are
   acting on. To act on CONVERSATIONS, use conversations/tasks actions (e.g.
   queue follow-up with tasks.create_task); do NOT pick a support_tickets.*
