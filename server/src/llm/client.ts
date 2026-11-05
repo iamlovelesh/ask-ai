@@ -88,9 +88,17 @@ export const costMeter = {
   },
 };
 
-function budgetUsd(): number {
+export function budgetUsd(): number {
   const raw = Number(process.env['EVAL_BUDGET_USD'] ?? 25);
   return Number.isFinite(raw) ? raw : 25;
+}
+
+/** The ONLY other sanctioned writer of the process-wide cost meter besides
+ * `llmCall` below: `llm/agents-runtime.ts`'s `MeteredModel`, which fronts
+ * every model call the @openai/agents loop makes and must account into the
+ * SAME hard $ ceiling. Never call from anywhere else. */
+export function meterLlmCost(usd: number): number {
+  return addCost(usd);
 }
 
 // --- test seam: inject a fake fetch so unit tests never hit the network ----

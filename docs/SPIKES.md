@@ -629,3 +629,28 @@ zero live calls — pure local code + test changes). Well under the $0.05 cost c
 Step 3, skipped per instructions — see its own file for the full targets table, TTFUR
 definitions, and the budget/measurement conditions referenced in VERDICT (b) above). No
 changes made to it by this task.
+
+---
+
+## Spike: @openai/agents 0.21.0 feasibility (2026-11-06, `server/spike-agents-sdk.ts`)
+
+Run offline: `npx tsx spike-agents-sdk.ts` · live: `npx tsx spike-agents-sdk.ts --live` (needs OPENROUTER_API_KEY). 10/10 PASS.
+
+| # | Check | Result |
+|---|---|---|
+| A1 | `tool()` strict zod-4 conversion over all 508 real catalog schemas | 484/508 ok; **24 fail — all `z.record(...)` params** (strict Structured Outputs forbids open `additionalProperties`); 7 of the 24 are `core.*` plan-DSL helpers not exposed in the loop anyway |
+| A2 | Fallback for the 24: `strict:false` + raw JSON Schema | Works — **but `z.toJSONSchema()` output carries a hidden `~standard` marker** that makes the SDK misclassify it as a Standard Schema and demand strict mode; strip with `JSON.parse(JSON.stringify(schema))`. Args then arrive `unknown` → re-validate with the original zod schema in `execute` (we do that anyway for the date rail) |
+| B1 | Offline loop via mock fetch (OpenRouter chat-completions wire shape): tool call → execute → result fed back → final text | 2 model calls, final text correct |
+| B2 | SDK-validated args reach `execute` typed | exact |
+| B3 | Tracing egress: with `setTracingDisabled(true)` + `Runner({tracingDisabled:true})`, only openrouter.ai contacted | confirmed via fetch-host capture |
+| B4 | Usage capture (`result.state.usage`) from OpenRouter responses | req/in/out exact |
+| B5 | `maxTurns` + `errorHandlers.maxTurns` → honest final output, no extra model call | **`errorHandlers` and `signal` are RUN options, not Runner-constructor options** |
+| B6 | Wall-clock deadline via `signal: AbortSignal.timeout(ms)` run option | aborts cleanly ("Request was aborted") |
+| B7 | `strict:false` fallback tool end-to-end in the loop | args pass through for manual validation |
+| C | **Live**: haiku-4.5 via OpenRouter, 2-step tool round-trip | Model emitted `created_after:"2026-11-04T00:00:00Z"` (correct ISO from injected "today", no epoch math) and answered "42 new leads" from result `total` while seeing 1 sample row — the two worst round-3 failure classes handled correctly. usage req=2 in=1075 out=116 |
+
+Integration gotchas locked for the implementation plan:
+1. Per-test/per-runner isolation: use explicit `new Runner({ modelProvider: new OpenAIProvider({ openAIClient: new OpenAI({apiKey, baseURL, fetch}), useResponses: false }) })` — `setDefaultOpenAIClient` is sticky/global and poisons later tests.
+2. Blocking await inside tool `execute()` (our pre-execution confirm gate) works; no default tool timeout interferes.
+3. Tool-name charset: slugs need `.` → `__`.
+4. Schema fallback helper needed: `toolParameters(action)` → strict zod when convertible, else stripped JSON schema + `strict:false`; ALWAYS re-validate coerced params against the original zod schema in `execute`.

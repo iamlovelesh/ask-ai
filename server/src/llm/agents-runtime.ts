@@ -1,0 +1,154 @@
+/**
+ * @openai/agents runtime glue (plan rev 3, Task 4).
+ *
+ * Everything the tool loop needs from the SDK, wired to THIS codebase's
+ * invariants (spike-verified, docs/SPIKES.md 2026-11-06):
+ *  - OpenRouter via `OpenAIProvider({ openAIClient, useResponses: false })`
+ *    — explicit per-runner provider, never the sticky global client setter;
+ *  - `setTracingDisabled(true)` at module init — the SDK's default exporter
+ *    would otherwise ship run data to OpenAI's trace backend;
+ *  - `MeteredModel` decorator — every model call pays into `llm/client.ts`'s
+ *    process-wide cost meter (same hard EVAL_BUDGET_USD ceiling as
+ *    `llmCall`) and emits one `kind:'llm'` span, with the owning turnId
+ *    carried via AsyncLocalStorage so concurrent sessions never cross wires;
+ *  - budgets: `maxTurns` with an honest no-extra-model-call fallback
+ *    (`errorHandlers.maxTurns` is a RUN option) and a wall-clock deadline
+ *    via `signal: AbortSignal.timeout(...)` mapped to `LoopDeadlineError`.
+ */
+
+import { AsyncLocalStorage } from 'node:async_hooks';
+import OpenAI from 'openai';
+import {
+  Agent,
+  OpenAIProvider,
+  Runner,
+  setTracingDisabled,
+  type Model,
+  type ModelProvider,
+  type ModelRequest,
+  type ModelResponse,
+  type RunResult,
+  type RunState,
+  type StreamEvent,
+} from '@openai/agents';
+import { BudgetExceededError, budgetUsd, costMeter, meterLlmCost } from './client.js';
+import { priceFor } from './prices.js';
+import { getDefaultSpans } from '../events/trace.js';
+
+setTracingDisabled(true);
+
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+
+/** The turnId whose loop is currently awaiting a model call, per async
+ * execution context — lets one process run turns for several sessions
+ * concurrently without mis-attributing spans. */
+const turnContext = new AsyncLocalStorage<string>();
+
+export class LoopDeadlineError extends Error {
+  constructor(deadlineMs: number) {
+    super(`loop wall-clock deadline of ${deadlineMs}ms exceeded`);
+    this.name = 'LoopDeadlineError';
+  }
+}
+
+class MeteredModel implements Model {
+  constructor(
+    private readonly inner: Model,
+    private readonly modelName: string,
+  ) {}
+
+  async getResponse(request: ModelRequest): Promise<ModelResponse> {
+    const limit = budgetUsd();
+    if (costMeter.total() >= limit) {
+      throw new BudgetExceededError(costMeter.total(), limit);
+    }
+    const spans = getDefaultSpans();
+    const turnId = turnContext.getStore() ?? 'unknown';
+    const handle = spans.start({ turnId, kind: 'llm', name: 'loop' });
+    const startedAt = performance.now();
+    try {
+      const response = await this.inner.getResponse(request);
+      const tokensIn = response.usage.inputTokens;
+      const tokensOut = response.usage.outputTokens;
+      const costUsd = this.price(tokensIn, tokensOut);
+      meterLlmCost(costUsd);
+      spans.end(handle, { tokensIn, tokensOut, costUsd, meta: { ms: performance.now() - startedAt } });
+      return response;
+    } catch (err) {
+      spans.end(handle, { meta: { error: err instanceof Error ? err.message : String(err) } });
+      throw err;
+    }
+  }
+
+  getStreamedResponse(request: ModelRequest): AsyncIterable<StreamEvent> {
+    // The loop agent never streams model output today (answer chunking is
+    // done by the caller); delegate unmetered rather than guess at partial
+    // usage shapes.
+    return this.inner.getStreamedResponse(request);
+  }
+
+  private price(tokensIn: number, tokensOut: number): number {
+    const price = priceFor(this.modelName);
+    const cost = (tokensIn / 1_000_000) * price.inPerM + (tokensOut / 1_000_000) * price.outPerM;
+    return Number.isFinite(cost) ? cost : 0;
+  }
+}
+
+class MeteredProvider implements ModelProvider {
+  constructor(private readonly inner: OpenAIProvider) {}
+
+  async getModel(modelName?: string): Promise<Model> {
+    const model = await this.inner.getModel(modelName);
+    return new MeteredModel(model, modelName ?? 'unknown');
+  }
+}
+
+export interface CreateLoopRunnerOptions {
+  testFetch?: typeof fetch;
+}
+
+/** A Runner wired to OpenRouter with metering and tracing-off. One runner
+ * can serve many runLoopOnce calls; per-call state (turnId, deadline)
+ * travels with the call, not the runner. */
+export function createLoopRunner(opts: CreateLoopRunnerOptions = {}): Runner {
+  const client = new OpenAI({
+    apiKey: process.env['OPENROUTER_API_KEY'] || 'test-key',
+    baseURL: OPENROUTER_BASE_URL,
+    ...(opts.testFetch !== undefined ? { fetch: opts.testFetch } : {}),
+  });
+  const provider = new OpenAIProvider({ openAIClient: client, useResponses: false });
+  return new Runner({ modelProvider: new MeteredProvider(provider), tracingDisabled: true });
+}
+
+export interface RunLoopOnceOptions {
+  runner: Runner;
+  agent: Agent;
+  input: string | RunState<undefined, Agent>;
+  maxTurns: number;
+  deadlineMs: number;
+  turnId: string;
+}
+
+const MAX_TURNS_FALLBACK =
+  'I could not finish within my step limit. Here is where I got to before stopping — please narrow the request or try again.';
+
+/** One loop run with budgets applied. Throws `LoopDeadlineError` on
+ * wall-clock breach, `BudgetExceededError` on $ cap; maxTurns exhaustion
+ * returns an honest fallback final output WITHOUT another model call. */
+export async function runLoopOnce(opts: RunLoopOnceOptions): Promise<RunResult<undefined, Agent>> {
+  const signal = AbortSignal.timeout(opts.deadlineMs);
+  try {
+    return await turnContext.run(opts.turnId, () =>
+      opts.runner.run(opts.agent, opts.input as string, {
+        maxTurns: opts.maxTurns,
+        signal,
+        errorHandlers: {
+          maxTurns: () => ({ finalOutput: MAX_TURNS_FALLBACK }),
+        },
+      }),
+    );
+  } catch (err) {
+    if (signal.aborted) throw new LoopDeadlineError(opts.deadlineMs);
+    throw err;
+  }
+}
