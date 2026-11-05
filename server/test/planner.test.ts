@@ -87,6 +87,23 @@ describe('buildPlannerPrompt — USER layout (LLD §5.2)', () => {
     expect(prompt).not.toContain('<playbook>');
   });
 
+  it('renders the current_user context line when supplied (E9)', () => {
+    const { prompt } = buildPlannerPrompt({ ...baseCtx(), currentUser: 'user_1 (Alice Admin)' });
+    const contextBlock = prompt.slice(prompt.indexOf('<context>'), prompt.indexOf('</context>'));
+    expect(contextBlock).toContain('current_user: user_1 (Alice Admin)');
+  });
+});
+
+describe('buildPlannerPrompt — E9 behavioral rules in SYSTEM', () => {
+  it('carries the multi-intent, identity, search-before-unsupported, substitution, and plain-reason rules', () => {
+    const { system } = buildPlannerPrompt(baseCtx());
+    expect(system).toContain('current_user');
+    expect(system).toContain('sub-question');
+    expect(system.toLowerCase()).toContain('search round first');
+    expect(system.toLowerCase()).toContain('substitute');
+    expect(system).toContain('end-user');
+  });
+
   it('places the WorkingState block at the end of <context> (LLD §2.5 Writer rule)', () => {
     const { prompt } = buildPlannerPrompt(baseCtx());
     const contextBlock = prompt.slice(prompt.indexOf('<context>'), prompt.indexOf('</context>'));

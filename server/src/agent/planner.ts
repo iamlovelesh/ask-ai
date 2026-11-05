@@ -59,7 +59,12 @@ a hard failure). If the immediately preceding assistant turn was a
 clarification and the user has replied, treat the reply as the answer and
 proceed to a plan — never re-ask the same or a reworded question. Choose
 "unsupported" when the request cannot be satisfied by any combination of
-available actions, with a short honest "reason".
+available actions, with a short honest "reason". Before "unsupported", spend
+any remaining search round first — never call a capability absent without
+searching. Write every "unsupported"/refusal "reason" in plain end-user
+language: no step ids, ref syntax, slugs, or "candidate actions". Never
+silently substitute an unavailable channel/capability — refuse or clarify,
+naming what IS available.
 Choose "respond" ONLY for requests that need no action at all (small talk,
 clarifying statements the user already answered, or a direct answer you
 already know from the working state). NEVER use "respond" to say what you
@@ -152,6 +157,10 @@ Guidance:
   entity, and a conversation id cannot be passed to one. When no action in
   the acting-on module does what's asked, prefer core.* composition or
   tasks.create_task over a plausible-looking action from an unrelated module.
+- Address EVERY sub-question asked; if you can't do one, say so ("I'll get to
+  X after Y") — never silently drop a part.
+- "me"/"my"/"I" refer to current_user (shown in <context>) — resolve to that
+  id, never ask who the user is.
 - Prefer the fewest steps that correctly satisfy the request — include ONLY
   steps the request actually requires. A pure information question (who/what/
   which/when/how many/"show"/"list"/"find"/"who owns") is answered by READS
@@ -186,6 +195,10 @@ export interface PlannerPromptCtx {
   rawRequest: string;
   /** Virtual-clock "now", ISO-8601 — NEVER wall-clock (LLD §3.2). */
   nowIso: string;
+  /** Engine-wave E9: the acting user, resolved to `"<id> (<name>)"` at
+   * context-build time (env DEMO_USER_ID, default user_1). "me"/"my"/"I" in
+   * the request resolve to this. Optional for pre-E9 callers/tests. */
+  currentUser?: string;
 }
 
 function buildUserPrompt(ctx: PlannerPromptCtx): string {
@@ -195,6 +208,7 @@ function buildUserPrompt(ctx: PlannerPromptCtx): string {
     [
       '<context>',
       `now: ${ctx.nowIso}`,
+      ...(ctx.currentUser !== undefined ? [`current_user: ${ctx.currentUser}`] : []),
       '',
       ctx.maskedTurns,
       '',

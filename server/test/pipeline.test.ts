@@ -654,3 +654,19 @@ describe('runTurn — E8 parse-failure retry + sticky repair escalation', () => 
     expect(cap.models[3]).toBe('anthropic/claude-sonnet-4.5'); // round 3 STAYS escalated (sticky)
   });
 });
+
+describe('runTurn — E9 current_user context', () => {
+  it('injects a current_user line into the planner prompt (default user_1)', async () => {
+    const queue = queueMockLlm([{ kind: 'respond', text: 'hi' }]);
+    const prompts: string[] = [];
+    const wrapped = (async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const bodyText = typeof init?.body === 'string' ? init.body : undefined;
+      if (bodyText) prompts.push(bodyText);
+      return queue.fetch(url, init);
+    }) as typeof fetch;
+    __setTestFetch(wrapped);
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], coreOps);
+    await drive(registry, 'what are my open leads');
+    expect(prompts.some((p) => p.includes('current_user: user_1'))).toBe(true);
+  });
+});

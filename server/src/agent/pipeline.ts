@@ -735,6 +735,19 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
     const shortlist = new Set(retrieval.cards.map((c) => c.slug));
     const handleRefs: HandleRef[] = priorState.handles.map((h) => ({ ref: h.ref, entityType: h.entityType }));
 
+    // Engine-wave E9: the acting user, resolved to "<id> (<name>)" so the
+    // planner can map me/my/I. DEMO_USER_ID (default user_1); name looked up
+    // from the CRM at context-build time (best-effort — id alone if absent).
+    const demoUserId = process.env['DEMO_USER_ID'] || 'user_1';
+    let currentUser = demoUserId;
+    try {
+      const nameRow = crm.tx((db) => db.get('SELECT name FROM users WHERE id = ?', [demoUserId]));
+      const name = nameRow?.['name'];
+      if (typeof name === 'string' && name.length > 0) currentUser = `${demoUserId} (${name})`;
+    } catch {
+      // no users table / lookup failure → fall back to the bare id
+    }
+
     const baseCtx: PlannerPromptCtx = {
       workingStateBlock: renderWorkingState(priorState),
       maskedTurns: maskTurns(transcripts),
@@ -742,6 +755,7 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
       rewrittenRequest: rewrittenQuery,
       rawRequest: userText,
       nowIso: clock.iso(),
+      currentUser,
     };
     if (matched) baseCtx.playbookBody = matched.body;
 
