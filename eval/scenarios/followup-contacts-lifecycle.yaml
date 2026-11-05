@@ -1,0 +1,41 @@
+# Task 17 Batch C — category: followup, module: contacts.
+#
+# Turn 1 establishes a result set (contacts.search_contacts). Turn 2
+# resolves "their" against that SAME filtered subset and bulk-updates
+# lifecycle stage over it. `contacts.update_contact_details` is `risk:
+# 'write'` (m01-contacts.ts) — not in the always-gate set — but
+# `shouldGate` (executor.ts) ALSO gates when `affectedCount > 50`; this
+# filtered subset (99 candidates) is past that, so `behavior.confirmation:
+# true` holds on the affected-count branch of the rule.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM contacts WHERE city='Denver' AND
+#     lifecycle_stage='customer'; -> 99 (turn-1 result set size)
+#   SELECT COUNT(*) FROM contacts WHERE city='Denver' AND
+#     lifecycle_stage='advocate'; -> 0 (before turn 2) -> floor of 1
+#     asserted after (>= 1 newly promoted contact from that subset).
+
+id: followup-contacts-lifecycle
+category: followup
+profile: standard
+turns:
+  - user: "Find our customers based in Denver."
+    expect:
+      planActions:
+        mustInclude: [contacts.search_contacts]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM contacts WHERE city='Denver' AND lifecycle_stage='customer'"
+          equals: 99
+      behavior:
+        confirmation: false
+  - user: "Update their lifecycle stage to advocate — they've been referring people to us."
+    expect:
+      planActions:
+        mustInclude: [contacts.update_contact_details]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM contacts WHERE city='Denver' AND lifecycle_stage='advocate'"
+          gte: 1
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]

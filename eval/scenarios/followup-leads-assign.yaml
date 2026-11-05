@@ -1,0 +1,42 @@
+# Task 17 Batch C — category: followup, module: leads.
+#
+# Turn 1 establishes a result set (leads.search_leads). Turn 2 resolves
+# "all of those" against that SAME filtered subset and bulk-reassigns
+# ownership over it. `leads.assign_lead_owner` is `risk: 'write'`
+# (m03-leads.ts) — not in the always-gate set — but `shouldGate`
+# (executor.ts) ALSO gates when `affectedCount > 50`; this filtered
+# subset (652 candidates) is way past that, so `behavior.confirmation:
+# true` holds on the affected-count branch of the rule.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM leads WHERE source='referral'; -> 652 (turn-1
+#     result set size)
+#   SELECT COUNT(*) FROM leads WHERE source='referral' AND
+#     owner_id='user_8'; -> 41 (before, already-owned baseline) -> floor
+#     of 42 asserted after (>= 1 newly reassigned lead from that subset,
+#     on top of the pre-existing 41).
+
+id: followup-leads-assign
+category: followup
+profile: standard
+turns:
+  - user: "Find leads that came in through referrals."
+    expect:
+      planActions:
+        mustInclude: [leads.search_leads]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM leads WHERE source='referral'"
+          equals: 652
+      behavior:
+        confirmation: false
+  - user: "Assign all of those to user_8."
+    expect:
+      planActions:
+        mustInclude: [leads.assign_lead_owner]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM leads WHERE source='referral' AND owner_id='user_8'"
+          gte: 42
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]

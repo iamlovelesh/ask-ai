@@ -1,0 +1,42 @@
+# Task 17 Batch C — category: followup, module: tasks.
+#
+# Turn 1 establishes a result set (tasks.search_tasks). Turn 2 resolves
+# "all of those" against that SAME filtered subset and bulk-pushes the
+# due date out — "tomorrow" resolves to the pinned clock's next day
+# (2026-11-05, one of the two dates `eval/lint.ts`'s date-hygiene check
+# allows). `tasks.set_task_due_date` is `risk: 'write'` and this subset
+# (8 candidates) is under the `affectedCount > 50` gate threshold, so no
+# confirmation is expected.
+#
+# Derivation (template copy, VIRTUAL_NOW = 2026-11-04T10:00:00Z):
+#   SELECT COUNT(*) FROM tasks WHERE owner_id='user_3' AND
+#     due_date<1793786400000 AND status!='completed'; -> 8 (turn-1
+#     result set size, overdue-and-open)
+#   SELECT COUNT(*) FROM tasks WHERE owner_id='user_3' AND
+#     due_date=1793872800000 (2026-11-05T00:00:00Z); -> 0 (before turn 2)
+#     -> floor of 1 asserted after.
+
+id: followup-tasks-due-tomorrow
+category: followup
+profile: standard
+turns:
+  - user: "List user_3's overdue open tasks."
+    expect:
+      planActions:
+        mustInclude: [tasks.search_tasks]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM tasks WHERE owner_id='user_3' AND due_date<1793786400000 AND status!='completed'"
+          equals: 8
+      behavior:
+        confirmation: false
+  - user: "Push all of those out to tomorrow."
+    expect:
+      planActions:
+        mustInclude: [tasks.set_task_due_date]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM tasks WHERE owner_id='user_3' AND due_date=1793872800000"
+          gte: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

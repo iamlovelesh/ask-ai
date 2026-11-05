@@ -1,0 +1,45 @@
+# Task 17 Batch C — category: followup, module: leads.
+#
+# Turn 1 establishes a result set (leads.search_leads). Turn 2 resolves
+# "all of those" against that SAME filtered subset (brief's "only the
+# ones from X" anaphora pattern, here the filter is status rather than
+# source) and fires a bulk disqualify over it.
+#
+# `leads.disqualify_lead_with_reason` is `risk: 'write'` (m03-leads.ts),
+# not in the always-gate set — but `shouldGate` (executor.ts) ALSO gates
+# when `affectedCount > 50`, and this filtered subset (1252 candidates)
+# is way past that, so `behavior.confirmation: true` holds here on the
+# affected-count branch of the rule, independent of risk tier.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM leads WHERE status='contacted'; -> 1252
+#     (turn-1 result set size — open-ended, same "large indirect cohort"
+#     shape as multistep-leads-001)
+#   SELECT COUNT(*) FROM leads WHERE status='disqualified'; -> 1203
+#     (before turn 2) -> floor of 1204 asserted after (>= 1 newly
+#     disqualified lead from that filtered subset).
+
+id: followup-leads-disqualify
+category: followup
+profile: standard
+turns:
+  - user: "Find leads that are marked as contacted."
+    expect:
+      planActions:
+        mustInclude: [leads.search_leads]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM leads WHERE status='contacted'"
+          equals: 1252
+      behavior:
+        confirmation: false
+  - user: "They've gone quiet — go ahead and disqualify all of those as unresponsive."
+    expect:
+      planActions:
+        mustInclude: [leads.disqualify_lead_with_reason]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM leads WHERE status='disqualified'"
+          gte: 1204
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]
