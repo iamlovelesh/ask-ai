@@ -9,5 +9,6 @@ import '@fontsource/ibm-plex-mono/500.css'
 import '@fontsource/ibm-plex-mono/600.css'
 import './style.css'
 import App from './App.vue'
+import { createAppRouter } from './router.js'
 
-createApp(App).use(createPinia()).mount('#app')
+createApp(App).use(createPinia()).use(createAppRouter()).mount('#app')

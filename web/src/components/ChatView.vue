@@ -219,6 +219,19 @@ async function onRetryConnection(): Promise<void> {
 async function onRetrySend(): Promise<void> {
   await store.retrySend();
 }
+
+/** Copies a direct link to this session (`/s/:id`) to the clipboard so it
+ * can be shared or reopened. Best-effort — a clipboard rejection still
+ * surfaces a toast rather than throwing. */
+async function onCopyLink(): Promise<void> {
+  const url = `${window.location.origin}/s/${props.sessionId}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    store.pushToast('Link copied');
+  } catch {
+    store.pushToast('Could not copy the link.');
+  }
+}
 </script>
 
 <template>
@@ -233,6 +246,9 @@ async function onRetrySend(): Promise<void> {
       </button>
       <div class="transcript-title">{{ sessionTitle }}</div>
       <span v-if="sessionLedger" class="cost-badge session-ledger">{{ sessionLedger }}</span>
+      <button class="ghost-btn" title="Copy a link to this session" @click="onCopyLink">
+        Copy link
+      </button>
       <button
         class="ghost-btn"
         :class="{ 'is-on': inspector?.tab === 'audit' }"

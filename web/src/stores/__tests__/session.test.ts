@@ -108,6 +108,60 @@ describe('useSessionStore', () => {
     expect(resolvedBody).toEqual({ approved: true });
   });
 
+  it('openSession() flags sessionNotFound on a 404 — a distinct state from serverUnreachable', async () => {
+    const store = useSessionStore();
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        if (String(url).includes('/events')) return jsonResponse(404, { error: 'session_not_found' });
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    await store.openSession('sess_missing');
+
+    expect(store.sessionNotFound).toBe(true);
+    expect(store.serverUnreachable).toBe(false); // a 404 is "no such session", not "can't reach server"
+    expect(store.activeId).toBe('sess_missing');
+  });
+
+  it('openSession() clears a stale sessionNotFound when a real session opens', async () => {
+    const store = useSessionStore();
+    store.sessionNotFound = true;
+
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, [])));
+
+    await store.openSession('sess_ok');
+
+    expect(store.sessionNotFound).toBe(false);
+    expect(store.chats['sess_ok'].loaded).toBe(true);
+  });
+
+  it('newSession() returns the new session id so the caller can navigate to /s/:id', async () => {
+    const store = useSessionStore();
+
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(201, { id: 'sess_new' })));
+
+    const id = await store.newSession();
+
+    expect(id).toBe('sess_new');
+    expect(store.activeId).toBe('sess_new');
+    expect(store.chats['sess_new'].loaded).toBe(true);
+    expect(store.sessions[0]?.id).toBe('sess_new');
+  });
+
+  it('newSession() returns null and flags serverUnreachable when creation fails', async () => {
+    const store = useSessionStore();
+
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('ECONNREFUSED'))));
+
+    const id = await store.newSession();
+
+    expect(id).toBeNull();
+    expect(store.serverUnreachable).toBe(true);
+  });
+
   it('loadSessions() sets serverUnreachable on a network failure and clears it on success', async () => {
     const store = useSessionStore();
 

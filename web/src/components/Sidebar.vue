@@ -6,7 +6,7 @@ import { relativeTime } from '../lib/relative-time.js';
 const store = useSessionStore();
 
 defineProps<{ activeId: string | null }>();
-const emit = defineEmits<{ open: [id: string] }>();
+const emit = defineEmits<{ open: [id: string]; 'new-chat': [] }>();
 
 /** Groups the flat session list by calendar date (derived from each
  * session's own `updated_at`, not compared against wall-clock "now" — the
@@ -27,8 +27,10 @@ const groups = computed(() => {
   return Array.from(byDate.entries());
 });
 
-async function onNewChat(): Promise<void> {
-  await store.newSession();
+/** New chat is a navigation to `/` (the new-chat state) — the session is
+ * not created until the first message is sent. */
+function onNewChat(): void {
+  emit('new-chat');
 }
 
 function onOpen(id: string): void {

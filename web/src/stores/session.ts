@@ -69,6 +69,11 @@ export const useSessionStore = defineStore('session', {
      * app-level "server unreachable" retry screen (distinct from a
      * per-session SSE-drop banner, which uses `chat.error`). */
     serverUnreachable: false,
+    /** Set when a directly-loaded `/s/:id` (or a stale link) names a session
+     * the server returns 404 for — drives the "session not found" empty
+     * state. Distinct from `serverUnreachable` (a network/transport failure):
+     * a 404 is a definitive "no such session", not "can't reach the server". */
+    sessionNotFound: false,
     /** True when the last sessions page came back full — there may be older
      * sessions to reveal via `loadMoreSessions`. */
     sessionsHasMore: false,
@@ -140,7 +145,12 @@ export const useSessionStore = defineStore('session', {
       await this.loadSessions();
     },
 
-    async newSession(): Promise<void> {
+    /** Creates a session server-side and returns its id (or `null` on
+     * failure, after surfacing a toast). The caller navigates to the new
+     * `/s/:id` — the route watcher then drives `openSession`. The freshly
+     * created chat is marked `loaded` so that re-entrant open is a no-op
+     * (no redundant history fetch for a session we just minted). */
+    async newSession(): Promise<string | null> {
       try {
         const res = await fetch('/api/sessions', { method: 'POST' });
         if (!res.ok) throw new Error(`POST /api/sessions failed: ${res.status}`);
@@ -149,9 +159,12 @@ export const useSessionStore = defineStore('session', {
         const chat = this.ensureChat(id);
         chat.loaded = true;
         this.activeId = id;
+        this.sessionNotFound = false;
+        return id;
       } catch {
         this.pushToast('Could not start a new session — is the server running?');
         this.serverUnreachable = true;
+        return null;
       }
     },
 
@@ -160,6 +173,7 @@ export const useSessionStore = defineStore('session', {
      * "watch live" are one code path. */
     async openSession(id: string): Promise<void> {
       this.activeId = id;
+      this.sessionNotFound = false;
       const chat = this.ensureChat(id);
       if (chat.loaded) {
         if (chat.running && !chat.reconnecting) void this.reconnect(id);
@@ -167,6 +181,12 @@ export const useSessionStore = defineStore('session', {
       }
       try {
         const res = await fetch(`/api/sessions/${id}/events`);
+        // A definitive 404 means "no such session" (e.g. a direct-loaded or
+        // stale `/s/:id`) — a distinct empty state, not a transport failure.
+        if (res.status === 404) {
+          this.sessionNotFound = true;
+          return;
+        }
         if (!res.ok) throw new Error(`GET events failed: ${res.status}`);
         const events = (await res.json()) as unknown[];
         for (const ev of events) applyEvent(chat, normalizeEvent(ev));
