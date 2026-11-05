@@ -154,6 +154,10 @@ const getUserProfile: ActionDef<z.infer<typeof getUserProfileInput>, UserView> =
 // --- A03 list_users -----------------------------------------------------
 
 const listUsersInput = z.strictObject({
+  // engine-wave E10 (RC6b): find a user BY NAME/EMAIL — the capability gap
+  // that forced users to hand over raw user ids. Case-insensitive substring
+  // over name OR email, mirroring other modules' search `query` param.
+  query: z.string().optional(),
   role: z.enum(ROLES).optional(),
   active: z.boolean().optional(),
   team_id: z.string().optional(),
@@ -168,15 +172,23 @@ const listUsers: ActionDef<ListUsersInput, ListUsersOutput> = {
   slug: 'users.list_users',
   module: MODULE,
   name: 'List users',
-  description: 'List non-archived users by role, active state, and team.',
+  description: 'List or find non-archived users by name/email (query), role, active state, and team.',
   risk: 'read',
   entities: ['users'],
   inputSchema: listUsersInput,
   outputSchema: listUsersOutput,
-  searchCard: { synonyms: ['all users', 'show team members'], examplePhrasings: ['List all active sales reps'] },
+  searchCard: {
+    synonyms: ['all users', 'show team members', 'find user', 'user by name', 'look up user'],
+    examplePhrasings: ['List all active sales reps', 'Find the user named Hana Larsen', "What's Priya's user id"],
+  },
   handler: async (input, ctx) => {
     const where: string[] = ['archived = 0'];
     const params: unknown[] = [];
+    if (input.query) {
+      where.push('(LOWER(name) LIKE ? OR LOWER(email) LIKE ?)');
+      const like = `%${input.query.toLowerCase()}%`;
+      params.push(like, like);
+    }
     if (input.role) {
       where.push('role = ?');
       params.push(input.role);

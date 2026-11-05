@@ -521,7 +521,7 @@ exports[`buildCatalogSummary > is deterministic for a given registry (safe to sn
 ## Users
 - users.invite_user: Invite (provision) a new user. Immediate in this simulated environment — no pending-invite state is tracked.
 - users.get_user_profile: Fetch a single user by id.
-- users.list_users: List non-archived users by role, active state, and team.
+- users.list_users: List or find non-archived users by name/email (query), role, active state, and team.
 - users.update_user_profile: Patch a user's name/title/phone.
 - users.assign_user_role: Set a user's role (admin|sales_rep|support).
 - users.revoke_user_role: Revoke a user's CURRENT role (CONFLICT if their current role doesn't match), leaving them roleless.
