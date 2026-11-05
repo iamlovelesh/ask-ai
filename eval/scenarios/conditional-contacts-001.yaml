@@ -1,0 +1,47 @@
+# Task 17 Batch B part 1 — category: conditional, module: contacts
+# (+appointments, +tasks, +opportunities anti-join).
+#
+# `contacts.archive_contact` is `risk: 'destructive'` (m01-contacts.ts) —
+# per `shouldGate` (executor.ts) destructive ALWAYS gates regardless of
+# affected count, so `behavior.confirmation: true` holds here independent
+# of the exact candidate size (contrast with `conditional-opportunities-
+# 001`/`conditional-subscriptions-001`, both plain `write` actions that
+# only gate past 50 rows).
+#
+# Derivation (template copy, VIRTUAL_NOW = 2026-11-04T10:00:00Z, cutoff =
+# NOW - 150 days ≈ Jun 7 2026 — "no activity since early summer"):
+#   SELECT COUNT(*) FROM contacts c WHERE c.archived=0
+#     AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.contact_id=c.id
+#       AND a.start_at >= cutoff150)
+#     AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.contact_id=c.id
+#       AND t.created_at >= cutoff150)
+#     AND NOT EXISTS (SELECT 1 FROM opportunities o WHERE o.contact_id=c.id
+#       AND o.status='open');
+#   -> 9684 (this template copy's appointment/task activity is sparse
+#     relative to its 12,000-contact seed, so this anti-join legitimately
+#     matches most contacts — WAY past `SPILL_CAP` (50), so risk=destructive
+#     already guarantees the gate independent of this count, and the exact
+#     number archived in one turn is plan-dependent; the state check below
+#     uses a post-turn floor, not an exact bulk countDelta).
+#   SELECT COUNT(*) FROM contacts WHERE archived=1; -> 260 (before turn)
+
+id: conditional-contacts-001
+category: conditional
+profile: standard
+turns:
+  - user: >-
+      Archive any contacts that haven't had an appointment or a task
+      logged since early summer and don't have any open deals right now.
+    expect:
+      planActions:
+        mustInclude:
+          - contacts.search_contacts
+          - contacts.archive_contact
+        mustNotInclude: [contacts.merge_duplicate_contacts]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM contacts WHERE archived=1"
+          gte: 261
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]

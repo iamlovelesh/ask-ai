@@ -1,0 +1,47 @@
+# Task 17 Batch B part 1 — category: multistep, module: communities.
+#
+# Data home (m43-communities.ts): `structures(kind='community')`, with
+# channels/posts living as a JSON sidecar in `config` (`{guidelines,
+# channels: ChannelEntry[], posts: PostEntry[]}` — no dedicated table,
+# same pattern as M05 pipelines' `stages`). Seeded community rows carry
+# the generic placeholder config (zero channels, zero posts, documented
+# "STRUCTURAL SMOKE COVERAGE GAP" in the module header) — posting
+# legitimately needs an active membership AND an existing channel first,
+# so this is naturally a 4-action flow, not a 2-action one.
+#
+# Derivation (template copy):
+#   SELECT id,name,config FROM structures WHERE kind='community' LIMIT 1;
+#   -> struct_296, "community 1", config={"seeded":true,"kind":"community"}
+#     (no channels, no posts — join_community + create_discussion_channel
+#     are real prerequisites here, not padding).
+
+id: multistep-communities-001
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      Add contact con_1 as a member of "community 1", create a "General"
+      discussion channel there, post an announcement from them saying
+      "Welcome to the community!", and pin that post.
+    expect:
+      planActions:
+        mustInclude:
+          - communities.join_community
+          - communities.create_discussion_channel
+          - communities.create_community_post
+          - communities.pin_community_post
+        orderFree: false
+      paramChecks:
+        - action: communities.join_community
+          param: contact_id
+          equals: con_1
+        - action: communities.create_discussion_channel
+          param: name
+          equals: General
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE id='struct_296' AND config LIKE '%\"pinned\":true%'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

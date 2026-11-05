@@ -1,0 +1,40 @@
+# Task 17 Batch B part 1 — category: multistep, module: surveys (+records).
+#
+# Data home (m19-surveys.ts): `structures(kind='survey')` for the
+# definition, PLUS `records(kind='survey_response', parent_id=<survey's
+# structures id>)`. Unlike M31 coupons' redemption write, this module
+# owns `survey_response` end-to-end (writes AND aggregates it) — same
+# pattern as M18 forms. `get_survey_response_summary` tallies the REAL
+# `response_count` fresh from `records` every call.
+#
+# Derivation (template copy):
+#   SELECT id,name,status FROM structures WHERE id='struct_151';
+#   -> "survey 1", published
+#   SELECT COUNT(*) FROM records WHERE kind='survey_response' AND
+#     parent_id='struct_151'; -> 16 (before turn) -> 17 after one more
+#     simulated response is submitted.
+
+id: multistep-surveys-001
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      Submit a test response to "survey 1" for contact con_1 (answer
+      {"satisfaction":"high"}), then give me the response summary.
+    expect:
+      planActions:
+        mustInclude:
+          - surveys.submit_simulated_survey_response
+          - surveys.get_survey_response_summary
+      paramChecks:
+        - action: surveys.submit_simulated_survey_response
+          param: id
+          equals: struct_151
+      state:
+        - query: "SELECT COUNT(*) AS n FROM records WHERE kind='survey_response' AND parent_id='struct_151'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustMention: ["17"]
+        mustNotClaim: [failed, error]
