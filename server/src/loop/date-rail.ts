@@ -100,5 +100,9 @@ export function widenDateFields<T extends z.ZodRawShape>(schema: z.ZodObject<T>)
   for (const [key, field] of Object.entries(shape)) {
     widened[key] = DATE_FIELD_RE.test(key) ? z.union([field as z.ZodType, z.string()]) : (field as z.ZodType);
   }
-  return z.object(widened);
+  // Preserve a catchall — dropping it would silently strip unknown keys at
+  // the SDK's strict validation layer before our own schema ever sees them.
+  const catchall = (schema.def as { catchall?: z.ZodType }).catchall;
+  const out = z.object(widened);
+  return catchall ? (out.catchall(catchall) as z.ZodObject<z.ZodRawShape>) : out;
 }

@@ -39,10 +39,19 @@ setTracingDisabled(true);
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
-/** The turnId whose loop is currently awaiting a model call, per async
- * execution context — lets one process run turns for several sessions
- * concurrently without mis-attributing spans. */
-const turnContext = new AsyncLocalStorage<string>();
+/** Per-run context for model calls — turnId for span attribution plus an
+ * optional per-call usage callback so the loop driver can keep per-turn
+ * metrics even when the run ends by abort. AsyncLocalStorage keeps
+ * concurrent sessions from crossing wires. */
+interface TurnCallContext {
+  turnId: string;
+  onLlmCall?: (usage: { tokensIn: number; tokensOut: number; costUsd: number }) => void;
+  /** Checked before every model call — an exit tool's abort must stop the
+   * loop even when the transport (e.g. a test mock fetch) ignores signals. */
+  signal?: AbortSignal;
+}
+
+const turnContext = new AsyncLocalStorage<TurnCallContext>();
 
 export class LoopDeadlineError extends Error {
   constructor(deadlineMs: number) {
@@ -62,9 +71,12 @@ class MeteredModel implements Model {
     if (costMeter.total() >= limit) {
       throw new BudgetExceededError(costMeter.total(), limit);
     }
+    const ctx = turnContext.getStore();
+    if (ctx?.signal?.aborted) {
+      throw new Error('Run aborted before model call');
+    }
     const spans = getDefaultSpans();
-    const turnId = turnContext.getStore() ?? 'unknown';
-    const handle = spans.start({ turnId, kind: 'llm', name: 'loop' });
+    const handle = spans.start({ turnId: ctx?.turnId ?? 'unknown', kind: 'llm', name: 'loop' });
     const startedAt = performance.now();
     try {
       const response = await this.inner.getResponse(request);
@@ -72,6 +84,7 @@ class MeteredModel implements Model {
       const tokensOut = response.usage.outputTokens;
       const costUsd = this.price(tokensIn, tokensOut);
       meterLlmCost(costUsd);
+      ctx?.onLlmCall?.({ tokensIn, tokensOut, costUsd });
       spans.end(handle, { tokensIn, tokensOut, costUsd, meta: { ms: performance.now() - startedAt } });
       return response;
     } catch (err) {
@@ -127,18 +140,32 @@ export interface RunLoopOnceOptions {
   maxTurns: number;
   deadlineMs: number;
   turnId: string;
+  /** Extra abort source (exit tools, stuck-stop). An abort from HERE throws
+   * `LoopStoppedError` — a benign, caller-interpreted stop. */
+  stopSignal?: AbortSignal;
+  onLlmCall?: TurnCallContext['onLlmCall'];
 }
 
-const MAX_TURNS_FALLBACK =
-  'I could not finish within my step limit. Here is where I got to before stopping — please narrow the request or try again.';
+export const MAX_TURNS_FALLBACK =
+  'I could not finish within my step limit — please narrow the request or try again.';
+
+export class LoopStoppedError extends Error {
+  constructor() {
+    super('loop stopped by an exit tool');
+    this.name = 'LoopStoppedError';
+  }
+}
 
 /** One loop run with budgets applied. Throws `LoopDeadlineError` on
- * wall-clock breach, `BudgetExceededError` on $ cap; maxTurns exhaustion
- * returns an honest fallback final output WITHOUT another model call. */
+ * wall-clock breach, `LoopStoppedError` on stopSignal abort,
+ * `BudgetExceededError` on $ cap; maxTurns exhaustion returns the honest
+ * `MAX_TURNS_FALLBACK` final output WITHOUT another model call. */
 export async function runLoopOnce(opts: RunLoopOnceOptions): Promise<RunResult<undefined, Agent>> {
-  const signal = AbortSignal.timeout(opts.deadlineMs);
+  const deadline = AbortSignal.timeout(opts.deadlineMs);
+  const signal = opts.stopSignal ? AbortSignal.any([deadline, opts.stopSignal]) : deadline;
+  const ctx: TurnCallContext = { turnId: opts.turnId, signal, ...(opts.onLlmCall ? { onLlmCall: opts.onLlmCall } : {}) };
   try {
-    return await turnContext.run(opts.turnId, () =>
+    return await turnContext.run(ctx, () =>
       opts.runner.run(opts.agent, opts.input as string, {
         maxTurns: opts.maxTurns,
         signal,
@@ -148,7 +175,8 @@ export async function runLoopOnce(opts: RunLoopOnceOptions): Promise<RunResult<u
       }),
     );
   } catch (err) {
-    if (signal.aborted) throw new LoopDeadlineError(opts.deadlineMs);
+    if (opts.stopSignal?.aborted) throw new LoopStoppedError();
+    if (deadline.aborted) throw new LoopDeadlineError(opts.deadlineMs);
     throw err;
   }
 }
