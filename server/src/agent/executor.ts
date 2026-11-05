@@ -192,6 +192,10 @@ export interface GateDrift {
  * and reuse the EXACT SAME predicate rather than re-implementing it. */
 export function shouldGate(risk: ActionDef['risk'], affectedCount: number, drift?: GateDrift): boolean {
   if (risk === 'destructive' || risk === 'bulk' || risk === 'external') return true;
+  // Engine-wave E6 (RC5): a write applied to more than a few records (forEach
+  // fan-out or a bulk array param) confirms — even a plain risk:'write'
+  // action under the 50-row bulk threshold. Reads (risk:'read') never gate.
+  if (risk === 'write' && affectedCount > BUDGETS.gateBulkWriteThreshold) return true;
   if (affectedCount > BUDGETS.confirmTargetThreshold) return true;
   if (drift && drift.total > 0 && drift.missing / drift.total > DRIFT_RECONFIRM_THRESHOLD) return true;
   return false;
@@ -664,6 +668,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
   /** Fire the confirmation gate for a write step; returns the broker verdict. */
   const gate = async (
     step: Step,
+    action: ActionDef,
     affectedCount: number,
     targetSample: string[],
     drift: ResolveMeta['drift'],
@@ -671,9 +676,20 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     const confirmId = `cf_${randomUUID()}`;
     const driftNote =
       drift && drift.missing > 0
-        ? ` ${drift.total - drift.missing} of ${drift.total} still match (${drift.missing} no longer exist)`
+        ? ` (${drift.total - drift.missing} of ${drift.total} still match — ${drift.missing} no longer exist)`
         : '';
-    const description = `${step.action} affecting ${affectedCount} record(s).${driftNote}`;
+    // Engine-wave E6 (composer handoff): the gate description bypasses
+    // compose(), so build it human-readable AT THE SOURCE — the action's
+    // display name, the TRUE full-set count (E1), and a few record NAMES
+    // (never tool slugs / ref grammar / step ids). e.g. "Send SMS — 165
+    // contacts: Jane Cooper, R. Patel, and 163 more".
+    const noun = action.entities[0] ?? 'record';
+    const names = targetSample.slice(0, 3).filter((n) => n && n.length > 0);
+    const more = affectedCount - names.length;
+    const nameList =
+      names.length > 0 ? `: ${names.join(', ')}${more > 0 ? `, and ${more} more` : ''}` : '';
+    const countLabel = `${affectedCount} ${noun}${affectedCount === 1 ? '' : 's'}`;
+    const description = `${action.name} — ${countLabel}${nameList}.${driftNote}`;
     const scope: ConfirmationScope = {
       actions: [step.action],
       affectedCount,
@@ -845,7 +861,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
 
     if (isWrite && shouldGate(action.risk, affectedCount, drift)) {
       const targets = collectTargetSample(params);
-      const approved = await gate(step, affectedCount, targets, drift);
+      const approved = await gate(step, action, affectedCount, targets, drift);
       if (!approved) {
         denied = true;
         states.set(step.id, { state: 'cancelled' });
@@ -964,7 +980,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     // Only a FULLY-resolvable fan-out reaches the gate. Gate ONCE with
     // aggregate scope (affectedCount = fan-out size).
     if (isWrite && shouldGate(action.risk, fanOut, drift)) {
-      const approved = await gate(step, fanOut, sampleNames(items), drift);
+      const approved = await gate(step, action, fanOut, sampleNames(items), drift);
       if (!approved) {
         denied = true;
         states.set(step.id, { state: 'cancelled' });

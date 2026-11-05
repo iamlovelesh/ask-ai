@@ -413,11 +413,14 @@ export async function* runBaselineTurn(input: RunBaselineTurnInput): AsyncGenera
       // is never a `drift` argument.
       if (isWrite && shouldGate(action.risk, affectedCount)) {
         const confirmId = `cf_${randomUUID()}`;
+        // Engine-wave E6 (composer handoff): human-readable gate description
+        // at the source (display name + noun + count), not the raw slug.
+        const noun = action.entities[0] ?? 'record';
         const scope: ConfirmationScope = {
           actions: [action.slug],
           affectedCount,
           targetSample: [],
-          description: `${action.slug} affecting ${affectedCount} record(s).`,
+          description: `${action.name} — ${affectedCount} ${noun}${affectedCount === 1 ? '' : 's'}.`,
         };
         markTtfur(); // tool-intent: the model decided to call a gated action.
         record({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash, stepId, scope });

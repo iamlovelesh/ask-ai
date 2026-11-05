@@ -129,7 +129,11 @@ Guidance:
   entity, and a conversation id cannot be passed to one. When no action in
   the acting-on module does what's asked, prefer core.* composition or
   tasks.create_task over a plausible-looking action from an unrelated module.
-- Prefer the fewest steps that correctly satisfy the request.
+- Prefer the fewest steps that correctly satisfy the request — include ONLY
+  steps the request actually requires. A pure information question (who/what/
+  which/when/how many/"show"/"list"/"find"/"who owns") is answered by READS
+  alone: it MUST NOT contain any mutation step (assign/update/create/delete/
+  send/…). Never write a record's own value back onto itself.
 - Use "dependsOn" to express ordering; a step may read another step's
   output only if it depends on it (directly or transitively).
 - Use "forEach" for per-item writes (e.g. creating N tasks); it gates once

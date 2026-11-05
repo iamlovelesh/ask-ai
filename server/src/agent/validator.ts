@@ -29,6 +29,7 @@ export type ValidationErrorCode =
   | 'PARAM_SCHEMA'
   | 'ID_NOT_RESOLVED'
   | 'ID_NOT_PROVENANCED'
+  | 'PLAN_MINIMALITY'
   | 'FIELD_NOT_IN_SCHEMA'
   | 'REF_PATH_MISMATCH'
   | 'REF_GRAMMAR'
@@ -95,6 +96,11 @@ export const BUDGETS = {
   maxSearchRounds: 2,
   turnTimeoutMs: 120_000,
   confirmTargetThreshold: 50,
+  // engine-wave E6 (RC5): a write APPLIED TO MORE THAN THIS MANY records
+  // (forEach fan-out or a bulk array param) always confirms, even plain
+  // risk:'write' actions well under the 50-row bulk threshold — a 5-ticket
+  // close / N-lead reassign must not run silently.
+  gateBulkWriteThreshold: 3,
   forEachHardCap: 500,
 } as const;
 
@@ -1296,6 +1302,34 @@ export function validate(
             message: `Step '${step.id}': forEach '${step.forEach}' references step '${parsedForEach.stepId}', but does not depend on it (directly or transitively) — add '${parsedForEach.stepId}' to dependsOn.`,
           });
         }
+      }
+    }
+
+    // 4a. plan-minimality self-assignment backstop (E6c, RC5): a write whose
+    //     ENTIRE input is refs into ONE fetched record (its own id + its own
+    //     fields) writes that record's current values back onto itself — it
+    //     can't change the state the user asked about (e.g. "who owns
+    //     lead_2025" → assign_lead_owner(id:$s1.id, owner_id:$s1.owner_id)).
+    //     Conservative by design: fires ONLY when the step is a write, has
+    //     ≥2 params, and EVERY param value is a whole-value ref into the SAME
+    //     single producing base — a legitimate write mixes in a literal or a
+    //     second source, so it never trips this.
+    if (action && action.risk !== 'read' && !step.action.startsWith('core.')) {
+      const entries = Object.entries(step.params);
+      const refBases = entries.map(([, v]) => {
+        if (typeof v !== 'string') return null;
+        const p = parseRefGrammar(v);
+        if (!p) return null;
+        return p.form === 'step' ? `s:${p.stepId}` : p.form === 'crossTurn' ? `h:${p.handleId}` : null;
+      });
+      const allRefs = entries.length >= 2 && refBases.every((b) => b !== null);
+      const singleBase = allRefs && new Set(refBases).size === 1;
+      if (singleBase) {
+        errors.push({
+          code: 'PLAN_MINIMALITY',
+          stepId: step.id,
+          message: `Step '${step.id}': write '${step.action}' takes all of its inputs (${entries.map(([k]) => k).join(', ')}) from the same fetched record — it would write that record's own current values back onto itself, changing nothing. If the user only ASKED about this record (e.g. who owns it), answer from the read and drop this write step entirely; if a real change was intended, supply the new value as a literal or from a different source.`,
+        });
       }
     }
 

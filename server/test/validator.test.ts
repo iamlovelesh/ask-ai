@@ -1216,6 +1216,7 @@ describe('BUDGETS (LLD §5.1)', () => {
       maxSearchRounds: 2,
       turnTimeoutMs: 120_000,
       confirmTargetThreshold: 50,
+      gateBulkWriteThreshold: 3,
       forEachHardCap: 500,
     });
   });

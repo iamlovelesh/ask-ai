@@ -787,24 +787,36 @@ describe('executor — cross-turn ref drift (Review Focus 4)', () => {
     }
   }
 
-  it('FORCES a gate on >25% drift even when survivors ≤50 and risk is plain write', async () => {
-    // total 60, 20 missing (33% > 25%), survivors 40 (≤50) → ONLY the drift
-    // branch can gate this (not affectedCount, not risk class).
-    const { result, events } = await runDriftCase('test-exec-drift-force', 40, 60);
+  it('FORCES a gate on >25% drift even for a tiny (≤3-record) plain write', async () => {
+    // total 3, 1 missing (33% > 25%), survivors 2 (≤ the E6 bulk-write
+    // threshold of 3) → ONLY the drift branch can gate this (not affectedCount,
+    // not the bulk-write rule, not risk class).
+    const { result, events } = await runDriftCase('test-exec-drift-force', 2, 3);
     expect(result.status).toBe('done');
     const req = events.find((e) => e.t === 'confirmation.required');
     expect(req).toBeDefined();
     if (req && req.t === 'confirmation.required') {
-      expect(req.scope.affectedCount).toBe(40);
-      expect(req.scope.description).toContain('40 of 60');
+      expect(req.scope.affectedCount).toBe(2);
+      expect(req.scope.description).toContain('2 of 3');
     }
   });
 
-  it('does NOT gate when drift ≤25% and survivors ≤50 (control)', async () => {
-    // total 60, 10 missing (16.7% ≤ 25%), survivors 50 (not >50) → no gate.
-    const { result, events } = await runDriftCase('test-exec-drift-control', 50, 60);
+  it('does NOT gate when drift ≤25% and the write touches ≤3 records (control)', async () => {
+    // total 4, 1 missing (25% ≤ 25%), survivors 3 (not > the E6 bulk-write
+    // threshold of 3, not > 50) → neither drift nor the bulk-write rule gates.
+    const { result, events } = await runDriftCase('test-exec-drift-control', 3, 4);
     expect(result.status).toBe('done');
     expect(events.some((e) => e.t === 'confirmation.required')).toBe(false);
+  });
+
+  it('E6: a plain write applied to >3 records gates even under the 50-row bulk threshold', async () => {
+    // total 5, 0 missing → no drift; survivors 5 (> 3, ≤ 50) → the E6
+    // bulk-write rule alone forces confirmation.
+    const { result, events } = await runDriftCase('test-exec-e6-bulk', 5, 5);
+    expect(result.status).toBe('done');
+    const req = events.find((e) => e.t === 'confirmation.required');
+    expect(req).toBeDefined();
+    if (req && req.t === 'confirmation.required') expect(req.scope.affectedCount).toBe(5);
   });
 });
 
