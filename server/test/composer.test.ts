@@ -475,6 +475,20 @@ describe('compose — failed / halted (RC2/RC7)', () => {
     expect(text).not.toContain('opportunities.search_opportunities');
   });
 
+  it('sales R7 (P7b): a failed turn with no successful leaf NEVER narrates success ("processed N requests")', () => {
+    // Repair-exhaustion on the bulk-tag turn: 0 steps ok, 0 failed-with-error
+    // recorded, status failed. The composer must not emit success framing.
+    const text = compose({
+      outcome: 'failed',
+      plan: { goal: 'tag hot prospects', steps: [{ id: 's1', action: 'tags.apply_tag_to_record', params: {}, dependsOn: [] }] },
+      stepStates: { s1: { state: 'pending' } },
+      reason: 'Plan repair exhausted after 4 attempt(s): [s1] UNKNOWN_SLUG',
+    });
+    expect(text.toLowerCase()).not.toContain('success');
+    expect(text.toLowerCase()).not.toContain('processed');
+    expect(text).toContain("I couldn't complete that");
+  });
+
   it('sales F3 / support F2 (HIGH): "plan repair exhausted" raw codes never reach answer.final', () => {
     const text = compose({
       outcome: 'failed',

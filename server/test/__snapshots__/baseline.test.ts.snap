@@ -301,7 +301,7 @@ exports[`buildCatalogSummary > is deterministic for a given registry (safe to sn
 ## Invoices
 - invoices.create_invoice: Create a new draft invoice for a contact.
 - invoices.get_invoice_details: Fetch an invoice and its line items.
-- invoices.search_invoices: Search non-archived invoices. Pass min_days_overdue to find unpaid invoices overdue by more than N days (status='issued' AND due_date < now - N days).
+- invoices.search_invoices: Search non-archived invoices. min_days_overdue finds unpaid invoices overdue by more than N days (status='issued' AND due_date < now - N days). issued_after/issued_before filter by issue date (ISO-8601 ok). min_amount_cents/max_amount_cents filter by total in CENTS (e.g. $5000 = 500000).
 - invoices.add_invoice_line_item: Add a product line item to a draft invoice. total_cents is fully recomputed.
 - invoices.update_draft_invoice: Patch header fields on a draft invoice.
 - invoices.set_invoice_due_date: Set an invoice due date.

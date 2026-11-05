@@ -201,6 +201,16 @@ const searchInvoicesInput = z.strictObject({
   status: z.string().optional(),
   owner_id: z.string().optional(),
   min_days_overdue: z.number().int().min(0).optional(),
+  // P7a: date-range and amount filters so "how much did we invoice in
+  // October" / "invoices over $5000" resolve to a real query instead of
+  // repair-exhausting on UNKNOWN_PARAM (billing R-F7, N10). `issued_*` filter
+  // on issued_at; amounts are in CENTS (e.g. $5000 → 500000) on total_cents.
+  // The number-typed `*_after`/`*_before` params accept an ISO-8601 string,
+  // coerced to epoch-ms by the validator (E3).
+  issued_after: z.number().int().min(0).optional(),
+  issued_before: z.number().int().min(0).optional(),
+  min_amount_cents: z.number().int().min(0).optional(),
+  max_amount_cents: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(50).optional(),
 });
 type SearchInvoicesInput = z.infer<typeof searchInvoicesInput>;
@@ -213,7 +223,7 @@ const searchInvoices: ActionDef<SearchInvoicesInput, SearchInvoicesOutput> = {
   module: MODULE,
   name: 'Search invoices',
   description:
-    "Search non-archived invoices. Pass min_days_overdue to find unpaid invoices overdue by more than N days (status='issued' AND due_date < now - N days).",
+    "Search non-archived invoices. min_days_overdue finds unpaid invoices overdue by more than N days (status='issued' AND due_date < now - N days). issued_after/issued_before filter by issue date (ISO-8601 ok). min_amount_cents/max_amount_cents filter by total in CENTS (e.g. $5000 = 500000).",
   risk: 'read',
   entities: ['invoices'],
   inputSchema: searchInvoicesInput,
@@ -241,6 +251,22 @@ const searchInvoices: ActionDef<SearchInvoicesInput, SearchInvoicesOutput> = {
     } else if (input.status) {
       where.push('status = ?');
       params.push(input.status);
+    }
+    if (input.issued_after !== undefined) {
+      where.push('issued_at IS NOT NULL AND issued_at >= ?');
+      params.push(input.issued_after);
+    }
+    if (input.issued_before !== undefined) {
+      where.push('issued_at IS NOT NULL AND issued_at < ?');
+      params.push(input.issued_before);
+    }
+    if (input.min_amount_cents !== undefined) {
+      where.push('total_cents >= ?');
+      params.push(input.min_amount_cents);
+    }
+    if (input.max_amount_cents !== undefined) {
+      where.push('total_cents <= ?');
+      params.push(input.max_amount_cents);
     }
     const limit = input.limit ?? 50;
     const whereSql = where.join(' AND ');
