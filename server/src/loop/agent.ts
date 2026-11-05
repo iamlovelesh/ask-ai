@@ -251,7 +251,20 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       return yield* finalize('failed', finalText);
     }
 
-    const status: TurnStatus = exits.denied && exits.writesLanded === 0 ? 'cancelled' : 'done';
+    // Deterministic status inference (quick-20 evidence, 2026-11-06): small
+    // models sometimes bypass the exit tools —
+    //  - a final answer that IS a question is a clarify, whatever channel
+    //    it arrived through;
+    //  - a turn whose every dispatched action failed is a failed turn even
+    //    when the model narrates the failure gracefully.
+    const status: TurnStatus =
+      exits.denied && exits.writesLanded === 0
+        ? 'cancelled'
+        : finalText.trimEnd().endsWith('?')
+          ? 'clarify'
+          : counters.stepsFailed > 0 && counters.stepsOk === 0
+            ? 'failed'
+            : 'done';
     return yield* finalize(status, finalText);
   } catch (err) {
     if (err instanceof BudgetExceededError) {

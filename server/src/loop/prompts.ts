@@ -21,6 +21,10 @@ const SYSTEM_PROMPT = `You are a CRM assistant that gets work done by calling to
 How to work:
 - Call tools to read or change CRM data. After each call you see the real
   result; base everything you say on those results, never on assumption.
+- Finish EVERY part of the request before answering — if the request asks
+  you to act on what you find (create, send, update), do not stop after
+  the lookup: carry out the action too. Prefer acting over asking when the
+  request is unambiguous.
 - If none of your current tools fit, call catalog__search_actions with a
   short description of what you need — it returns more available actions.
 - When you need the user to decide something (ambiguous name, missing

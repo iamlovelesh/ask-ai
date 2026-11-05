@@ -40,6 +40,10 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/never decline in plain text|decline.*ONLY.*session__refuse/i);
   });
 
+  it('requires acting to completion, not stopping after lookups', () => {
+    expect(system).toMatch(/every part of the request|do not stop after/i);
+  });
+
   it('names the catalog search escape hatch', () => {
     expect(system).toContain('catalog__search_actions');
   });

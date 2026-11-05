@@ -285,6 +285,38 @@ describe('runLoopTurn — honest exits', () => {
   });
 });
 
+describe('runLoopTurn — deterministic status inference', () => {
+  it('a plain-text final answer that is a question completes as clarify', async () => {
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const events = await drive(registry, 'reschedule the appointment', [
+      textResponse('Which Lucia Kim do you mean — there are 8 contacts with that name?'),
+    ]);
+    expect(completedOf(events).status).toBe('clarify');
+  });
+
+  it('a turn with failed steps and zero successes completes as failed', async () => {
+    const registry = buildRegistry(
+      [[action('invoices.record_payment', 'write', async () => { throw new ActionError('NOT_FOUND', 'no such invoice'); })]],
+      [],
+    );
+    const events = await drive(registry, 'record a payment', [
+      toolCallResponse('invoices__record_payment', { id: 'inv_999' }),
+      textResponse('I was unable to record the payment — the invoice was not found.'),
+    ]);
+    expect(completedOf(events).status).toBe('failed');
+    expect(finalOf(events)).toContain('unable');
+  });
+
+  it('a successful turn whose answer merely mentions an earlier retry stays done', async () => {
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [{ id: 'l1' }], total: 1 }))]], []);
+    const events = await drive(registry, 'find leads', [
+      toolCallResponse('leads__search_leads', { query: 'x' }),
+      textResponse('Found 1 lead.'),
+    ]);
+    expect(completedOf(events).status).toBe('done');
+  });
+});
+
 describe('runLoopTurn — ref data tools', () => {
   function refsWithRows(rows: Record<string, unknown>[], complete: boolean): RefStore {
     return {
