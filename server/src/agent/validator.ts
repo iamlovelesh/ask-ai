@@ -27,6 +27,7 @@ export type ValidationErrorCode =
   | 'UNKNOWN_PARAM'
   | 'PARAM_SCHEMA'
   | 'ID_NOT_RESOLVED'
+  | 'FIELD_NOT_IN_SCHEMA'
   | 'REF_PATH_MISMATCH'
   | 'REF_GRAMMAR'
   | 'ITEM_OUTSIDE_FOREACH'
@@ -729,6 +730,49 @@ function resolveForEachElementSchema(
   return arrayElement(valueSchema) ?? undefined;
 }
 
+// --- core-op field validation (engine-wave E2, RC3) -----------------------
+//
+// A core data op names row FIELDS it reads off the list it consumes
+// (core.filter/exclude_by/pluck `field` off `in`; core.anti_join `key` off
+// `in` / `excludeKey` off `exclude`; core.join `key` off `in` / `withKey`
+// off `with`). A field the producing step's item schema doesn't actually
+// expose (amount_cents vs total_cents, start_time vs start_at, …) yields a
+// silent all-null/empty result at run time — the exact silent-null class
+// RC3 names. This is intrinsic to the six fixed built-in core ops (not any
+// module), so the param→list-param map below is a closed, generic contract,
+// not a per-module special-case. `as` (core.join) names a NEW output field,
+// never checked.
+
+const CORE_OP_FIELD_PARAMS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  'core.filter': { field: 'in' },
+  'core.exclude_by': { field: 'in' },
+  'core.pluck': { field: 'in' },
+  'core.anti_join': { key: 'in', excludeKey: 'exclude' },
+  'core.join': { key: 'in', withKey: 'with' },
+  'core.distribute': {},
+};
+
+/** The ELEMENT (row) schema a list-shaped ref resolves to, for the core-op
+ * field check. Only intra-plan `$sN.<path>` refs against an introspectable
+ * producer are resolvable; everything else (cross-turn, `$item`, a literal
+ * array, an opaque/non-list producer) returns `undefined` → the caller
+ * SKIPs, never a false positive (same defensive policy as `walkPath`). */
+function listRefItemSchema(
+  listRef: unknown,
+  schemaForStep: (stepId: string) => unknown | undefined,
+): unknown | undefined {
+  if (typeof listRef !== 'string') return undefined;
+  const parsed = parseRefGrammar(listRef);
+  if (!parsed || parsed.form !== 'step') return undefined;
+  const producer = schemaForStep(parsed.stepId);
+  if (producer === undefined) return undefined;
+  const at = schemaAtPath(producer, pathTokens(parsed.path));
+  if (at === undefined) return undefined;
+  // `at` may already be the element (a spread/index path) or the array.
+  const elem = arrayElement(at);
+  return elem ?? at;
+}
+
 /** Recursively rewrites every WHOLE-value ref string in `value` via `fn`
  * (same "entire value is a ref" scope as `collectRefStrings` — an embedded
  * template substring is the executor's job, not this one's). */
@@ -968,6 +1012,14 @@ export function validate(
   const dependsOnById = new Map<string, readonly string[]>(plan.steps.map((s) => [s.id, s.dependsOn]));
   const slugByStepId = new Map<string, string>(plan.steps.map((s) => [s.id, s.action]));
 
+  /** Producer `outputSchema` by step id — for the core-op field check (E2)
+   * and other schema walks. `undefined` when the slug/producer is unknown. */
+  function schemaForStepId(stepId: string): unknown | undefined {
+    const slug = slugByStepId.get(stepId);
+    if (slug === undefined) return undefined;
+    return registry.get(slug)?.outputSchema;
+  }
+
   /** Structural `$sN.<path>` vs producing-action-outputSchema check
    * (REF_PATH_MISMATCH). Only intra-plan step refs with a non-empty path;
    * everything else (bare `$sN`, cross-turn, `$item`, unknown producer,
@@ -1176,6 +1228,29 @@ export function validate(
             code: 'MISSING_DEPENDENCY',
             stepId: step.id,
             message: `Step '${step.id}': forEach '${step.forEach}' references step '${parsedForEach.stepId}', but does not depend on it (directly or transitively) — add '${parsedForEach.stepId}' to dependsOn.`,
+          });
+        }
+      }
+    }
+
+    // 4b. core-op field validation (E2): a `field`/`key`/`excludeKey`/
+    //     `withKey` literal must exist on the item schema of the list it
+    //     reads — else FIELD_NOT_IN_SCHEMA listing the ACTUAL fields.
+    const fieldParams = CORE_OP_FIELD_PARAMS[step.action];
+    if (fieldParams) {
+      for (const [fieldParam, listParam] of Object.entries(fieldParams)) {
+        const fieldVal = (step.params as Record<string, unknown>)[fieldParam];
+        if (typeof fieldVal !== 'string' || fieldVal.includes('$')) continue; // only literal field names
+        const itemSchema = listRefItemSchema((step.params as Record<string, unknown>)[listParam], schemaForStepId);
+        if (itemSchema === undefined) continue; // non-introspectable → skip
+        const cls = classify(itemSchema);
+        if (cls.kind !== 'object') continue; // opaque row shape → skip
+        if (!cls.keys.has(fieldVal)) {
+          const avail = [...cls.keys].join(', ');
+          errors.push({
+            code: 'FIELD_NOT_IN_SCHEMA',
+            stepId: step.id,
+            message: `Step '${step.id}': '${step.action}' param '${fieldParam}' is '${fieldVal}', which is not a field on the rows from '${listParam}'. Available fields: ${avail}. Use one of those exact field names.`,
           });
         }
       }
