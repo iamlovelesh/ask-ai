@@ -6,6 +6,10 @@
       "steps": [
         { "id": "s1", "action": "leads.search_leads", "params": {}, "dependsOn": [] }
       ]
-    }
+    },
+    "queries": [],
+    "question": null,
+    "reason": null,
+    "text": null
   }
 ]

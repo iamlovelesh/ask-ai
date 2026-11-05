@@ -134,3 +134,120 @@ export const planOutcomeSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('respond'), text: z.string() }),
 ]);
 export type PlanOutcome = z.infer<typeof planOutcomeSchema>;
+
+// --- FlatPlanOutcome (Task 6 round-2 fix — docs/SPIKES.md §1b) -------------
+//
+// `planOutcomeSchema` above is `z.discriminatedUnion('kind', [...5 variants])`,
+// which Zod compiles to a JSON Schema with a **top-level `oneOf`**. That's a
+// SEPARATE, independent defect from the recursive-`Value` one fixed earlier
+// in this file (docs/SPIKES.md §1/§1a) — it was masked in round 1 because the
+// `$ref`-cycle error fired first for Anthropic/OpenAI. Once that cycle was
+// fixed, re-spiking showed both providers reject a union **at the schema
+// root** ("Schema type 'oneOf' is not supported" / "In context=(), 'oneOf'
+// is not permitted" — Gemini has no such restriction). `planOutcomeSchema`
+// itself is UNCHANGED and still the type every downstream consumer
+// (validator/pipeline/executor/events) works with — it's also still used by
+// `agent/validator.ts` for a pure in-process structural re-check of an
+// ALREADY-PARSED JS object (never sent to a provider, so its `oneOf` is
+// irrelevant there).
+//
+// `flatPlanOutcomeSchema` below is the schema actually handed to
+// `generateObject` (by `planner.ts`'s `plan()` and `pipeline.ts`'s repair
+// call site — the only two places that ever asked a real provider for a
+// `PlanOutcome`): a single FLAT root object, every field always present
+// (required). No `oneOf`/`anyOf` ANYWHERE in this schema, root or nested —
+// not just at the root:
+//
+// Round-2 re-spike (docs/SPIKES.md §1b) found that fixing ONLY the root
+// `oneOf` was NOT enough — Anthropic/OpenAI still rejected the result.
+// `z.toJSONSchema` was checked locally against every nullable variant zod
+// offers (`.nullable()`, `z.union([X, z.null()])`, `.or(z.null())`) and
+// ALL of them compile a nullable OBJECT/ARRAY to `{"anyOf":[{the type},
+// {"type":"null"}]}` — zod has no public way to emit the alternative,
+// equally-valid `{"type":[X,"null"], ...}` form for complex types (it DOES
+// use that `type`-array form automatically for nullable PRIMITIVES like
+// `z.string().nullable()` → `{"type":["string","null"]}`, no `anyOf` — this
+// asymmetry is exactly why `question`/`reason`/`text` below stay
+// `.nullable()` but `plan`/`queries` do not). Since `anyOf` is the only
+// remaining union-shaped keyword anywhere in the compiled schema after the
+// root fix, and both failing providers' complaints have consistently been
+// about union keywords (`oneOf` at root, `propertyNames`+ref-loop through
+// a union branch in round 1), `plan`/`queries` use SENTINEL values instead
+// of `null` when not the active kind — `plan: planSchema` (not nullable;
+// sentinel `{goal:"", steps:[]}`) and `queries: z.array(z.string())` (not
+// nullable; sentinel `[]`) — eliminating `anyOf` for them entirely. This
+// candidate fix is NOT yet live-verified (docs/SPIKES.md §1b: the live
+// budget for this round was exhausted reaching this hypothesis) — see that
+// section for the exact status and the fallback hypothesis (nested
+// `.optional()` fields deep in `stepSchema`) if this still isn't enough.
+export const flatPlanOutcomeSchema = z.strictObject({
+  kind: z.enum(['plan', 'search', 'clarify', 'unsupported', 'respond']),
+  plan: planSchema,
+  queries: z.array(z.string()),
+  question: z.string().nullable(),
+  reason: z.string().nullable(),
+  text: z.string().nullable(),
+});
+export type FlatPlanOutcome = z.infer<typeof flatPlanOutcomeSchema>;
+
+/** Thrown by `toPlanOutcome` when a structurally-valid `FlatPlanOutcome`
+ * (already passed `flatPlanOutcomeSchema`'s zod parse) has an
+ * internally-inconsistent combination of fields for its `kind` — either a
+ * kind-specific field left at its SENTINEL value (`plan.steps.length===0`
+ * for `kind:'plan'`; `queries.length===0` for `kind:'search'` — see
+ * `flatPlanOutcomeSchema`'s header for why `plan`/`queries` use sentinels
+ * instead of `null`) or still `null` (`question`/`reason`/`text`) — a
+ * cross-field constraint `flatPlanOutcomeSchema` itself cannot express (zod
+ * object schemas don't encode "this field is required only when that
+ * discriminant has this value" without reintroducing a union, which is
+ * exactly what this file is avoiding at the schema level). Call sites
+ * (`planner.ts`'s `plan()`, `pipeline.ts`'s repair call) catch this and
+ * re-throw it as the AI SDK's `NoObjectGeneratedError` — see `planner.ts`'s
+ * `narrowFlatOutcome` — so `pipeline.ts`'s EXISTING
+ * `NoObjectGeneratedError.isInstance(err)` handling (escalate-and-retry,
+ * then a repairable `'failed'` turn; LLD: "never a crash") covers this case
+ * with no new pipeline logic. */
+export class FlatOutcomeShapeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'FlatOutcomeShapeError';
+  }
+}
+
+/** Narrows a structurally-valid `FlatPlanOutcome` to the existing
+ * discriminated `PlanOutcome` union that every downstream consumer
+ * (validator/pipeline/executor/events) already expects — pure, no I/O, no
+ * AI SDK dependency (see `FlatOutcomeShapeError`'s doc comment for how
+ * callers turn a thrown error here into the pipeline's existing
+ * repair/escalation path). */
+export function toPlanOutcome(flat: FlatPlanOutcome): PlanOutcome {
+  switch (flat.kind) {
+    case 'plan':
+      if (flat.plan.steps.length === 0) {
+        throw new FlatOutcomeShapeError(
+          "kind:'plan' requires a non-empty 'plan.steps' — got the sentinel empty plan.",
+        );
+      }
+      return { kind: 'plan', plan: flat.plan };
+    case 'search':
+      if (flat.queries.length === 0) {
+        throw new FlatOutcomeShapeError("kind:'search' requires a non-empty 'queries' — got the sentinel [].");
+      }
+      return { kind: 'search', queries: flat.queries };
+    case 'clarify':
+      if (flat.question === null) {
+        throw new FlatOutcomeShapeError("kind:'clarify' requires a non-null 'question' field.");
+      }
+      return { kind: 'clarify', question: flat.question };
+    case 'unsupported':
+      if (flat.reason === null) {
+        throw new FlatOutcomeShapeError("kind:'unsupported' requires a non-null 'reason' field.");
+      }
+      return { kind: 'unsupported', reason: flat.reason };
+    case 'respond':
+      if (flat.text === null) {
+        throw new FlatOutcomeShapeError("kind:'respond' requires a non-null 'text' field.");
+      }
+      return { kind: 'respond', text: flat.text };
+  }
+}

@@ -22,8 +22,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { buildPlannerPrompt, type PlannerPromptCtx } from '../server/src/agent/planner.js';
-import { planOutcomeSchema, type PlanOutcome } from '../server/src/agent/plan-schema.js';
+import { buildPlannerPrompt, narrowFlatOutcome, type PlannerPromptCtx } from '../server/src/agent/planner.js';
+import { flatPlanOutcomeSchema, type FlatPlanOutcome, type PlanOutcome } from '../server/src/agent/plan-schema.js';
 import { llmCall } from '../server/src/llm/client.js';
 import { emptyWorkingState, renderWorkingState } from '../server/src/agent/memory.js';
 
@@ -120,15 +120,19 @@ async function spikeOneModel(model: string): Promise<ModelResult> {
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const result = await llmCall<PlanOutcome>({
+      const result = await llmCall<FlatPlanOutcome>({
         stage: 'spike',
         model,
-        schema: planOutcomeSchema,
+        schema: flatPlanOutcomeSchema,
         system,
         prompt,
         turnId: `spike-schema-${model.replace(/[^a-z0-9]/gi, '_')}-${attempt}`,
       });
-      const outcome = result.value as PlanOutcome;
+      const outcome = narrowFlatOutcome(result.value as FlatPlanOutcome, {
+        model,
+        usage: result.usage,
+        spanId: result.spanId,
+      });
       attempts.push({
         attempt,
         ok: true,

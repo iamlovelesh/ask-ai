@@ -11,9 +11,10 @@
  * only assembles the blocks it's handed).
  */
 
+import { NoObjectGeneratedError } from 'ai';
 import { llmCall, type LlmCallResult } from '../llm/client.js';
 import type { LlmUsage } from '../events/types.js';
-import { planOutcomeSchema, type PlanOutcome } from './plan-schema.js';
+import { flatPlanOutcomeSchema, toPlanOutcome, FlatOutcomeShapeError, type FlatPlanOutcome, type PlanOutcome } from './plan-schema.js';
 
 // --- core op signatures (static — LLD §2.2; never varies across turns) ----
 
@@ -31,13 +32,18 @@ const CORE_OPS_TEXT = [
 
 const SYSTEM_PROMPT = `You are the planner for a CRM automation agent. Given a user request, the
 current working state, and a shortlist of candidate actions, you MUST
-respond with exactly one JSON object matching the PlanOutcome schema:
+respond with exactly one JSON object with ALL SIX of these fields present —
+"kind" plus every one of "plan"/"queries"/"question"/"reason"/"text" — fully
+filling in ONLY the ONE field that matches "kind": the other three string
+fields ("question"/"reason"/"text") are null, "plan" is the empty plan
+{"goal":"","steps":[]}, and "queries" is the empty array [] when they are
+not the active field:
 
-  {"kind":"plan", "plan": {"goal": string, "steps": Step[]}}
-  {"kind":"search", "queries": string[]}
-  {"kind":"clarify", "question": string}
-  {"kind":"unsupported", "reason": string}
-  {"kind":"respond", "text": string}
+  {"kind":"plan", "plan": {"goal": string, "steps": Step[]}, "queries": [], "question": null, "reason": null, "text": null}
+  {"kind":"search", "plan": {"goal":"","steps":[]}, "queries": string[], "question": null, "reason": null, "text": null}
+  {"kind":"clarify", "plan": {"goal":"","steps":[]}, "queries": [], "question": string, "reason": null, "text": null}
+  {"kind":"unsupported", "plan": {"goal":"","steps":[]}, "queries": [], "question": null, "reason": string, "text": null}
+  {"kind":"respond", "plan": {"goal":"","steps":[]}, "queries": [], "question": null, "reason": null, "text": string}
 
 Choose "plan" whenever the request can be satisfied by calling one or more
 of the listed candidate actions (optionally combined with the core.* data
@@ -180,15 +186,55 @@ export interface PlanResult {
   spanId: string;
 }
 
+/**
+ * Narrows a `generateObject`-returned `FlatPlanOutcome` (already
+ * zod-validated against `flatPlanOutcomeSchema`) to the discriminated
+ * `PlanOutcome` union every downstream consumer expects, via
+ * `plan-schema.ts`'s pure `toPlanOutcome`. If the flat shape is
+ * internally inconsistent for its `kind` (e.g. `kind:'plan'` with
+ * `plan:null` — a real model mistake `flatPlanOutcomeSchema` itself can't
+ * rule out, see that file's header), re-throws as the AI SDK's own
+ * `NoObjectGeneratedError` so `pipeline.ts`'s EXISTING
+ * `NoObjectGeneratedError.isInstance(err)` handling (escalate-and-retry,
+ * then a repairable `'failed'` turn) covers it with no new pipeline logic —
+ * exported so `pipeline.ts`'s repair call site (the one other place that
+ * ever asks a provider for a `PlanOutcome` directly) can reuse the exact
+ * same adapter instead of duplicating it. */
+export function narrowFlatOutcome(
+  flat: FlatPlanOutcome,
+  meta: { model: string; usage: LlmUsage; spanId: string },
+): PlanOutcome {
+  try {
+    return toPlanOutcome(flat);
+  } catch (err) {
+    if (err instanceof FlatOutcomeShapeError) {
+      throw new NoObjectGeneratedError({
+        message: err.message,
+        cause: err,
+        text: JSON.stringify(flat),
+        response: { id: meta.spanId, timestamp: new Date(), modelId: meta.model },
+        usage: {
+          inputTokens: meta.usage.tokensIn,
+          outputTokens: meta.usage.tokensOut,
+          totalTokens: meta.usage.tokensIn + meta.usage.tokensOut,
+        },
+        finishReason: 'other',
+      });
+    }
+    throw err;
+  }
+}
+
 export async function plan(ctx: PlanCtx, model: string): Promise<PlanResult> {
   const { system, prompt } = buildPlannerPrompt(ctx);
-  const result: LlmCallResult<PlanOutcome> = await llmCall<PlanOutcome>({
+  const result: LlmCallResult<FlatPlanOutcome> = await llmCall<FlatPlanOutcome>({
     stage: 'plan',
     model,
-    schema: planOutcomeSchema,
+    schema: flatPlanOutcomeSchema,
     system,
     prompt,
     turnId: ctx.turnId,
   });
-  return { outcome: result.value as PlanOutcome, usage: result.usage, spanId: result.spanId };
+  const outcome = narrowFlatOutcome(result.value as FlatPlanOutcome, { model, usage: result.usage, spanId: result.spanId });
+  return { outcome, usage: result.usage, spanId: result.spanId };
 }

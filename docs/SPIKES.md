@@ -155,6 +155,96 @@ against a live API yet):
    `agent/validator.ts` post-parse) — avoids `oneOf` entirely but is a bigger shape
    change for every consumer of `PlanOutcome`.
 
+## 1b. Round-2 fix: flat-root object + sentinel values (2026-11-05, same day)
+
+**Fix applied** (direction #2 above, chosen for maximum provider safety): `agent/
+plan-schema.ts` gained `flatPlanOutcomeSchema` — a single flat root object, every field
+always present/required, NO union anywhere:
+
+```
+{kind: enum[5], plan: Plan, queries: string[], question: string|null, reason: string|null, text: string|null}
+```
+
+`planner.ts`'s `plan()` and `pipeline.ts`'s repair call site (the ONLY two places that
+ever ask a provider for a `PlanOutcome` directly — `joiner.ts`'s `joinerDecisionSchema`
+is a THIRD, separate `z.discriminatedUnion` with the identical root-`oneOf` defect,
+confirmed present but **out of this round's scope and NOT fixed** — flagged for a
+follow-up) now request `flatPlanOutcomeSchema` instead of `planOutcomeSchema`. A new
+pure function, `toPlanOutcome`, narrows the flat shape back to the existing
+discriminated `PlanOutcome` union every downstream consumer
+(validator/executor/joiner/events) already expects; an invalid combination (the
+active-kind field left at its default) throws `FlatOutcomeShapeError`, which
+`planner.ts`'s `narrowFlatOutcome` re-throws as the AI SDK's own
+`NoObjectGeneratedError` — reusing `pipeline.ts`'s EXISTING escalate-then-fail handling
+for that error type with **zero new pipeline control-flow**.
+
+**Mid-fix discovery — one fix was not enough, twice:** the FIRST attempt used
+`.nullable()` for all four kind-specific fields (`plan`/`queries` included) — fixing
+the root `oneOf` but leaving Anthropic/OpenAI still failing (confirmed live). A local
+`z.toJSONSchema` check proved why: Zod has no public way to compile a nullable
+OBJECT/ARRAY to the type-array form (`{"type":["object","null"]}`) — `.nullable()`,
+`z.union([X, z.null()])`, and `.or(z.null())` ALL compile to `{"anyOf":[{X},{"type":
+"null"}]}` for complex types (primitives like `z.string().nullable()` DO get the clean
+type-array form, no `anyOf` — this asymmetry is why `question`/`reason`/`text` stay
+`.nullable()` below but `plan`/`queries` do not). Since `anyOf` was the only
+union-shaped keyword left anywhere in the schema after the root fix, and every
+provider rejection in this whole investigation (round 1 and round 2) has been about a
+union keyword specifically, `plan`/`queries` were changed to **sentinel values**
+instead of nullable: `plan` defaults to the empty plan `{goal:"",steps:[]}`, `queries`
+defaults to `[]`. This eliminates `anyOf` from the compiled schema ENTIRELY — confirmed
+locally: zero occurrences of `oneOf`/`anyOf`/`$ref`/`propertyNames` anywhere in the
+tree (not just the root), per the strengthened `plan-schema.test.ts` regression test.
+
+**Status: NOT yet live-verified.** The budget for this round (≤8 live calls) was spent
+reconfirming (wastefully, on an early mistake — see below) that the root-`oneOf` fix
+alone doesn't unblock Anthropic/OpenAI, before the sentinel-value redesign above could
+be tried. The sentinel-value schema is implemented, locally verified (see the "no
+union ANYWHERE" test), and all local suites pass, but **has not been re-spiked against
+a live provider** — that is the single most important next step for whoever picks this
+up, and should cost exactly 3 calls (1 attempt per model, no retry needed if this is
+the fix) at near-zero spend.
+
+**How the budget was actually spent (full disclosure):**
+1. Re-ran `scripts/spike-schema.ts` first WITHOUT updating it to import
+   `flatPlanOutcomeSchema` — it was still importing the OLD `planOutcomeSchema` from a
+   prior edit of `plan-schema.ts`'s exports. This wasted **5 calls** (2 Haiku + 1 Gemini
+   + 2 GPT-5-mini) reconfirming the ALREADY-KNOWN round-1 `oneOf`-at-root failure, not
+   testing the actual fix. Caught and fixed immediately after, but the calls were
+   already spent.
+2. Fixed the script, re-ran with `MAX_ATTEMPTS` temporarily reduced to 1 (budget was
+   down to 3 of 8) — **3 calls** (1 each). Gemini: GO (clean parse). Anthropic/GPT-5-mini:
+   STILL FAIL, generic `AI_APICallError: Provider returned error` with no captured
+   `responseBody` (the script's `describeError` only reads `.message`, not the full
+   provider error body an earlier diagnostic script captured in round 1) — exact text
+   not recovered this round.
+3. At the 8-call cap with no budget left for either (a) a diagnostic call to recover
+   the exact error text, or (b) a live re-verification of the sentinel-value redesign
+   devised in response to (2)'s failure, work stopped here per the explicit budget
+   instruction. `MAX_ATTEMPTS` was reverted to `2` in the committed script (the
+   intended retry policy for future runs — the `1` was a one-off, budget-driven choice
+   for this invocation only, not a permanent change).
+
+**Known, NOT-yet-addressed second hypothesis:** `stepSchema` (nested under `plan`)
+still has THREE genuinely-optional (not nullable, not sentinel) fields — `forEach`,
+`when`, `expects` — i.e. absent from that level's `required` array. `.optional()`
+(unlike `.nullable()`) does NOT introduce `anyOf`/`oneOf` — it's a plain omission from
+`required` — so it's a structurally different construct than everything fixed so far,
+and was never isolated/tested on its own in any round. If the sentinel-value fix above
+is re-spiked and STILL fails on Anthropic/OpenAI, this is the next thing to try:
+convert those three to the same required+nullable-or-sentinel pattern used everywhere
+else in this schema (`forEach: string|null`, `when`/`expects` similarly) — but that
+requires `executor.ts`/`validator.ts`/`joiner.ts` to treat `null` the same as
+`undefined` for these three fields (a wider, currently out-of-scope change versus
+everything else in this round, which touched only `plan-schema.ts`/`planner.ts`/one
+`pipeline.ts` call site).
+
+### VERDICT (a3): Schema GO/NO-GO after the round-2 fix — **GO for Gemini only (unchanged); Anthropic/OpenAI UNRESOLVED, next fix implemented but unverified**
+
+No regression: all local suites (server 304 tests, eval 93 tests, both typechecks
+sans the pre-existing unrelated `eval/test/scenario.test.ts` failure, `npm run smoke`
+549/549) pass with the sentinel-value schema in place. Do NOT mark this GO for
+Anthropic/OpenAI until the 3-call re-verification above actually runs and passes.
+
 ## 2. Cache passthrough spike (`scripts/spike-cache.ts`)
 
 **Setup:** two consecutive calls to `anthropic/claude-haiku-4.5` with an **identical**
@@ -233,17 +323,34 @@ per-message `providerOptions` seam) — and spends its whole budget (2 calls) on
 explicit-`cacheControl` path from §2, with the padded system as the identical prefix.
 
 **This mode was written and locally verified (token count only) but never executed
-against the live API in this pass.** The live-call budget for this whole follow-up
-task was capped at 7 calls total, and the re-spike + exact-error diagnostics in §1a
-(5 + 2 calls) consumed all 7 before the schema defect was fully characterized. Running
+against the live API in this pass.** The live-call budget for that follow-up task was
+capped at 7 calls total, and the re-spike + exact-error diagnostics in §1a (5 + 2
+calls) consumed all 7 before the schema defect was fully characterized. Running
 `--big` would have required 2 more calls, over the cap.
 
-**Verdict: NOT RUN.** `docs/TARGETS.md`'s existing fallback (full non-cached pricing for
-every planner-prompt cost estimate, per VERDICT (b) above) stands as-is, unchanged,
-since no new evidence was collected either way. Recommended follow-up: run
-`npx tsx scripts/spike-cache.ts --big` (2 calls, ~$0.003 at Haiku rates) with a fresh
-budget once the `oneOf`-at-root defect in §1a is also resolved, so a single follow-up
-pass can close out both open questions together.
+**Round-2 update (2026-11-05, same day): still NOT RUN — same reason, repeated.** This
+round's explicit instruction was to run `--big` BEFORE any diagnostics, but the
+schema-fix verification itself (§1b) consumed the ENTIRE round-2 budget (8 of 8 calls)
+before the flat-root fix could even be confirmed working — 5 of those 8 calls were
+wasted re-confirming the round-1 failure against a spike script that hadn't been
+updated to the new schema yet (an avoidable mistake, disclosed in §1b), leaving no
+room for `--big` even with the "run it first" instruction. `--big` mode itself is
+unchanged and still ready to run.
+
+**Verdict: NOT RUN (two rounds in a row).** `docs/TARGETS.md`'s existing fallback (full
+non-cached pricing for every planner-prompt cost estimate, per VERDICT (b) above)
+stands as-is, unchanged, since no new evidence was collected either way in either
+round. **Baseline-economics implication of staying ABSENT/unconfirmed:** no change to
+the committed budget split (optimized agent: full 110-scenario corpus ×3 trials;
+baseline agent: stratified 40-scenario subset ×1 trial, per `docs/TARGETS.md` §4) — it
+already assumes no cache discount, so an unconfirmed cache state is cost-neutral to
+that decision; it would only matter if `--big` comes back CONFIRMED, which would be
+evidence to revisit the baseline subset size upward in a future planning pass, not a
+blocker to anything committed today. Recommended follow-up: run
+`npx tsx scripts/spike-cache.ts --big` (2 calls, ~$0.003 at Haiku rates) with a fresh,
+SEPARATE budget (not bundled with the next schema-fix re-verification attempt — bundle
+the two only if the schema fix is confirmed GO first, so a schema failure doesn't
+burn through the cache probe's budget a third time).
 
 ## 3. Total spend (this task)
 
@@ -277,6 +384,26 @@ disclosed here rather than omitted.
 
 Exactly at the 7-live-call cap set for this follow-up task; the `--big` cache probe
 (§2a) was consequently not run. Well under the $0.20 cost cap.
+
+### 3b. Total spend (2026-11-05 round-2: flat-root + sentinel fix)
+
+| Call batch | Calls | Measured cost |
+|---|---|---|
+| Wasted re-spike (stale `planOutcomeSchema` import not yet updated) — Haiku, 2 attempts | 2 | $0 |
+| Wasted re-spike — Gemini, 1 attempt (succeeded, but against the stale schema) | 1 | $0.0004737 |
+| Wasted re-spike — GPT-5-mini, 2 attempts | 2 | $0 |
+| Flat-schema re-spike (`MAX_ATTEMPTS` reduced to 1 to stay in budget) — Haiku | 1 | $0 |
+| Flat-schema re-spike — Gemini (succeeded) | 1 | $0.0004433 |
+| Flat-schema re-spike — GPT-5-mini | 1 | $0 |
+| **Total** | **8** | **≈ $0.0009170** |
+
+Exactly at the 8-live-call cap set for this round; well under the $0.25 cost cap. 5 of
+the 8 calls (62.5%) were spent re-confirming an ALREADY-KNOWN failure because the spike
+script wasn't updated before the first re-run — disclosed in full in §1b rather than
+omitted. No budget remained for the exact-error diagnostic that would explain why
+Anthropic/OpenAI still fail with the (merely) root-fixed schema, nor for live-verifying
+the sentinel-value redesign devised in response, nor for the `--big` cache probe §2a
+asked for this round.
 
 ## 4. Cross-reference: `docs/TARGETS.md`
 

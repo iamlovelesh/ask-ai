@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { planOutcomeSchema, valueSchema } from '../src/agent/plan-schema';
+import {
+  planOutcomeSchema,
+  valueSchema,
+  flatPlanOutcomeSchema,
+  toPlanOutcome,
+  FlatOutcomeShapeError,
+  type FlatPlanOutcome,
+} from '../src/agent/plan-schema';
 import { CONFORMANCE_PLAN_OUTCOME } from './fixtures/conformance-plan';
 
 /** Walks a compiled JSON Schema for `$ref` cycles — a `$ref` is only a
@@ -123,6 +130,96 @@ describe('plan-schema — PlanOutcome', () => {
       },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('plan-schema — FlatPlanOutcome (docs/SPIKES.md §1b)', () => {
+  const emptyPlan = { goal: '', steps: [] };
+  const base: FlatPlanOutcome = {
+    kind: 'plan',
+    plan: emptyPlan,
+    queries: [],
+    question: null,
+    reason: null,
+    text: null,
+  };
+
+  it('compiled JSON Schema has no union (oneOf/anyOf) ANYWHERE — root or nested — no $ref cycles, no propertyNames', () => {
+    // Same exact conversion call as the `planOutcomeSchema` self-reference
+    // test above (mirrors @ai-sdk/provider-utils' zod4Schema()) — but this
+    // is the schema actually handed to `generateObject` now (by
+    // `planner.ts`'s `plan()` and `pipeline.ts`'s repair call site), so
+    // THIS is the regression guard for BOTH the root-level-`oneOf` defect
+    // AND the nested-`anyOf`-via-nullable-object defect (docs/SPIKES.md
+    // §1a/§1b) that `planOutcomeSchema`'s own `z.discriminatedUnion` still
+    // has (intentionally — it's never sent to a provider; see this file's
+    // header). Checks the WHOLE tree, not just the root — round 1's root
+    // fix alone was NOT enough; `plan`/`queries` must be sentinel-valued,
+    // not `.nullable()`, to keep this true (see `flatPlanOutcomeSchema`'s
+    // header for why).
+    const jsonSchema = z.toJSONSchema(flatPlanOutcomeSchema, {
+      target: 'draft-7',
+      io: 'input',
+      reused: 'inline',
+    });
+    const serialized = JSON.stringify(jsonSchema);
+    expect((jsonSchema as Record<string, unknown>)['type']).toBe('object');
+    expect(serialized).not.toContain('"oneOf"');
+    expect(serialized).not.toContain('"anyOf"');
+    expect(serialized).not.toContain('propertyNames');
+    expect(hasRefCycle(jsonSchema)).toBe(false);
+  });
+
+  it('toPlanOutcome narrows each of the 5 kinds back to the discriminated PlanOutcome union', () => {
+    const realPlan = { goal: 'g', steps: [{ id: 's1', action: 'a.b', params: {}, dependsOn: [] }] };
+    expect(toPlanOutcome({ ...base, kind: 'plan', plan: realPlan })).toEqual({
+      kind: 'plan',
+      plan: realPlan,
+    });
+    expect(toPlanOutcome({ ...base, kind: 'search', queries: ['q'] })).toEqual({ kind: 'search', queries: ['q'] });
+    expect(toPlanOutcome({ ...base, kind: 'clarify', question: 'which?' })).toEqual({
+      kind: 'clarify',
+      question: 'which?',
+    });
+    expect(toPlanOutcome({ ...base, kind: 'unsupported', reason: 'no action' })).toEqual({
+      kind: 'unsupported',
+      reason: 'no action',
+    });
+    expect(toPlanOutcome({ ...base, kind: 'respond', text: 'hi' })).toEqual({ kind: 'respond', text: 'hi' });
+  });
+
+  it('toPlanOutcome throws FlatOutcomeShapeError when the active-kind field is still its sentinel/null', () => {
+    // `plan`/`queries` use a SENTINEL (empty plan / empty array), not
+    // `null` — see `flatPlanOutcomeSchema`'s header for why — so `base`
+    // above (kind:'plan' with the sentinel empty plan) is already the
+    // "forgot to fill it in" case.
+    expect(() => toPlanOutcome(base)).toThrow(FlatOutcomeShapeError);
+    expect(() => toPlanOutcome({ ...base, kind: 'search' })).toThrow(FlatOutcomeShapeError);
+    expect(() => toPlanOutcome({ ...base, kind: 'clarify' })).toThrow(FlatOutcomeShapeError);
+    expect(() => toPlanOutcome({ ...base, kind: 'unsupported' })).toThrow(FlatOutcomeShapeError);
+    expect(() => toPlanOutcome({ ...base, kind: 'respond' })).toThrow(FlatOutcomeShapeError);
+  });
+
+  it('flatPlanOutcomeSchema requires every field present (no key may be omitted)', () => {
+    // A response missing a key entirely (rather than its default/sentinel
+    // value) must fail zod validation too — that's the all-fields-required
+    // shape OpenAI's strict mode enforces via the schema's own `required`
+    // array (see this file's header comment).
+    const result = flatPlanOutcomeSchema.safeParse({ kind: 'respond', text: 'hi' });
+    expect(result.success).toBe(false);
+  });
+
+  it('flatPlanOutcomeSchema accepts the full sentinel-filled shape for every kind', () => {
+    const cases: FlatPlanOutcome[] = [
+      { ...base, kind: 'plan', plan: { goal: 'g', steps: [] } },
+      { ...base, kind: 'search', queries: ['q'] },
+      { ...base, kind: 'clarify', question: 'which?' },
+      { ...base, kind: 'unsupported', reason: 'no action' },
+      { ...base, kind: 'respond', text: 'hi' },
+    ];
+    for (const c of cases) {
+      expect(flatPlanOutcomeSchema.safeParse(c).success).toBe(true);
+    }
   });
 });
 

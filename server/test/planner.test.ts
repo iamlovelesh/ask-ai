@@ -107,13 +107,28 @@ describe('plan() — happy path (MockLLM via __setTestFetch)', () => {
   });
 
   it('calls llmCall with the schema and returns a parsed PlanOutcome + usage + spanId', async () => {
-    const outcome = { kind: 'respond', text: 'Sure thing.' };
+    const narrowOutcome = { kind: 'respond', text: 'Sure thing.' };
+    // Wire content is the FLAT shape (`flatPlanOutcomeSchema` — every field
+    // present; `plan`/`queries` sentinel, `question`/`reason`/`text`
+    // nullable; docs/SPIKES.md §1b) a real provider's structured output
+    // would actually return — `plan()` narrows it back to `narrowOutcome`
+    // via `toPlanOutcome`.
+    const wireOutcome = {
+      kind: 'respond',
+      plan: { goal: '', steps: [] },
+      queries: [],
+      question: null,
+      reason: null,
+      text: 'Sure thing.',
+    };
     const fakeFetch = (async () =>
       new Response(
         JSON.stringify({
           id: `gen_${randomUUID()}`,
           model: 'anthropic/claude-haiku-4.5',
-          choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(outcome) }, finish_reason: 'stop' }],
+          choices: [
+            { index: 0, message: { role: 'assistant', content: JSON.stringify(wireOutcome) }, finish_reason: 'stop' },
+          ],
           usage: { prompt_tokens: 50, completion_tokens: 5, total_tokens: 55, cost: 0.0002 },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
@@ -122,7 +137,7 @@ describe('plan() — happy path (MockLLM via __setTestFetch)', () => {
 
     const result = await plan({ ...baseCtx(), turnId: `turn_${randomUUID()}` }, 'anthropic/claude-haiku-4.5');
 
-    expect(result.outcome).toEqual(outcome);
+    expect(result.outcome).toEqual(narrowOutcome);
     expect(result.usage.tokensIn).toBe(50);
     expect(typeof result.spanId).toBe('string');
   });

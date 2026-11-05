@@ -40,6 +40,37 @@ function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
+// --- flat-PlanOutcome normalization (Task 6 round-2 fix, docs/SPIKES.md
+// §1b) ----------------------------------------------------------------------
+//
+// `planner.ts`'s `plan()` and `pipeline.ts`'s repair call site now request
+// `flatPlanOutcomeSchema` (every field present; `plan`/`queries` default to
+// a SENTINEL empty value, `question`/`reason`/`text` default to `null` —
+// see `agent/plan-schema.ts`'s header for why the two groups differ)
+// instead of the old `planOutcomeSchema` discriminated union — a real
+// provider's structured-output decoding enforces that shape mechanically,
+// but THIS mock replays raw JS values as-is, so a terse, old-style
+// scripted value like `{kind:'respond', text:'hi'}` would fail the
+// schema's own `required` check (missing `plan`/`queries`/`question`/
+// `reason`) before the test ever reaches the behavior it's checking.
+// Rather than rewrite every `queueMockLlm([...])` call site across
+// `pipeline.test.ts`/`api.test.ts` to spell out all 5 placeholders,
+// normalize here: any queued value that duck-types as a `PlanOutcome` (a
+// `kind` field matching one of the 5 real literals) gets the 4 unused
+// kind-specific fields defaulted before being replayed. Values that DON'T
+// duck-type this way (a `JoinerDecision` keyed by `decision`, or a
+// deliberately-malformed value a test uses to exercise the parse-failure
+// path, e.g. `{nonsense:true}` or `{kind:'final',...}` with an invalid
+// `kind`) pass through unchanged — malformed-on-purpose stays malformed.
+const PLAN_OUTCOME_KINDS: ReadonlySet<string> = new Set(['plan', 'search', 'clarify', 'unsupported', 'respond']);
+
+function normalizeMockValue(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  const obj = value as Record<string, unknown>;
+  if (typeof obj['kind'] !== 'string' || !PLAN_OUTCOME_KINDS.has(obj['kind'])) return value;
+  return { plan: { goal: '', steps: [] }, queries: [], question: null, reason: null, text: null, ...obj };
+}
+
 /**
  * Builds a `fetch` that replays `values` IN ORDER, one `generateObject`
  * result per call: `llmCall`'s `generateObject` path parses the assistant
@@ -62,7 +93,7 @@ export function queueMockLlm(values: readonly unknown[]): MockLlmQueue {
           'extra, unscripted LLM call.',
       );
     }
-    const value = values[i];
+    const value = normalizeMockValue(values[i]);
     i += 1;
     return jsonResponse(200, chatCompletionBody(JSON.stringify(value), 'mock-model'));
   }) as typeof fetch;

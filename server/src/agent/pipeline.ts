@@ -36,7 +36,7 @@ import {
 import { retrieve, renderCards, type Card, type SessionCtx } from './retrieval.js';
 import type { Playbook } from '../playbooks/loader.js';
 import { matchPlaybook } from '../playbooks/loader.js';
-import { buildPlannerPrompt, plan as plannerPlan, type PlannerPromptCtx, type PlanResult } from './planner.js';
+import { buildPlannerPrompt, plan as plannerPlan, narrowFlatOutcome, type PlannerPromptCtx, type PlanResult } from './planner.js';
 import { validate, repairPrompt, BUDGETS, type HandleRef, type ValidationError } from './validator.js';
 import { checkStratum, joinerRepair } from './joiner.js';
 import { compose, type ComposeInput, type ComposeStepState } from './composer.js';
@@ -49,7 +49,7 @@ import {
   type TurnTranscript,
 } from './memory.js';
 import { llmCall, BudgetExceededError } from '../llm/client.js';
-import { planOutcomeSchema, type Plan, type PlanOutcome, type Step } from './plan-schema.js';
+import { flatPlanOutcomeSchema, type FlatPlanOutcome, type Plan, type PlanOutcome, type Step } from './plan-schema.js';
 import { pickPlannerModel, escalate, fastModel } from '../llm/router.js';
 
 // --- public contract (Task 13) ----------------------------------------------
@@ -411,11 +411,17 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
       const repairModel = escalate(model);
       const plannerSystem = buildPlannerPrompt(ctx).system;
       const promptText = repairPrompt((candidateOutcome as Extract<PlanOutcome, { kind: 'plan' }>).plan, verdict.errors);
+      // `schema: flatPlanOutcomeSchema`, not `planOutcomeSchema` — the same
+      // root-level-`oneOf` cross-provider defect fixed in `planner.ts`'s
+      // `plan()` applies here too (this is the OTHER place that ever asks
+      // a real provider for a `PlanOutcome` directly); `narrowFlatOutcome`
+      // (exported by `planner.ts`, reused rather than duplicated) converts
+      // back to `PlanOutcome` below.
       const repairAttempt = await callBudgeted(budget, () =>
-        llmCall<PlanOutcome>({
+        llmCall<FlatPlanOutcome>({
           stage: 'repair',
           model: repairModel,
-          schema: planOutcomeSchema,
+          schema: flatPlanOutcomeSchema,
           system: plannerSystem,
           prompt: promptText,
           turnId,
@@ -430,7 +436,11 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
         llm: repairAttempt.value.usage,
       };
       emit(repairEvent);
-      candidateOutcome = repairAttempt.value.value as PlanOutcome;
+      candidateOutcome = narrowFlatOutcome(repairAttempt.value.value as FlatPlanOutcome, {
+        model: repairModel,
+        usage: repairAttempt.value.usage,
+        spanId: repairAttempt.value.spanId,
+      });
       llmUsage = repairAttempt.value.usage;
     }
   }
