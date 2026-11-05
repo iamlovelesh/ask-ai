@@ -1,0 +1,25 @@
+# Task 17 Batch C — category: direct, module: workflows (2nd scenario;
+# lint gap: workflows touched by only 1 scenario before this — the
+# existing direct-workflows-001 covers create_workflow).
+#
+# get_workflow_definition is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id,name FROM structures WHERE kind='workflow' AND name='workflow 6';
+#   -> struct_101, 'workflow 6' (exists, unique name)
+
+id: direct-workflows-002
+category: direct
+profile: standard
+turns:
+  - user: "What does the 'workflow 6' automation actually do?"
+    expect:
+      planActions:
+        mustInclude: [workflows.get_workflow_definition]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [workflows.get_workflow_definition]
+        mustNotClaim: [failed, error]

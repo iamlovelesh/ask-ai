@@ -1,0 +1,26 @@
+# Task 17 Batch C — category: direct, module: enrollments (2nd scenario;
+# lint gap: enrollments touched by only 1 scenario before this — the
+# existing multistep-enrollments-001 is a 3-action multistep flow;
+# this one is a plain single-action direct read).
+#
+# search_enrollments is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy, reusing multistep-enrollments-001's course):
+#   SELECT id,title FROM courses WHERE title='Marketing Automation 101';
+#   -> course_2 (exists)
+
+id: direct-enrollments-002
+category: direct
+profile: standard
+turns:
+  - user: "Who's currently enrolled in the 'Marketing Automation 101' course?"
+    expect:
+      planActions:
+        mustInclude: [enrollments.search_enrollments]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [enrollments.search_enrollments]
+        mustNotClaim: [failed, error]

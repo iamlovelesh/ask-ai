@@ -1,0 +1,26 @@
+# Task 17 Batch C — category: direct, module: forms (2nd scenario; lint
+# gap: forms touched by only 1 scenario before this — the existing
+# multistep-forms-001 is a 2-action multistep flow; this one is a plain
+# single-action direct read).
+#
+# get_form_definition is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id,name FROM structures WHERE kind='form' AND name='form 2';
+#   -> struct_137, 'form 2' (exists, unique name)
+
+id: direct-forms-002
+category: direct
+profile: standard
+turns:
+  - user: "What fields are on 'form 2'?"
+    expect:
+      planActions:
+        mustInclude: [forms.get_form_definition]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [forms.get_form_definition]
+        mustNotClaim: [failed, error]
