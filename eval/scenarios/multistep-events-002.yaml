@@ -1,0 +1,48 @@
+# Task 17 Batch B part 1 — category: multistep, module: events.
+#
+# `promote_waitlisted_attendee` is real FIFO (earliest `joined_at` among
+# `waitlisted=1, status != 'cancelled'` rows for the event) and does NOT
+# itself re-check capacity before promoting (m24-events.ts:513-523 — no
+# capacity comparison in the handler at all, it just un-waitlists the
+# next-in-line and recomputes `registered_count`), so "an event with free
+# capacity" only matters as a sanity precondition for why promoting is a
+# sensible real-world action here, not as a program-enforced guard.
+#
+# Derivation (template copy):
+#   SELECT parent_id, COUNT(*) FROM participations WHERE
+#     kind='event_registration' AND waitlisted=1 AND status != 'cancelled'
+#     GROUP BY parent_id ORDER BY COUNT(*) DESC;
+#   -> evt_13 "Customer Summit" has 3 waitlisted rows (capacity=264,
+#     confirmed=65 -> 199 free seats)
+#   SELECT id, contact_id, joined_at FROM participations WHERE
+#     parent_id='evt_13' AND waitlisted=1 AND status != 'cancelled' ORDER
+#     BY joined_at ASC LIMIT 1;
+#   -> part_211, contact_id='con_10586' (earliest-joined, FIFO-first)
+
+id: multistep-events-002
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      There's free room at the "Customer Summit" (evt_13) now — promote
+      the next person off its waitlist, and check them in once they're
+      confirmed.
+    expect:
+      planActions:
+        mustInclude:
+          - events.promote_waitlisted_attendee
+          - events.check_in_attendee
+        orderFree: false
+      paramChecks:
+        - action: events.promote_waitlisted_attendee
+          param: id
+          equals: evt_13
+      state:
+        - query: "SELECT waitlisted FROM participations WHERE id='part_211'"
+          equals: 0
+        - query: "SELECT status FROM participations WHERE id='part_211'"
+          equals: attended
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

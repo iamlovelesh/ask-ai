@@ -1,0 +1,50 @@
+# Task 17 Batch B part 1 — category: multistep, module: events (+contacts).
+#
+# No seeded event in the template copy is already at capacity (every
+# event's live, non-cancelled/non-waitlisted registration count is well
+# under its `capacity`), so "register on a FULL event" is reached here by
+# first capping an event's capacity down to its CURRENT confirmed count —
+# `events.set_event_capacity` explicitly allows capacity == confirmed
+# (m24-events.ts:369 only refuses capacity < confirmed) — and then
+# registering a brand-new attendee, which `register_attendee`'s real
+# capacity check (confirmed >= capacity) waitlists automatically
+# (m24-events.ts:405-412).
+#
+# Derivation (template copy):
+#   SELECT e.id, e.capacity, (SELECT COUNT(*) FROM participations p WHERE
+#     p.kind='event_registration' AND p.parent_type='event' AND
+#     p.parent_id=e.id AND p.status != 'cancelled' AND p.waitlisted=0)
+#     AS confirmed FROM events e;
+#   -> evt_9 "Product Roadmap Webinar": capacity=50, confirmed=5
+#   (no seeded event anywhere has confirmed >= capacity already).
+
+id: multistep-events-001
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      The "Product Roadmap Webinar" (evt_9) is basically full — cap its
+      capacity at exactly how many people are already confirmed, then add
+      a brand-new contact named Priya Shah (priya.shah@example.com) and
+      register her for it.
+    expect:
+      planActions:
+        mustInclude:
+          - events.set_event_capacity
+          - contacts.create_contact
+          - events.register_attendee
+      paramChecks:
+        - action: events.set_event_capacity
+          param: capacity
+          equals: 5
+        - action: events.set_event_capacity
+          param: id
+          equals: evt_9
+      state:
+        - query: "SELECT COUNT(*) AS n FROM participations WHERE kind='event_registration' AND parent_type='event' AND parent_id='evt_9' AND waitlisted=1"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [waitlist]
+        mustNotClaim: [failed, error]

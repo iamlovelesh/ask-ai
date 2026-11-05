@@ -1,0 +1,43 @@
+# Task 17 Batch B part 1 — category: conditional, module: support_tickets.
+#
+# STATUS MACHINE (m47-support_tickets.ts): `open -> pending, resolved` is
+# a legal direct transition, so "resolve all open tickets ... older than
+# 30 days" needs no intermediate `pending` hop.
+#
+# Derivation (template copy, VIRTUAL_NOW epoch 1793786400000 =
+# 2026-11-04T10:00:00Z per `eval/runner-process.ts`'s default):
+#   cutoff30 = NOW - 30*DAY_MS (Oct 5 2026)
+#   SELECT assignee_id, COUNT(*) FROM support_tickets WHERE status='open'
+#     GROUP BY assignee_id ORDER BY COUNT(*) DESC LIMIT 1;
+#   -> user_38, 5 open tickets
+#   SELECT COUNT(*) FROM support_tickets WHERE status='open' AND
+#     assignee_id='user_38' AND created_at < cutoff30;
+#   -> 5 (ALL 5 of user_38's open tickets are already older than 30 days)
+# 5 is well under `SPILL_CAP` (50) and `update_ticket_status` is
+# `risk: 'write'` (no destructive/external/bulk tag), so per `shouldGate`
+# neither condition fires -> no confirmation expected.
+
+id: conditional-tickets-001
+category: conditional
+profile: standard
+turns:
+  - user: >-
+      Resolve every open support ticket assigned to user_38 that's been
+      sitting for more than a month now.
+    expect:
+      planActions:
+        mustInclude:
+          - support_tickets.search_tickets
+          - support_tickets.update_ticket_status
+        mustNotInclude: [support_tickets.create_support_ticket]
+      paramChecks:
+        - action: support_tickets.update_ticket_status
+          param: status
+          equals: resolved
+      state:
+        - query: "SELECT COUNT(*) AS n FROM support_tickets WHERE assignee_id='user_38' AND status='resolved'"
+          countDelta: 5
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

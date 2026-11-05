@@ -1,0 +1,42 @@
+# Task 17 Batch B part 1 — category: multistep, module: support_tickets.
+#
+# Three real actions on the same new ticket: create, assign a team
+# member, set priority. `assignee_id` picked as a seeded `role='support'`
+# user so the assignment reads naturally in-domain.
+#
+# Derivation (template copy):
+#   SELECT id,name,role,team_id FROM users WHERE role='support' LIMIT 1;
+#   -> user_24 ("Greta Abara", team_id='team_1')
+#   Contact reused from an earlier fixture in this batch: con_1 (Kenji
+#   Volkov) exists in the template seed.
+
+id: multistep-tickets-001
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      Open a support ticket for contact con_1 about a billing question,
+      assign it to Greta Abara (user_24), and mark it high priority.
+    expect:
+      planActions:
+        mustInclude:
+          - support_tickets.create_support_ticket
+          - support_tickets.assign_ticket_owner
+          - support_tickets.set_ticket_priority
+      paramChecks:
+        - action: support_tickets.create_support_ticket
+          param: contact_id
+          equals: con_1
+        - action: support_tickets.assign_ticket_owner
+          param: assignee_id
+          equals: user_24
+        - action: support_tickets.set_ticket_priority
+          param: priority
+          equals: high
+      state:
+        - query: "SELECT COUNT(*) AS n FROM support_tickets WHERE contact_id='con_1' AND assignee_id='user_24' AND priority='high'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]
