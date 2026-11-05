@@ -813,8 +813,8 @@ describe('validator — ref-path vs output schema (REF_PATH_MISMATCH)', () => {
 describe('BUDGETS (LLD §5.1)', () => {
   it('matches the canonical values', () => {
     expect(BUDGETS).toEqual({
-      maxLlmCallsPerTurn: 6,
-      maxRepairs: 2,
+      maxLlmCallsPerTurn: 8,
+      maxRepairs: 4,
       maxReplans: 2,
       maxSearchRounds: 2,
       turnTimeoutMs: 120_000,

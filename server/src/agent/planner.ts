@@ -61,6 +61,13 @@ Choose "respond" for requests that need no action at all (small talk,
 clarifying statements the user already answered, or a direct answer you
 already know from the working state).
 
+If the request requires find→filter→act composition, BUILD the plan using
+list/search actions to resolve entities and gather data. Return "unsupported"
+ONLY when no combination of available actions could accomplish the request.
+Do not return "unsupported" or "clarify" merely because no single action
+matches. For a follow-up, resolve "them"/"the first one" against the
+prior-turn $r_t<T>_s<N> handles shown in the working state.
+
 A Step has this exact shape — ALL SIX fields always present ("id"/"action"/
 "params"/"dependsOn"/"forEach"/"when"/"expects"), using the sentinel/null
 values shown below for whichever of "forEach"/"when"/"expects" don't apply

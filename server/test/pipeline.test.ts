@@ -289,12 +289,17 @@ describe('runTurn — joiner checkpoint', () => {
 });
 
 describe('runTurn — LLM call budget', () => {
-  it('scripts 7 LLM-call demand; the 7th is never made; turn fails honestly at 6', async () => {
+  it('scripts 9 LLM-call demand; the 9th is never made; turn fails honestly at 8', async () => {
+    // BUDGETS.maxLlmCallsPerTurn rose 6→8 with maxRepairs 2→4 (TRIAGE rec #3).
+    // 2 search + 1 plan + 3 repair (3rd valid) + 2 joiner replans = 8 calls;
+    // the 3rd joiner violation aborts WITHOUT an LLM call (maxReplans=2), so
+    // the 9th scripted response is never fetched.
     const queue = queueMockLlm([
       { kind: 'search', queries: ['q1'] }, // 1
       { kind: 'search', queries: ['q2'] }, // 2
       { kind: 'plan', plan: { goal: 'g', steps: [{ id: 's1', action: 'bogus.not_real', params: {}, dependsOn: [] }] } }, // 3 invalid
       { kind: 'plan', plan: { goal: 'g', steps: [{ id: 's1', action: 'bogus.not_real', params: {}, dependsOn: [] }] } }, // 4 repair1, still invalid
+      { kind: 'plan', plan: { goal: 'g', steps: [{ id: 's1', action: 'bogus.not_real', params: {}, dependsOn: [] }] } }, // 5 repair2, still invalid
       {
         kind: 'plan',
         plan: {
@@ -304,9 +309,10 @@ describe('runTurn — LLM call budget', () => {
             { id: 's2', action: 'tasks.create_task', params: {}, dependsOn: ['s1'] },
           ],
         },
-      }, // 5 repair2, valid
-      { decision: 'patch', patchedSteps: [{ id: 's2b', action: 'tasks.create_task', params: {}, dependsOn: [] }] }, // 6 joiner round 1
-      { decision: 'abort' }, // 7 — scripted but NEVER consumed (blocked by the global budget)
+      }, // 6 repair3, valid — s1 (empty, expects nonEmpty) violates at the write stratum
+      { decision: 'patch', patchedSteps: [{ id: 's2b', action: 'tasks.create_task', params: {}, dependsOn: [] }] }, // 7 joiner replan 1 (still violates via kept s1)
+      { decision: 'patch', patchedSteps: [{ id: 's2c', action: 'tasks.create_task', params: {}, dependsOn: [] }] }, // 8 joiner replan 2
+      { decision: 'abort' }, // 9 — scripted but NEVER consumed (blocked by the global budget / maxReplans)
     ]);
     __setTestFetch(queue.fetch);
 
@@ -326,15 +332,15 @@ describe('runTurn — LLM call budget', () => {
 
     const events = await drive(registry, 'expensive request');
 
-    expect(queue.callCount()).toBe(6); // the 7th scripted response is never fetched
+    expect(queue.callCount()).toBe(8); // the 9th scripted response is never fetched
     expect(created).toBe(0); // the turn aborts before any patched write ever runs
 
     const completed = completedOf(events);
     expect(completed.status).toBe('failed');
-    expect(completed.metrics.llmCalls).toBe(6);
-    expect(completed.metrics.repairs).toBe(2);
+    expect(completed.metrics.llmCalls).toBe(8);
+    expect(completed.metrics.repairs).toBe(3);
     expect(completed.metrics.searchRounds).toBe(2);
-    expect(completed.metrics.replans).toBe(1);
+    expect(completed.metrics.replans).toBe(2);
     expect(Number.isFinite(completed.metrics.ttfurMs)).toBe(true);
     expect(Number.isFinite(completed.metrics.totalMs)).toBe(true);
     expect(completed.metrics.ttfurMs).toBeLessThanOrEqual(completed.metrics.totalMs);

@@ -70,8 +70,13 @@ export interface Invalid {
 // --- budgets (LLD §5.1 — canonical; the spec defers to these) --------------
 
 export const BUDGETS = {
-  maxLlmCallsPerTurn: 6,
-  maxRepairs: 2,
+  // maxLlmCallsPerTurn 6→8 and maxRepairs 2→4 (LLD §5.1 amendment per TRIAGE
+  // rec #3, C3=26): the haiku repairer can't converge 3-entity plans within 2
+  // attempts → hard `failed`. The per-turn call ceiling rises in lockstep so
+  // the extra repair rounds (worst case: 2 search + 1 plan + 4 repair = 7,
+  // leaving headroom for a joiner replan) actually have room to run.
+  maxLlmCallsPerTurn: 8,
+  maxRepairs: 4,
   maxReplans: 2,
   maxSearchRounds: 2,
   turnTimeoutMs: 120_000,
@@ -561,7 +566,7 @@ export function validate(
     errors.push({
       code: 'REF_PATH_MISMATCH',
       stepId: step.id,
-      message: `${context}: '${ref}' does not match the output of action '${producerSlug}' — '${res.field}' is not reachable on that result.${avail}${pluckHint}`,
+      message: `${context}: '${ref}' does not match the output of action '${producerSlug}' — '${res.field}' is not reachable on that result.${avail}${pluckHint} Corrected-ref example: "$${parsed.stepId}.items[*].id" reads the id of every row; "$${parsed.stepId}.total" reads the count.`,
     });
   }
 
@@ -575,7 +580,7 @@ export function validate(
       errors.push({
         code: 'REF_GRAMMAR',
         stepId: step.id,
-        message: `${context}: '${ref}' is not a valid ref — only $sN[.path], $r_t<T>_s<N>[.path], or $item[.path] (under forEach) are legal.`,
+        message: `${context}: '${ref}' is not a valid ref — only $sN[.path], $r_t<T>_s<N>[.path], or $item[.path] (under forEach) are legal. Corrected-ref example: "$s1.items[*].id" (per-row id from step s1) or "$r_t2_s1" (a prior-turn handle shown in the working state).`,
       });
       return;
     }
@@ -652,7 +657,7 @@ export function validate(
           errors.push({
             code: 'REF_PATH_MISMATCH',
             stepId: step.id,
-            message: `Step '${step.id}': param '${key}' for '${step.action}' takes a single value, but '${value}' is an 'items[*]' pluck that resolves to a LIST. Narrow the list to one item first (filter to a single match) or reference a scalar field — do not bind an array to a scalar id/param.`,
+            message: `Step '${step.id}': param '${key}' for '${step.action}' takes a single value, but '${value}' is an 'items[*]' pluck that resolves to a LIST. Narrow the list to one item first (filter to a single match) or reference a scalar field — do not bind an array to a scalar id/param. Corrected-ref example: resolve to ONE record (e.g. core.filter down to a single match in step s2) and reference its scalar id as "$s2.id", not an "items[*]" pluck.`,
           });
           continue;
         }
