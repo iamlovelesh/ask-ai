@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { retrieve, renderCards, scoreCard, computeSessionBoost, computeModuleCohesion, diversify } from '../src/agent/retrieval';
+import { retrieve, renderCards, renderCard, scoreCard, computeSessionBoost, computeModuleCohesion, diversify } from '../src/agent/retrieval';
 import type { SessionCtx } from '../src/agent/retrieval';
+import { registry } from '../src/catalog/registry';
 
 function emptySession(): SessionCtx {
   return { usedActionSlugs: [], activeModules: [] };
@@ -151,5 +152,30 @@ describe('renderCards', () => {
     expect(card).toBeDefined();
     expect(card!.text).toContain('contacts.create_contact');
     expect(card!.text).toContain('Create contact');
+  });
+
+  // --- P0: schema-derived card enrichment (input types + output fields) -----
+  // Assertions are derived from the action's OWN zod schema (not hardcoded
+  // field expectations), per the standing genericity rule.
+
+  it('shows ALL input params with types (not truncated at 6) + enums inlined', () => {
+    const search = registry.get('invoices.search_invoices')!;
+    const shapeKeys = Object.keys((search.inputSchema as { shape: Record<string, unknown> }).shape);
+    expect(shapeKeys.length).toBeGreaterThan(6); // the trigger: >6 params
+    const card = renderCard(search);
+    for (const k of shapeKeys) expect(card).toContain(k); // every param visible
+    expect(card).toContain('issued_after'); // a param past the old 6-slot cap
+
+    const apptCard = renderCard(registry.get('appointments.search_appointments')!);
+    expect(apptCard).toMatch(/status\?:\([a-z_|]+\)/); // enum values inlined for the status param
+  });
+
+  it('shows schema-derived OUTPUT row fields (so the planner stops guessing field names)', () => {
+    const invCard = renderCard(registry.get('invoices.search_invoices')!);
+    expect(invCard).toContain('→ items:');
+    expect(invCard).toContain('total_cents'); // the real money field (vs guessed amount_cents)
+
+    const apptCard = renderCard(registry.get('appointments.search_appointments')!);
+    expect(apptCard).toContain('start_at'); // the real time field (vs guessed start_time)
   });
 });

@@ -13,6 +13,7 @@
  */
 
 import MiniSearch from 'minisearch';
+import { z } from 'zod';
 import { registry } from '../catalog/registry.js';
 import type { ActionDef } from '../catalog/types.js';
 
@@ -195,16 +196,160 @@ export function diversify<T extends { module: string }>(sorted: readonly T[], ca
   return picked;
 }
 
-function renderCard(action: ActionDef): string {
-  const shape =
-    action.inputSchema !== null &&
-    typeof action.inputSchema === 'object' &&
-    'shape' in action.inputSchema &&
-    typeof (action.inputSchema as { shape?: unknown }).shape === 'object'
-      ? ((action.inputSchema as { shape: Record<string, unknown> }).shape)
-      : undefined;
-  const keyParams = shape ? Object.keys(shape).slice(0, 6).join(', ') : '';
-  return `${action.slug} — ${action.name}: ${action.description}${keyParams ? ` [${keyParams}]` : ''}`;
+// --- schema-derived card enrichment (P0) ------------------------------------
+//
+// The old card was `slug — name: desc [first-6-param-NAMES]`: no types, no
+// enums, params truncated at 6, and NO output fields — so the planner guessed
+// field/param names blind (the wrong-field class: amount_cents vs total_cents,
+// start_time vs start_at; the invoices date-param 100%-failure where the
+// needed param sat past slot 6, invisible). Both the input signature and the
+// output row preview below are derived PROGRAMMATICALLY from the action's zod
+// schemas — no hand-written card content — so a module added later is
+// described the same way without touching this file.
+
+const DATE_FIELD_RE = /_(at|date|until|from|after|before)$/;
+const MAX_OUTPUT_FIELDS = 10;
+
+/** Strip optional/nullable/default wrappers (bounded); report whether any
+ * `optional`/`default` wrapper was seen (→ the param is optional). */
+function unwrapType(schema: unknown): { schema: unknown; optional: boolean } {
+  let s: unknown = schema;
+  let optional = false;
+  for (let i = 0; i < 6 && s != null; i += 1) {
+    if (s instanceof z.ZodOptional || s instanceof z.ZodDefault) optional = true;
+    if (
+      (s instanceof z.ZodOptional || s instanceof z.ZodNullable || s instanceof z.ZodDefault) &&
+      typeof (s as { unwrap?: () => unknown }).unwrap === 'function'
+    ) {
+      s = (s as { unwrap: () => unknown }).unwrap();
+      continue;
+    }
+    break;
+  }
+  return { schema: s, optional };
+}
+
+function arrayElementSchema(schema: unknown): unknown | undefined {
+  const s = schema as { element?: unknown; def?: { element?: unknown } };
+  return s.element ?? s.def?.element;
+}
+
+/** Compact, generic type label for a param/field schema. `fieldName` (when
+ * given) upgrades a bare number following the catalog's timestamp-suffix
+ * convention to `date-ms`, the single most useful hint for the planner. */
+function compactType(schema: unknown, fieldName?: string): string {
+  const { schema: s } = unwrapType(schema);
+  if (s instanceof z.ZodString) return 'str';
+  if (s instanceof z.ZodNumber) return fieldName !== undefined && DATE_FIELD_RE.test(fieldName) ? 'date-ms' : 'num';
+  if (s instanceof z.ZodBoolean) return 'bool';
+  if (s instanceof z.ZodEnum) {
+    const opts = (s as { options?: readonly string[] }).options ?? [];
+    return opts.length > 0 ? `(${opts.join('|')})` : 'enum';
+  }
+  if (s instanceof z.ZodArray) return `${compactType(arrayElementSchema(s))}[]`;
+  if (s instanceof z.ZodObject) return 'obj';
+  return 'any';
+}
+
+function objectShape(schema: unknown): Record<string, unknown> | undefined {
+  const s = schema;
+  if (s instanceof z.ZodObject) return (s as unknown as { shape: Record<string, unknown> }).shape;
+  return undefined;
+}
+
+/** The row/item field shape an action's output exposes, and whether that
+ * result is a list (→ fields live under `items`). Mirrors the shapes
+ * `catalog/list-output.ts` and the module views produce: a list-or-spill
+ * union, a bare `{items,total}`, a bare array, or a single record/wrapper
+ * object. `undefined` for a non-introspectable (scalar/opaque) output. */
+function outputRowShape(outputSchema: unknown): { fields: Record<string, unknown>; list: boolean } | undefined {
+  const { schema: s } = unwrapType(outputSchema);
+
+  if (s instanceof z.ZodUnion) {
+    const opts = (s as unknown as { options?: readonly unknown[]; def?: { options?: readonly unknown[] } });
+    for (const opt of opts.options ?? opts.def?.options ?? []) {
+      const { schema: o } = unwrapType(opt);
+      const shape = objectShape(o);
+      const itemsSchema = shape?.['items'];
+      if (itemsSchema !== undefined) {
+        const { schema: arr } = unwrapType(itemsSchema);
+        const el = objectShape(unwrapType(arrayElementSchema(arr)).schema);
+        if (el) return { fields: el, list: true };
+      }
+    }
+    return undefined;
+  }
+  if (s instanceof z.ZodArray) {
+    const el = objectShape(unwrapType(arrayElementSchema(s)).schema);
+    if (el) return { fields: el, list: true };
+  }
+  const shape = objectShape(s);
+  if (shape) {
+    const itemsSchema = shape['items'];
+    if (itemsSchema !== undefined) {
+      const { schema: arr } = unwrapType(itemsSchema);
+      const el = objectShape(unwrapType(arrayElementSchema(arr)).schema);
+      if (el) return { fields: el, list: true };
+    }
+    return { fields: shape, list: false };
+  }
+  return undefined;
+}
+
+/** Deterministic, information-dense field order: id first, then human
+ * labels, then dates, then money/score, then status, then the rest
+ * (alphabetical within each tier) — so the ~10-field cap keeps the fields a
+ * planner most needs. */
+function orderOutputFields(keys: readonly string[]): string[] {
+  const tier = (k: string): number => {
+    if (k === 'id') return 0;
+    if (['name', 'title', 'subject', 'label', 'number'].includes(k)) return 1;
+    // Universal audit timestamps are rarely what a planner filters on — demote
+    // them below money/status so the ~10-field cap keeps the domain fields.
+    if (k === 'created_at' || k === 'updated_at') return 5;
+    if (DATE_FIELD_RE.test(k)) return 2;
+    if (/_cents$/.test(k) || ['amount', 'total', 'value', 'score', 'quantity'].includes(k)) return 3;
+    if (k === 'status') return 4;
+    return 5;
+  };
+  return [...keys].sort((a, b) => tier(a) - tier(b) || (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/** `name?:type` per param, ALL params (no 6-cap), enums inlined. */
+export function inputSignature(inputSchema: unknown): string {
+  const shape = objectShape(inputSchema);
+  if (!shape) return '';
+  const parts = Object.entries(shape).map(([k, v]) => {
+    const { optional } = unwrapType(v);
+    return `${k}${optional ? '?' : ''}:${compactType(v, k)}`;
+  });
+  return parts.length > 0 ? `[${parts.join(', ')}]` : '';
+}
+
+/** `→ items: {id, name, status, total_cents:date?...}` (or `→ {…}` for a
+ * single-record output), schema-derived, capped at `MAX_OUTPUT_FIELDS`. A
+ * str field renders bare (just its name); non-str fields carry their compact
+ * type so the planner knows e.g. `total_cents:num`, `created_at:date-ms`,
+ * `status:(open|closed|…)`. */
+export function outputPreview(outputSchema: unknown): string {
+  const info = outputRowShape(outputSchema);
+  if (!info) return '';
+  const ordered = orderOutputFields(Object.keys(info.fields));
+  if (ordered.length === 0) return '';
+  const shown = ordered.slice(0, MAX_OUTPUT_FIELDS);
+  const rendered = shown.map((k) => {
+    const t = compactType(info.fields[k], k);
+    return t === 'str' ? k : `${k}:${t}`;
+  });
+  const more = ordered.length > shown.length ? ', …' : '';
+  const body = `{${rendered.join(', ')}${more}}`;
+  return info.list ? ` → items: ${body}` : ` → ${body}`;
+}
+
+export function renderCard(action: ActionDef): string {
+  const sig = inputSignature(action.inputSchema);
+  const out = outputPreview(action.outputSchema);
+  return `${action.slug} — ${action.name}: ${action.description}${sig ? ` ${sig}` : ''}${out}`;
 }
 
 // --- resolver-slot reservation (TRIAGE rec #1) ------------------------------
