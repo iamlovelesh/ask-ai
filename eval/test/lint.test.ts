@@ -50,6 +50,17 @@ describe('lintScenarios — category/subtype coverage', () => {
     expect(issues.some((i) => i.kind === 'category-coverage' && i.detail.includes("'unsupported'"))).toBe(true);
   });
 
+  it('flags a category that is ENTIRELY ABSENT from the corpus, not just under-represented (defect 1, hardening task 17)', () => {
+    // Every scenario here is 'direct' — 'indirect' never appears at all.
+    // Before the fix, checkEnumCoverage's Map only gained entries for
+    // categories that appeared >=1 time, so a wholly-missing category was
+    // invisible. The fix seeds the Map from the full `categorySchema`
+    // enum, so a 0-count category must now be named in the issues.
+    const scenarios = [scenario({ id: 'a', category: 'direct' }), scenario({ id: 'b', category: 'direct' })];
+    const issues = lintScenarios(scenarios, { minPerModule: 0 });
+    expect(issues.some((i) => i.kind === 'category-coverage' && i.detail.includes("'indirect'") && i.detail.includes('only 0 scenario'))).toBe(true);
+  });
+
   it('flags a subtype with only 1 scenario', () => {
     const scenarios = [
       scenario({ id: 'a', category: 'direct', subtype: 'typo' }),

@@ -5,8 +5,14 @@
  * must eventually satisfy:
  *   - every catalog MODULE touched by ≥2 scenarios (an action slug's
  *     module prefix, e.g. `leads.search_leads` → module `leads`)
- *   - every scenario CATEGORY (LLD §9.1's 8-way enum) has ≥2 scenarios
- *   - every scenario SUBTYPE that appears at all has ≥2 scenarios
+ *   - every scenario CATEGORY in `categorySchema`'s FULL enum (LLD §9.1's
+ *     8-way enum) has ≥2 scenarios — including a category with ZERO
+ *     scenarios, which previously passed silently because the coverage
+ *     map only ever gained entries for categories that appeared at least
+ *     once (hardening task 17, defect 1: an absent category such as
+ *     `indirect` must fail loudly, named, not be invisible)
+ *   - every scenario SUBTYPE in `subtypeSchema`'s FULL enum has ≥2
+ *     scenarios, same absent-member fix as categories above
  *   - no scenario embeds an ABSOLUTE DATE outside the pinned
  *     `VIRTUAL_NOW` convention (LLD §3.2: "hardcoded in scenarios — never
  *     'today'" — this check flags YYYY-MM-DD-shaped literals in a
@@ -29,7 +35,7 @@
 
 import { pathToFileURL } from 'node:url';
 import { loadScenarios } from './runner-tuples.js';
-import { actionSlugsTouchedBy, hasRealAssertion, type Scenario } from './types.js';
+import { actionSlugsTouchedBy, categorySchema, hasRealAssertion, subtypeSchema, type Scenario } from './types.js';
 
 export interface LintIssue {
   kind: 'module-coverage' | 'category-coverage' | 'subtype-coverage' | 'absolute-date' | 'empty-expect';
@@ -76,14 +82,22 @@ function checkModuleCoverage(scenarios: readonly Scenario[], min: number): LintI
 
 // --- category / subtype coverage --------------------------------------------
 
+/** Iterates the FULL `allMembers` enum (not merely the members that happen
+ * to appear in `scenarios`) — an enum member absent from the corpus
+ * entirely must fail with "0 scenario(s)" rather than pass silently
+ * because it never got a `Map` entry. Previously this function only ever
+ * saw keys that appeared at least once, so a wholly-missing category (e.g.
+ * `indirect`) was invisible to the coverage gate (hardening task 17,
+ * defect 1). */
 function checkEnumCoverage(
   scenarios: readonly Scenario[],
   keyOf: (s: Scenario) => string | undefined,
+  allMembers: readonly string[],
   min: number,
   kind: LintIssue['kind'],
   label: string,
 ): LintIssue[] {
-  const counts = new Map<string, number>();
+  const counts = new Map<string, number>(allMembers.map((m) => [m, 0]));
   for (const s of scenarios) {
     const key = keyOf(s);
     if (key === undefined) continue;
@@ -168,8 +182,8 @@ export function lintScenarios(scenarios: readonly Scenario[], opts: LintOptions 
   if (!opts.allowPartialCoverage) {
     issues.push(
       ...checkModuleCoverage(scenarios, minPerModule),
-      ...checkEnumCoverage(scenarios, (s) => s.category, minPerCategory, 'category-coverage', 'category'),
-      ...checkEnumCoverage(scenarios, (s) => s.subtype, minPerSubtype, 'subtype-coverage', 'subtype'),
+      ...checkEnumCoverage(scenarios, (s) => s.category, categorySchema.options, minPerCategory, 'category-coverage', 'category'),
+      ...checkEnumCoverage(scenarios, (s) => s.subtype, subtypeSchema.options, minPerSubtype, 'subtype-coverage', 'subtype'),
     );
   }
   return issues;
