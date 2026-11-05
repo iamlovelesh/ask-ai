@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import {
   validate,
+  autoFixRefs,
   parseRefGrammar,
   computePlanHash,
   repairPrompt,
@@ -767,7 +768,7 @@ describe('validator — ref-path vs output schema (REF_PATH_MISMATCH)', () => {
     }
   });
 
-  it('when.ref is also path-checked ($s1.id on a list output → REF_PATH_MISMATCH)', () => {
+  it('when.ref IS path-checked, but a list-unwrap mismatch like $s1.id is now deterministically AUTOFIXED to $s1.items[*].id (task-refconverge Fix A) rather than erroring', () => {
     const outcome: PlanOutcome = {
       kind: 'plan',
       plan: {
@@ -780,6 +781,33 @@ describe('validator — ref-path vs output schema (REF_PATH_MISMATCH)', () => {
             params: {},
             dependsOn: ['s1'],
             when: { ref: '$s1.id', op: 'nonempty' },
+          },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), refPathRegistry);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.plan?.steps[1]?.when?.ref).toBe('$s1.items[*].id');
+      expect(result.autofixes).toContainEqual(
+        expect.objectContaining({ stepId: 's2', before: '$s1.id', after: '$s1.items[*].id', rule: 'list-unwrap' }),
+      );
+    }
+  });
+
+  it('a when.ref mismatch that is NOT uniquely fixable (unknown field, no fuzzy match) still errors REF_PATH_MISMATCH', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+          {
+            id: 's2',
+            action: 'enrollments.enroll',
+            params: {},
+            dependsOn: ['s1'],
+            when: { ref: '$s1.items[*].bogus', op: 'nonempty' },
           },
         ],
       },
@@ -810,6 +838,282 @@ describe('validator — ref-path vs output schema (REF_PATH_MISMATCH)', () => {
     };
     const result = validate(outcome, new Set(), noHandles(), refPathRegistry);
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('validator — deterministic ref auto-correction (Fix A, task-refconverge)', () => {
+  function outAction2(slug: string, outputSchema: z.ZodType<unknown>, inputSchema?: z.ZodType<unknown>): ActionDef {
+    return {
+      id: slug,
+      slug,
+      module: slug.split('.')[0] as string,
+      name: slug,
+      description: slug,
+      risk: 'read',
+      entities: [],
+      inputSchema: inputSchema ?? z.strictObject({}),
+      outputSchema,
+      searchCard: { synonyms: [], examplePhrasings: [] },
+      handler: async () => ({}),
+    };
+  }
+
+  const itemView = z.object({ id: z.string(), name: z.string() });
+  const listRegistry = buildRegistry(
+    [[outAction2('courses.search_courses', listOutputSchema(itemView)), outAction2('enrollments.enroll', z.unknown())]],
+    coreOps,
+  );
+
+  it('Rule 1 (list-unwrap): $s1.id → $s1.items[*].id on a list-output producer', () => {
+    const plan: Plan = {
+      goal: 'g',
+      steps: [
+        { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+        { id: 's2', action: 'enrollments.enroll', params: {}, dependsOn: ['s1'], when: { ref: '$s1.id', op: 'nonempty' } },
+      ],
+    };
+    const { plan: fixed, autofixes } = autoFixRefs(plan, listRegistry);
+    expect(fixed.steps[1]?.when?.ref).toBe('$s1.items[*].id');
+    expect(autofixes).toEqual([
+      { stepId: 's2', context: "Step 's2' when.ref", before: '$s1.id', after: '$s1.items[*].id', rule: 'list-unwrap' },
+    ]);
+  });
+
+  it('Rule 1 must-NOT-rewrite: a field absent from both the envelope and the row schema is left untouched (0 candidates)', () => {
+    const plan: Plan = {
+      goal: 'g',
+      steps: [
+        { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+        { id: 's2', action: 'enrollments.enroll', params: {}, dependsOn: ['s1'], when: { ref: '$s1.bogus', op: 'nonempty' } },
+      ],
+    };
+    const { plan: fixed, autofixes } = autoFixRefs(plan, listRegistry);
+    expect(fixed.steps[1]?.when?.ref).toBe('$s1.bogus');
+    expect(autofixes).toEqual([]);
+  });
+
+  it('Rule 2 (missing-pluck-star): $s1.items.name → $s1.items[*].name', () => {
+    const plan: Plan = {
+      goal: 'g',
+      steps: [
+        { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+        {
+          id: 's2',
+          action: 'enrollments.enroll',
+          params: {},
+          dependsOn: ['s1'],
+          when: { ref: '$s1.items.name', op: 'nonempty' },
+        },
+      ],
+    };
+    const { plan: fixed, autofixes } = autoFixRefs(plan, listRegistry);
+    expect(fixed.steps[1]?.when?.ref).toBe('$s1.items[*].name');
+    expect(autofixes[0]?.rule).toBe('missing-pluck-star');
+  });
+
+  it('Rule 2 must-NOT-rewrite: $s1.items.bogus has no valid target field — left untouched', () => {
+    const plan: Plan = {
+      goal: 'g',
+      steps: [
+        { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+        {
+          id: 's2',
+          action: 'enrollments.enroll',
+          params: {},
+          dependsOn: ['s1'],
+          when: { ref: '$s1.items.bogus', op: 'nonempty' },
+        },
+      ],
+    };
+    const { plan: fixed, autofixes } = autoFixRefs(plan, listRegistry);
+    expect(fixed.steps[1]?.when?.ref).toBe('$s1.items.bogus');
+    expect(autofixes).toEqual([]);
+  });
+
+  it('Rule 3 (redundant-envelope): $s1.items[*].items[*].id → $s1.items[*].id when the row schema has no nested items', () => {
+    const plan: Plan = {
+      goal: 'g',
+      steps: [
+        { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+        {
+          id: 's2',
+          action: 'enrollments.enroll',
+          params: {},
+          dependsOn: ['s1'],
+          when: { ref: '$s1.items[*].items[*].id', op: 'nonempty' },
+        },
+      ],
+    };
+    const { plan: fixed, autofixes } = autoFixRefs(plan, listRegistry);
+    expect(fixed.steps[1]?.when?.ref).toBe('$s1.items[*].id');
+    expect(autofixes[0]?.rule).toBe('redundant-envelope');
+  });
+
+  it('Rule 3 must-NOT-rewrite: a GENUINELY double-nested list is never collapsed (the original path already validates)', () => {
+    const nestedItemView = z.object({ id: z.string(), items: z.array(z.object({ x: z.string() })) });
+    const nestedRegistry = buildRegistry(
+      [[outAction2('courses.search_nested', listOutputSchema(nestedItemView)), outAction2('enrollments.enroll', z.unknown())]],
+      coreOps,
+    );
+    const plan: Plan = {
+      goal: 'g',
+      steps: [
+        { id: 's1', action: 'courses.search_nested', params: {}, dependsOn: [] },
+        {
+          id: 's2',
+          action: 'enrollments.enroll',
+          params: {},
+          dependsOn: ['s1'],
+          when: { ref: '$s1.items[*].items[*].x', op: 'nonempty' },
+        },
+      ],
+    };
+    const { plan: fixed, autofixes } = autoFixRefs(plan, nestedRegistry);
+    expect(fixed.steps[1]?.when?.ref).toBe('$s1.items[*].items[*].x');
+    expect(autofixes).toEqual([]);
+  });
+
+  it('Rule 4 (field-fuzzy-match): $s1.firstName → $s1.first_name on a single-record producer', () => {
+    const personRegistry = buildRegistry(
+      [
+        [
+          outAction2('contacts.get_contact', z.object({ first_name: z.string(), last_name: z.string() })),
+          outAction2('enrollments.enroll', z.unknown()),
+        ],
+      ],
+      coreOps,
+    );
+    const plan: Plan = {
+      goal: 'g',
+      steps: [
+        { id: 's1', action: 'contacts.get_contact', params: {}, dependsOn: [] },
+        {
+          id: 's2',
+          action: 'enrollments.enroll',
+          params: {},
+          dependsOn: ['s1'],
+          when: { ref: '$s1.firstName', op: 'nonempty' },
+        },
+      ],
+    };
+    const { plan: fixed, autofixes } = autoFixRefs(plan, personRegistry);
+    expect(fixed.steps[1]?.when?.ref).toBe('$s1.first_name');
+    expect(autofixes[0]?.rule).toBe('field-fuzzy-match');
+  });
+
+  it('Rule 4 must-NOT-rewrite: 2+ fields normalize to the same spelling — ambiguous, left untouched', () => {
+    const ambiguousRegistry = buildRegistry(
+      [
+        [
+          outAction2('contacts.get_contact', z.object({ first_name: z.string(), firstname: z.string() })),
+          outAction2('enrollments.enroll', z.unknown()),
+        ],
+      ],
+      coreOps,
+    );
+    const plan: Plan = {
+      goal: 'g',
+      steps: [
+        { id: 's1', action: 'contacts.get_contact', params: {}, dependsOn: [] },
+        {
+          id: 's2',
+          action: 'enrollments.enroll',
+          params: {},
+          dependsOn: ['s1'],
+          when: { ref: '$s1.firstName', op: 'nonempty' },
+        },
+      ],
+    };
+    const { plan: fixed, autofixes } = autoFixRefs(plan, ambiguousRegistry);
+    expect(fixed.steps[1]?.when?.ref).toBe('$s1.firstName');
+    expect(autofixes).toEqual([]);
+  });
+
+  it('Rule 5 (index-to-pluck): $s1[0].id → $s1.items[*].id when the param expects an ARRAY', () => {
+    const bulkRegistry = buildRegistry(
+      [
+        [
+          outAction2('courses.search_courses', listOutputSchema(itemView)),
+          outAction2('enrollments.bulk_enroll', z.unknown(), z.strictObject({ course_ids: z.array(z.string()) })),
+        ],
+      ],
+      coreOps,
+    );
+    const plan: Plan = {
+      goal: 'g',
+      steps: [
+        { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+        { id: 's2', action: 'enrollments.bulk_enroll', params: { course_ids: '$s1[0].id' }, dependsOn: ['s1'] },
+      ],
+    };
+    const { plan: fixed, autofixes } = autoFixRefs(plan, bulkRegistry);
+    expect(fixed.steps[1]?.params['course_ids']).toBe('$s1.items[*].id');
+    expect(autofixes[0]?.rule).toBe('index-to-pluck');
+  });
+
+  it('Rule 5 must-NOT-rewrite: the SAME index-grammar ref bound to a SCALAR param is left for LLM repair (index intent is ambiguous)', () => {
+    const scalarRegistry = buildRegistry(
+      [
+        [
+          outAction2('courses.search_courses', listOutputSchema(itemView)),
+          outAction2('enrollments.enroll_one', z.unknown(), z.strictObject({ course_id: z.string() })),
+        ],
+      ],
+      coreOps,
+    );
+    const plan: Plan = {
+      goal: 'g',
+      steps: [
+        { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+        { id: 's2', action: 'enrollments.enroll_one', params: { course_id: '$s1[0].id' }, dependsOn: ['s1'] },
+      ],
+    };
+    const { plan: fixed, autofixes } = autoFixRefs(plan, scalarRegistry);
+    expect(fixed.steps[1]?.params['course_id']).toBe('$s1[0].id');
+    expect(autofixes).toEqual([]);
+  });
+
+  it('applies the same rewrite inside a forEach $item path, checked against the iterated ELEMENT schema', () => {
+    // Correct $item path is untouched (sanity).
+    const okPlan: Plan = {
+      goal: 'g',
+      steps: [
+        { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+        { id: 's2', action: 'enrollments.enroll', params: { id: '$item.name' }, dependsOn: ['s1'], forEach: '$s1.items' },
+      ],
+    };
+    expect(autoFixRefs(okPlan, listRegistry).autofixes).toEqual([]);
+
+    // A case-typo'd $item field is fuzzy-matched against the iterated row
+    // schema (itemView), not the envelope.
+    const typoPlan: Plan = {
+      goal: 'g',
+      steps: [
+        { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+        { id: 's2', action: 'enrollments.enroll', params: { id: '$item.ID' }, dependsOn: ['s1'], forEach: '$s1.items' },
+      ],
+    };
+    const { plan: fixed, autofixes } = autoFixRefs(typoPlan, listRegistry);
+    expect(fixed.steps[1]?.params['id']).toBe('$item.id');
+    expect(autofixes[0]).toMatchObject({ stepId: 's2', before: '$item.ID', after: '$item.id', rule: 'field-fuzzy-match' });
+  });
+
+  it('never consumes a repair round: validate() returns ok:true directly when autofix alone resolves every issue', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+          { id: 's2', action: 'enrollments.enroll', params: {}, dependsOn: ['s1'], when: { ref: '$s1.id', op: 'nonempty' } },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), listRegistry);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.autofixes && result.autofixes.length).toBeGreaterThan(0);
+    }
   });
 });
 

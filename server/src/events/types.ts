@@ -16,6 +16,11 @@
 import type { PlanOutcome } from '../agent/plan-schema.js';
 export type { Value, Step, Plan, PlanOutcome } from '../agent/plan-schema.js';
 
+// --- agent/validator.ts (task-refconverge Fix A) — re-exported ------------
+
+import type { RefAutofix } from '../agent/validator.js';
+export type { RefAutofix } from '../agent/validator.js';
+
 // --- agent/memory.ts (LLD §2.5) — re-exported, not re-defined --------------
 
 import type { WorkingState } from '../agent/memory.js';
@@ -72,6 +77,10 @@ export type Event =
       planRev: number;
       planHash: string;
       llm: LlmUsage;
+      /** Deterministic ref rewrites applied by `agent/validator.ts`'s
+       * `autoFixRefs` before this plan validated (task-refconverge Fix A) —
+       * omitted when none were applied. */
+      refAutofixes?: RefAutofix[];
     }
   | {
       t: 'repair' | 'replan' | 'search';

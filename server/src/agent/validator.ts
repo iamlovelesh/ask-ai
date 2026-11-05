@@ -60,11 +60,22 @@ export interface Valid {
   planHash?: string;
   /** Topological step order (present only alongside `plan`). */
   stepOrder?: string[];
+  /** Ref auto-fixes applied before this validation pass (Fix A,
+   * task-refconverge) — present and possibly empty whenever
+   * `outcome.kind === 'plan'`; absent otherwise. */
+  autofixes?: RefAutofix[];
 }
 
 export interface Invalid {
   ok: false;
   errors: ValidationError[];
+  /** The (possibly partially autofixed) plan these errors are against —
+   * present whenever the outcome was `kind:'plan'`. Lets the repair prompt
+   * echo progress already made instead of a stale pre-fix plan, so a fix
+   * already applied here is never re-discovered (or undone) by a later
+   * repair round. */
+  plan?: Plan;
+  autofixes?: RefAutofix[];
 }
 
 // --- budgets (LLD §5.1 — canonical; the spec defers to these) --------------
@@ -409,7 +420,7 @@ function isArrayValuedPluck(ref: string): boolean {
 type WalkResult =
   | { kind: 'ok' }
   | { kind: 'skip' }
-  | { kind: 'mismatch'; field: string; availableKeys: string[]; note?: string };
+  | { kind: 'mismatch'; field: string; availableKeys: string[]; note?: string; idx?: number };
 
 /** Walk `tokens` over `schema`, mirroring the executor's `traverse`:
  * `spread` tracks whether we are mapping over an array's elements (set once a
@@ -429,13 +440,13 @@ function walkPath(schema: unknown, tokens: readonly PathTok[], idx: number, spre
     // Only confident enough to flag when NOT already spreading (a prior
     // `[*]` was expected); otherwise skip.
     if (!spread) {
-      return { kind: 'mismatch', field: tok.field, availableKeys: [], note: 'array' };
+      return { kind: 'mismatch', field: tok.field, availableKeys: [], note: 'array', idx };
     }
     return { kind: 'skip' };
   }
   // object-like
   if (!container.keys.has(tok.field)) {
-    return { kind: 'mismatch', field: tok.field, availableKeys: [...container.keys] };
+    return { kind: 'mismatch', field: tok.field, availableKeys: [...container.keys], idx };
   }
   const child = container.field(tok.field);
   if (child === undefined) return { kind: 'skip' };
@@ -446,6 +457,322 @@ function walkPath(schema: unknown, tokens: readonly PathTok[], idx: number, spre
     return walkPath(elem, tokens, idx + 1, true);
   }
   return walkPath(child, tokens, idx + 1, spread);
+}
+
+// --- deterministic ref auto-correction (Fix A, task-refconverge) -----------
+//
+// The haiku planner converges on correct `$sN.items[*].field` paths far
+// less reliably than it emits a "close but wrong" one — REF_PATH_MISMATCH/
+// REF_GRAMMAR were the dominant repair-exhaustion reasons on the quick-20
+// benchmark (round-2 triage). Most of those misses are a single, UNAMBIGUOUS
+// mechanical slip (missing `[*]`, a redundant envelope level, a snake/camel
+// field-name mismatch, a stray `[0]` index) rather than a genuine planning
+// mistake. Fixing those HERE — deterministically, schema-validated, before
+// any LLM repair round — saves the whole plan↔repair round-trip (cost +
+// latency) and never consumes `BUDGETS.maxRepairs` (it runs inside
+// `validate()`, before the repair-counting call site in `pipeline.ts` ever
+// sees the plan). Every rewrite is applied ONLY when exactly one
+// schema-valid candidate exists against the producing step's `outputSchema`
+// (mirroring `walkPath` above exactly) — any ambiguity, or a producer whose
+// output isn't introspectable, passes the ref through UNCHANGED for the
+// normal validate()/LLM-repair path to catch.
+
+export interface RefAutofix {
+  stepId: string;
+  context: string;
+  before: string;
+  after: string;
+  rule: 'list-unwrap' | 'missing-pluck-star' | 'redundant-envelope' | 'field-fuzzy-match' | 'index-to-pluck';
+}
+
+function pathToString(tokens: readonly PathTok[]): string {
+  return tokens.map((t) => `.${t.field}${t.spread ? '[*]' : ''}`).join('');
+}
+
+interface PathCandidate {
+  tokens: PathTok[];
+  rule: RefAutofix['rule'];
+}
+
+/** Enumerates plausible structural rewrites of `tokens` — rules 1/2/3 from
+ * the brief (list-unwrap / missing-pluck-star / redundant-envelope). This
+ * only ENUMERATES; the caller schema-validates each candidate via
+ * `walkPath` and only accepts a UNIQUE survivor. */
+function structuralCandidates(tokens: readonly PathTok[]): PathCandidate[] {
+  const out: PathCandidate[] = [];
+  const n = tokens.length;
+
+  // Rules 1/2 (insertion): a fresh `items[*]` hop is missing entirely —
+  // insert it immediately before index `i`. Skipped when `tokens[i]` is
+  // already an `items` hop (the toggle-spread loop below handles THAT case
+  // without duplicating the hop).
+  for (let i = 0; i <= n; i += 1) {
+    if (tokens[i]?.field === 'items') continue;
+    out.push({
+      tokens: [...tokens.slice(0, i), { field: 'items', spread: true }, ...tokens.slice(i)],
+      rule: i === 0 ? 'list-unwrap' : 'missing-pluck-star',
+    });
+  }
+
+  // Rule 2 (toggle): an EXISTING `items` hop forgot its `[*]` — flip
+  // `spread` on in place rather than inserting a second hop.
+  for (let i = 0; i < n; i += 1) {
+    const tok = tokens[i];
+    if (tok !== undefined && tok.field === 'items' && !tok.spread) {
+      out.push({
+        tokens: tokens.map((t, j) => (j === i ? { ...t, spread: true } : t)),
+        rule: 'missing-pluck-star',
+      });
+    }
+  }
+
+  // Rule 3 (collapse): two ADJACENT spread `items[*]` hops — a redundant
+  // envelope level — collapse to one.
+  for (let i = 0; i < n - 1; i += 1) {
+    if (tokens[i]?.field === 'items' && tokens[i]?.spread && tokens[i + 1]?.field === 'items') {
+      out.push({ tokens: [...tokens.slice(0, i), ...tokens.slice(i + 1)], rule: 'redundant-envelope' });
+    }
+  }
+
+  return out;
+}
+
+/** Case/snake-camel normalization for Rule 4 (`firstName` ↔ `first_name`):
+ * lowercase, strip underscores. */
+function normalizeFieldKey(key: string): string {
+  return key.toLowerCase().replace(/_/g, '');
+}
+
+/** Rule 4: the mismatched LEAF field isn't in the schema, but exactly ONE
+ * schema field normalizes to the same spelling — rewrite to that field's
+ * real spelling. `null` on zero or 2+ matches (brief: "never rewrite when
+ * 2+ candidates"). */
+function fuzzyFieldCandidate(
+  tokens: readonly PathTok[],
+  mismatchIdx: number,
+  availableKeys: readonly string[],
+): PathTok[] | null {
+  const target = tokens[mismatchIdx];
+  if (target === undefined) return null;
+  const norm = normalizeFieldKey(target.field);
+  const matches = availableKeys.filter((k) => k !== target.field && normalizeFieldKey(k) === norm);
+  if (matches.length !== 1) return null;
+  return tokens.map((t, j) => (j === mismatchIdx ? { ...t, field: matches[0] as string } : t));
+}
+
+/** Attempts ONE deterministic, schema-validated rewrite of `path` (the
+ * portion AFTER `$sN`/`$item`) against `schema` (the producer's
+ * `outputSchema`, or a forEach element schema for `$item` paths). `null`
+ * when the original path already validates or is non-introspectable (never
+ * guess), or when 0 or 2+ distinct candidates validate (ambiguous — defer
+ * to the LLM repair path; brief rules 1-4). */
+function tryAutofixRefPath(path: string, schema: unknown): { path: string; rule: RefAutofix['rule'] } | null {
+  const tokens = pathTokens(path);
+  if (tokens.length === 0) return null;
+  const baseResult = walkPath(schema, tokens, 0, false);
+  if (baseResult.kind !== 'mismatch') return null; // already ok, or opaque/skip — nothing to fix
+
+  const candidates = new Map<string, RefAutofix['rule']>();
+  for (const { tokens: candTokens, rule } of structuralCandidates(tokens)) {
+    const pathStr = pathToString(candTokens);
+    if (pathStr === path || candidates.has(pathStr)) continue;
+    if (walkPath(schema, candTokens, 0, false).kind === 'ok') candidates.set(pathStr, rule);
+  }
+  if (baseResult.idx !== undefined && baseResult.availableKeys.length > 0) {
+    const fuzzy = fuzzyFieldCandidate(tokens, baseResult.idx, baseResult.availableKeys);
+    if (fuzzy) {
+      const pathStr = pathToString(fuzzy);
+      if (pathStr !== path && !candidates.has(pathStr) && walkPath(schema, fuzzy, 0, false).kind === 'ok') {
+        candidates.set(pathStr, 'field-fuzzy-match');
+      }
+    }
+  }
+
+  if (candidates.size !== 1) return null; // none, or ambiguous
+  for (const [onlyPath, onlyRule] of candidates) {
+    return { path: onlyPath, rule: onlyRule };
+  }
+  return null; // unreachable (size === 1 guarantees one iteration) — keeps TS happy
+}
+
+// Rule 5: `$s1[0].field` / `$s1.0.field` — an INDEX selector, which is not
+// legal ref grammar at all (STEP_REF's path only admits `.field[*]` hops),
+// so it surfaces as REF_GRAMMAR, not REF_PATH_MISMATCH. Rewritten to
+// `$s1.items[*].field` ONLY when the binding context expects an array
+// (brief: "if the param expects a scalar, leave for LLM repair — index
+// intent is ambiguous").
+const INDEX_GRAMMAR_RE = /^\$s(\d+)(?:\[\d+\]|\.\d+)((?:\.[A-Za-z_][A-Za-z0-9_]*(?:\[\*\])?)*)$/;
+
+function tryAutofixIndexGrammar(
+  ref: string,
+  expectsArray: boolean,
+  schemaForStep: (stepId: string) => unknown | undefined,
+): { after: string; rule: RefAutofix['rule'] } | null {
+  if (!expectsArray) return null;
+  const m = INDEX_GRAMMAR_RE.exec(ref);
+  if (!m) return null;
+  const stepId = `s${m[1]}`;
+  const schema = schemaForStep(stepId);
+  if (schema === undefined) return null; // unknown producer — never guess
+  const rest = m[2] ?? '';
+  const candidatePath = `.items[*]${rest}`;
+  if (walkPath(schema, pathTokens(candidatePath), 0, false).kind !== 'ok') return null;
+  return { after: `$${stepId}${candidatePath}`, rule: 'index-to-pluck' };
+}
+
+/** Rewrites a `$sN.path` ref against the producing step's output schema.
+ * `schemaForStep` resolves a step id to its action's `outputSchema`
+ * (`undefined` when the producer/slug can't be resolved — never guess). */
+function tryAutofixStepRef(
+  ref: string,
+  schemaForStep: (stepId: string) => unknown | undefined,
+): { after: string; rule: RefAutofix['rule'] } | null {
+  const parsed = parseRefGrammar(ref);
+  if (!parsed || parsed.form !== 'step' || parsed.path === '') return null;
+  const schema = schemaForStep(parsed.stepId);
+  if (schema === undefined) return null;
+  const fix = tryAutofixRefPath(parsed.path, schema);
+  if (!fix) return null;
+  return { after: `$${parsed.stepId}${fix.path}`, rule: fix.rule };
+}
+
+/** Same rewrite, for a `$item.path` ref inside a forEach step, checked
+ * against the forEach's iterated ELEMENT schema (brief: "apply the same
+ * rewrites inside forEach $item paths against the iterated element
+ * schema"). */
+function tryAutofixItemRef(ref: string, elementSchema: unknown): { after: string; rule: RefAutofix['rule'] } | null {
+  const parsed = parseRefGrammar(ref);
+  if (!parsed || parsed.form !== 'item' || parsed.path === '') return null;
+  const fix = tryAutofixRefPath(parsed.path, elementSchema);
+  if (!fix) return null;
+  return { after: `$item${fix.path}`, rule: fix.rule };
+}
+
+/** Best-effort schema AT a path — NOT a validity verdict, only used to find
+ * the schema a forEach step's `$item` should be checked against. `undefined`
+ * on anything non-introspectable, which simply disables `$item` autofix for
+ * that step (never a false fix). */
+function schemaAtPath(schema: unknown, tokens: readonly PathTok[]): unknown | undefined {
+  let cur = schema;
+  for (const tok of tokens) {
+    const cls = classify(cur);
+    if (cls.kind !== 'object' || !cls.keys.has(tok.field)) return undefined;
+    const child = cls.field(tok.field);
+    if (child === undefined) return undefined;
+    if (tok.spread) {
+      const elem = arrayElement(child);
+      if (elem === null) return undefined;
+      cur = elem;
+    } else {
+      cur = child;
+    }
+  }
+  return cur;
+}
+
+/** Resolves the ELEMENT schema a forEach step's `$item` iterates over, from
+ * the forEach ref's target path over its producing step's output schema.
+ * `undefined` for anything not resolvable (cross-turn handles, unknown
+ * producer, non-introspectable schema) — `$item` autofix is simply skipped. */
+function resolveForEachElementSchema(
+  forEachRef: string,
+  schemaForStep: (stepId: string) => unknown | undefined,
+): unknown | undefined {
+  const parsed = parseRefGrammar(forEachRef);
+  if (!parsed || parsed.form !== 'step') return undefined;
+  const schema = schemaForStep(parsed.stepId);
+  if (schema === undefined) return undefined;
+  const valueSchema = schemaAtPath(schema, pathTokens(parsed.path));
+  if (valueSchema === undefined) return undefined;
+  return arrayElement(valueSchema) ?? undefined;
+}
+
+/** Recursively rewrites every WHOLE-value ref string in `value` via `fn`
+ * (same "entire value is a ref" scope as `collectRefStrings` — an embedded
+ * template substring is the executor's job, not this one's). */
+function deepRewriteRefs(value: unknown, fn: (ref: string) => string): unknown {
+  if (typeof value === 'string') return value.startsWith('$') ? fn(value) : value;
+  if (Array.isArray(value)) return value.map((v) => deepRewriteRefs(v, fn));
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = deepRewriteRefs(v, fn);
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Fix A (task-refconverge): deterministic, schema-validated ref
+ * auto-correction — runs BEFORE any LLM repair round, inside `validate()`.
+ * For every ref string in a step's params/when.ref/forEach, attempts the
+ * canonical rewrites and applies the result ONLY when exactly one
+ * schema-valid candidate exists; everything else (including every genuine
+ * planning mistake) passes through UNCHANGED for the normal
+ * validate()/repair path to catch. Returns a NEW `Plan` (steps/params are
+ * never mutated in place — immutable per repo convention) plus the list of
+ * fixes applied, for the caller to trace/count.
+ */
+export function autoFixRefs(plan: Plan, registry: Registry): { plan: Plan; autofixes: RefAutofix[] } {
+  const slugByStepId = new Map(plan.steps.map((s) => [s.id, s.action] as const));
+  const autofixes: RefAutofix[] = [];
+
+  function schemaForStep(stepId: string): unknown | undefined {
+    const slug = slugByStepId.get(stepId);
+    if (slug === undefined) return undefined;
+    return registry.get(slug)?.outputSchema;
+  }
+
+  const fixedSteps = plan.steps.map((step) => {
+    const elementSchema =
+      step.forEach !== undefined && step.forEach !== ''
+        ? resolveForEachElementSchema(step.forEach, schemaForStep)
+        : undefined;
+
+    function fixRef(ref: string, context: string, expectsArray: boolean): string {
+      const parsed = parseRefGrammar(ref);
+      if (parsed?.form === 'item') {
+        if (elementSchema === undefined) return ref;
+        const fix = tryAutofixItemRef(ref, elementSchema);
+        if (!fix) return ref;
+        autofixes.push({ stepId: step.id, context, before: ref, after: fix.after, rule: fix.rule });
+        return fix.after;
+      }
+      const indexFix = tryAutofixIndexGrammar(ref, expectsArray, schemaForStep);
+      if (indexFix) {
+        autofixes.push({ stepId: step.id, context, before: ref, after: indexFix.after, rule: indexFix.rule });
+        return indexFix.after;
+      }
+      const fix = tryAutofixStepRef(ref, schemaForStep);
+      if (!fix) return ref;
+      autofixes.push({ stepId: step.id, context, before: ref, after: fix.after, rule: fix.rule });
+      return fix.after;
+    }
+
+    const action = registry.get(step.action);
+    const shape = action && isObjectShape(action.inputSchema) ? action.inputSchema.shape : undefined;
+
+    const fixedParams: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(step.params)) {
+      const expectsArray = !(shape && key in shape && isScalarParamSchema(shape[key]));
+      fixedParams[key] = deepRewriteRefs(value, (ref) => fixRef(ref, `Step '${step.id}' params.${key}`, expectsArray));
+    }
+
+    let fixedWhen = step.when;
+    if (step.when && step.when.ref) {
+      const newRef = fixRef(step.when.ref, `Step '${step.id}' when.ref`, false);
+      if (newRef !== step.when.ref) fixedWhen = { ...step.when, ref: newRef };
+    }
+
+    let fixedForEach = step.forEach;
+    if (step.forEach) {
+      const newForEach = fixRef(step.forEach, `Step '${step.id}' forEach`, false);
+      if (newForEach !== step.forEach) fixedForEach = newForEach;
+    }
+
+    return { ...step, params: fixedParams, when: fixedWhen, forEach: fixedForEach };
+  });
+
+  return { plan: { ...plan, steps: fixedSteps }, autofixes };
 }
 
 // --- topological sort / cycle detection -------------------------------------
@@ -569,7 +896,11 @@ export function validate(
     return { ok: true, outcome: parsedOutcome };
   }
 
-  const { plan } = parsedOutcome;
+  // Fix A (task-refconverge): deterministic ref auto-correction runs BEFORE
+  // any other check — every check below (and the plan the executor/joiner
+  // ultimately runs) sees the ALREADY-FIXED plan, never the raw one.
+  const { plan: fixedPlan, autofixes } = autoFixRefs(parsedOutcome.plan, registry);
+  const plan = fixedPlan;
   const errors: ValidationError[] = [];
 
   // 0. duplicate step ids. The executor keys results/idempotency by
@@ -830,15 +1161,16 @@ export function validate(
   }
 
   if (errors.length > 0) {
-    return { ok: false, errors };
+    return { ok: false, errors, plan, autofixes };
   }
 
   return {
     ok: true,
-    outcome: parsedOutcome,
+    outcome: { ...parsedOutcome, plan },
     plan,
     planHash: computePlanHash(plan),
     stepOrder: topo.ok ? topo.order : [],
+    autofixes,
   };
 }
 
