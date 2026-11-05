@@ -132,6 +132,13 @@ export function spawnServer(opts: SpawnServerOptions): SpawnedServer {
     ADMIN_TEST_HOOKS: '1',
     ...opts.extraEnv,
   };
+  // Conversational-reply polish (Feature C) is a UX-only, cost-adding extra
+  // LLM call that must NEVER run under the benchmark — it would skew every
+  // metric and perturb answer text the eval asserts on. The eval runner can
+  // inherit `COMPOSER_POLISH=1` from the operator's shell (`set -a; source
+  // .env`), so strip it explicitly from every spawned eval server's env,
+  // regardless of how it got into `process.env`/`extraEnv`.
+  delete env['COMPOSER_POLISH'];
   if (opts.mockLlmScript) env['MOCK_LLM_SCRIPT'] = opts.mockLlmScript;
 
   const child: ChildProcess = spawn(TSX_BIN, ['src/index.ts'], {

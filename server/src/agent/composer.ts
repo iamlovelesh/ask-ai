@@ -171,6 +171,48 @@ function composeRefused(input: ComposeInput): string {
   return input.reason ?? "I can't help with that.";
 }
 
+// --- conversational reply polish (Feature C, flag-gated) --------------------
+//
+// OFF by default. When `COMPOSER_POLISH=1`, the pipeline makes ONE extra
+// `FAST_MODEL` call that rewrites the template text (below) into a natural
+// assistant reply under hard constraints — any failure/timeout/budget issue
+// falls back to the template text silently. The compose step itself stays a
+// pure template; polish is strictly a post-processing layer in the pipeline.
+
+/** Operations-summary outcomes worth rewriting conversationally. Clarify
+ * (a single focused question) and refused (a verbatim capability message)
+ * are intentionally left exactly as composed. */
+const POLISH_OUTCOMES: ReadonlySet<ComposeOutcome> = new Set(['done', 'cancelled', 'failed', 'halted']);
+
+/** Whether the conversational-reply polish pass is enabled via env. Absent
+ * or any value other than exactly `'1'` → disabled (the eval runner relies
+ * on this default-off behavior). */
+export function composerPolishEnabled(): boolean {
+  return process.env['COMPOSER_POLISH'] === '1';
+}
+
+/** Whether a given composed outcome should be polished — the flag is on AND
+ * the outcome is an operations summary (not clarify/refused). */
+export function shouldPolish(outcome: ComposeOutcome): boolean {
+  return composerPolishEnabled() && POLISH_OUTCOMES.has(outcome);
+}
+
+/** The hard-constrained system prompt for the polish call. Grounding is
+ * enforced by instruction, not by the model's goodwill: the pipeline still
+ * falls back to the template on any failure, and these rules forbid adding
+ * or changing a single fact/number/name/status. */
+export const POLISH_SYSTEM =
+  'Rewrite the following operations summary as a brief, natural assistant reply. ' +
+  'STRICT RULES: do not add, infer, or change ANY fact, number, name, or status; ' +
+  'do not promise follow-ups; keep every number exactly; ' +
+  '≤3 sentences unless listing failures. Output only the rewritten reply, nothing else.';
+
+/** The polish call's user prompt — the template text, verbatim, as the input
+ * to rewrite. */
+export function polishPrompt(templateText: string): string {
+  return templateText;
+}
+
 /**
  * Renders the final answer text for a finished turn (LLD §5 pipeline's
  * `compose` step). PURE: same `input` always renders the same string.

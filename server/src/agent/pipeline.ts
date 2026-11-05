@@ -39,7 +39,7 @@ import { matchPlaybook } from '../playbooks/loader.js';
 import { buildPlannerPrompt, plan as plannerPlan, narrowFlatOutcome, type PlannerPromptCtx, type PlanResult } from './planner.js';
 import { validate, repairPrompt, BUDGETS, type HandleRef, type ValidationError } from './validator.js';
 import { checkStratum, joinerRepair, type JoinerViolation } from './joiner.js';
-import { compose, type ComposeInput, type ComposeStepState } from './composer.js';
+import { compose, shouldPolish, POLISH_SYSTEM, polishPrompt, type ComposeInput, type ComposeStepState } from './composer.js';
 import {
   foldMemory,
   renderWorkingState,
@@ -87,6 +87,11 @@ export interface TurnResult {
 
 /** `answer.delta` chunk size (brief: "~80-char chunks fine"). */
 const DELTA_CHUNK_CHARS = 80;
+
+/** Hard ceiling on the conversational-reply polish call (Feature C). On
+ * timeout the pipeline silently keeps the template text — a slow polish must
+ * never delay a turn's answer beyond this. */
+const POLISH_TIMEOUT_MS = 5000;
 
 function chunkText(text: string, size = DELTA_CHUNK_CHARS): string[] {
   if (text.length === 0) return [];
@@ -536,6 +541,43 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
     buffer.push(e);
   }
 
+  /**
+   * Feature C (flag-gated): rewrite the composed template text into a
+   * natural assistant reply with ONE extra `FAST_MODEL` call, hard-bounded
+   * by `POLISH_TIMEOUT_MS`. Returns the polished text, or `null` to signal
+   * "keep the template" on ANY failure/timeout/budget issue (the call's
+   * `.catch`, an empty/whitespace result, or the timeout winning the race).
+   * The extra call, when it succeeds, is recorded into the turn budget so
+   * metrics stay honest. A timed-out call's late cost is NOT back-counted
+   * (metrics are already finalized by then) — it keeps the `.catch` so no
+   * unhandled rejection escapes.
+   */
+  async function polishReply(templateText: string): Promise<string | null> {
+    const call = llmCall<string>({
+      stage: 'compose',
+      model: fastModel(),
+      system: POLISH_SYSTEM,
+      prompt: polishPrompt(templateText),
+      turnId,
+      maxOutputTokens: 512,
+    })
+      .then((r) => ({ ok: true as const, r }))
+      .catch(() => ({ ok: false as const }));
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<{ ok: false }>((resolve) => {
+      timer = setTimeout(() => resolve({ ok: false }), POLISH_TIMEOUT_MS);
+    });
+
+    const raced = await Promise.race([call, timeout]);
+    if (timer) clearTimeout(timer);
+    if (!raced.ok) return null;
+
+    budget.record(raced.r.usage);
+    const out = typeof raced.r.value === 'string' ? raced.r.value.trim() : '';
+    return out.length > 0 ? out : null;
+  }
+
   async function* finalize(status: TurnStatus, composeInput: ComposeInput | undefined, finalTextOverride?: string, stepsOk = 0, stepsFailed = 0): AsyncGenerator<Event, TurnResult> {
     // Drain every event `record()` accumulated so far (turn.started,
     // retrieval.done, plan.ready, search/repair/replan rounds, and — for a
@@ -554,8 +596,16 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
     } else {
       const input = composeInput as ComposeInput;
       const composeSpan = spans.start({ turnId, kind: 'compose', name: 'compose' });
-      text = compose(input);
+      const templateText = compose(input);
       spans.end(composeSpan, { meta: { outcome: input.outcome } });
+      text = templateText;
+      // Feature C: conversational reply polish (flag-gated, default off).
+      // On ANY failure/timeout/budget issue this silently keeps the
+      // template text — see `polishReply`.
+      if (shouldPolish(input.outcome)) {
+        const polished = await polishReply(templateText);
+        if (polished !== null) text = polished;
+      }
     }
     for (const chunk of chunkText(text)) {
       if (ttfurAtMs === undefined) ttfurAtMs = performance.now();
