@@ -256,3 +256,206 @@ describe('rewriteQuery — deterministic anaphora rewriting (no LLM)', () => {
     expect(rewriteQuery(once, state)).toBe(once);
   });
 });
+
+// --- fix: clarify intent carryover (live-user-confirmed bug, sess_729a1899) -
+
+describe('foldMemory — a clarify turn does NOT clobber frame.intent/filters', () => {
+  it('a prior plan.ready(plan) sets intent; a SUBSEQUENT clarify leaves it untouched and records pendingClarify', () => {
+    const events: Event[] = [
+      ev({ t: 'memory.snapshot', turnId: '0', state: emptyWorkingState() }),
+      ev({ t: 'turn.started', turnId: '3', sessionId: 's', userText: 'Compare leads created Q3 vs Q2', ts: 0 }),
+      ev({
+        t: 'plan.ready',
+        turnId: '3',
+        outcome: { kind: 'plan', plan: { goal: 'Compare leads created Q3 vs Q2', steps: [] } },
+        planRev: 0,
+        planHash: 'h3',
+        llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+      }),
+      ev({ t: 'turn.started', turnId: '4', sessionId: 's', userText: 'In Q1, how many leads were qualified?', ts: 0 }),
+      ev({
+        t: 'plan.ready',
+        turnId: '4',
+        outcome: { kind: 'clarify', question: 'Which Q1 do you mean?' },
+        planRev: 0,
+        planHash: 'h4',
+        llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+      }),
+    ];
+
+    const state = foldMemory(events);
+
+    // intent/filters from the PRIOR plan are untouched by the clarify.
+    expect(state.frame?.intent).toBe('Compare leads created Q3 vs Q2');
+    expect(state.frame?.status).toBe('active');
+    expect(state.frame?.pendingClarify).toEqual({
+      question: 'Which Q1 do you mean?',
+      request: 'In Q1, how many leads were qualified?',
+    });
+  });
+
+  it('a clarify as the VERY FIRST turn (no prior frame) still records pendingClarify', () => {
+    const events: Event[] = [
+      ev({ t: 'memory.snapshot', turnId: '0', state: emptyWorkingState() }),
+      ev({ t: 'turn.started', turnId: '1', sessionId: 's', userText: 'do the thing', ts: 0 }),
+      ev({
+        t: 'plan.ready',
+        turnId: '1',
+        outcome: { kind: 'clarify', question: 'Which thing?' },
+        planRev: 0,
+        planHash: 'h1',
+        llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+      }),
+    ];
+
+    const state = foldMemory(events);
+
+    expect(state.frame?.pendingClarify).toEqual({ question: 'Which thing?', request: 'do the thing' });
+    expect(state.frame?.status).toBe('active');
+  });
+
+  it('pendingClarify is cleared by the next plan.ready of kind plan/respond/unsupported', () => {
+    const clarifyEvents: Event[] = [
+      ev({ t: 'memory.snapshot', turnId: '0', state: emptyWorkingState() }),
+      ev({ t: 'turn.started', turnId: '1', sessionId: 's', userText: 'In Q1, how many leads were qualified?', ts: 0 }),
+      ev({
+        t: 'plan.ready',
+        turnId: '1',
+        outcome: { kind: 'clarify', question: 'Which Q1?' },
+        planRev: 0,
+        planHash: 'h1',
+        llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+      }),
+    ];
+
+    for (const kind of ['plan', 'respond', 'unsupported'] as const) {
+      const outcome =
+        kind === 'plan'
+          ? ({ kind, plan: { goal: 'g', steps: [] } } as const)
+          : kind === 'respond'
+            ? ({ kind, text: 'ok' } as const)
+            : ({ kind, reason: 'nope' } as const);
+      const events: Event[] = [
+        ...clarifyEvents,
+        ev({ t: 'turn.started', turnId: '2', sessionId: 's', userText: 'Q1 2026 (Jan–Mar)', ts: 0 }),
+        ev({
+          t: 'plan.ready',
+          turnId: '2',
+          outcome,
+          planRev: 0,
+          planHash: 'h2',
+          llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+        }),
+      ];
+      const state = foldMemory(events);
+      expect(state.frame?.pendingClarify).toBeUndefined();
+    }
+  });
+
+  it('back-to-back clarifies: the SECOND clarify keeps the ORIGINAL request, not the intermediate answer', () => {
+    const events: Event[] = [
+      ev({ t: 'memory.snapshot', turnId: '0', state: emptyWorkingState() }),
+      ev({ t: 'turn.started', turnId: '1', sessionId: 's', userText: 'In Q1, how many leads were qualified?', ts: 0 }),
+      ev({
+        t: 'plan.ready',
+        turnId: '1',
+        outcome: { kind: 'clarify', question: 'Which Q1?' },
+        planRev: 0,
+        planHash: 'h1',
+        llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+      }),
+      // The user's reply itself triggers a SECOND clarify (e.g. still
+      // ambiguous) — its userText is the INTERMEDIATE answer, not the
+      // original request.
+      ev({ t: 'turn.started', turnId: '2', sessionId: 's', userText: 'the fiscal one', ts: 0 }),
+      ev({
+        t: 'plan.ready',
+        turnId: '2',
+        outcome: { kind: 'clarify', question: 'Fiscal Q1 starts in which month for your org?' },
+        planRev: 0,
+        planHash: 'h2',
+        llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+      }),
+    ];
+
+    const state = foldMemory(events);
+
+    expect(state.frame?.pendingClarify?.request).toBe('In Q1, how many leads were qualified?');
+    expect(state.frame?.pendingClarify?.question).toBe('Fiscal Q1 starts in which month for your org?');
+  });
+});
+
+describe('rewriteQuery — clarify-answer composition (fix: clarify intent carryover)', () => {
+  it('composes the ORIGINAL request with the (typically anaphora-free) answer, ignoring the stale frame.intent path', () => {
+    const state: WorkingState = {
+      frame: {
+        intent: 'Compare leads created Q3 vs Q2', // stale — must NOT leak in
+        status: 'active',
+        filters: { created_after: 123 },
+        missingParams: [],
+        pendingClarify: { question: 'Which Q1?', request: 'In Q1, how many leads were qualified?' },
+      },
+      entities: {},
+      handles: [],
+    };
+
+    const rewritten = rewriteQuery('Q1 2026 (Jan–Mar)', state);
+
+    expect(rewritten).toContain('In Q1, how many leads were qualified?');
+    expect(rewritten).toContain('Q1 2026 (Jan–Mar)');
+    expect(rewritten).not.toContain('Compare leads created Q3 vs Q2');
+  });
+
+  it('is idempotent: re-applying it to its own output returns the same string', () => {
+    const state: WorkingState = {
+      frame: {
+        intent: 'g',
+        status: 'active',
+        filters: {},
+        missingParams: [],
+        pendingClarify: { question: 'Which Q1?', request: 'In Q1, how many leads were qualified?' },
+      },
+      entities: {},
+      handles: [],
+    };
+    const once = rewriteQuery('Q1 2026 (Jan–Mar)', state);
+    expect(rewriteQuery(once, state)).toBe(once);
+  });
+
+  it('takes priority over the anaphora-signal path even when the answer carries no anaphora cue', () => {
+    const state: WorkingState = {
+      frame: {
+        intent: 'Compare leads created Q3 vs Q2',
+        status: 'active',
+        filters: {},
+        missingParams: [],
+        pendingClarify: { question: 'Which Q1?', request: 'In Q1, how many leads were qualified?' },
+      },
+      entities: {},
+      handles: [],
+    };
+    // No anaphora signal word present at all — the OLD code path would
+    // have returned this unchanged; the fix still composes it.
+    expect(rewriteQuery('Q1 2026', state)).toBe(
+      'In Q1, how many leads were qualified? — clarification answered: Q1 2026',
+    );
+  });
+});
+
+describe('renderWorkingState — surfaces a pending clarify', () => {
+  it('includes an awaiting-clarification line with the question and original request', () => {
+    const state: WorkingState = {
+      frame: {
+        intent: 'g',
+        status: 'active',
+        filters: {},
+        missingParams: [],
+        pendingClarify: { question: 'Which Q1?', request: 'In Q1, how many leads were qualified?' },
+      },
+      entities: {},
+      handles: [],
+    };
+    const text = renderWorkingState(state);
+    expect(text).toContain('awaiting-clarification: Which Q1? (for: In Q1, how many leads were qualified?)');
+  });
+});

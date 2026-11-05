@@ -23,6 +23,16 @@ export interface TaskFrame {
   filters: Record<string, unknown>;
   missingParams: string[];
   planHash?: string;
+  /** Set when the most recent `plan.ready` for this frame was a `clarify`
+   * — carries the ORIGINAL request that triggered the question forward, so
+   * the next turn's (typically anaphora-free) reply can be composed with
+   * it instead of leaking a stale `frame.intent` into the rewrite (fix:
+   * clarify intent carryover — a clarify turn must NOT overwrite
+   * `intent`/`filters`). Cleared on the next `plan.ready` of any OTHER
+   * kind (`plan`/`respond`/`unsupported`). On a SECOND consecutive
+   * clarify, `request` is carried forward unchanged (chains to the FIRST
+   * request, never the intermediate answer that triggered this one). */
+  pendingClarify?: { question: string; request: string };
 }
 
 export interface EntityRef {
@@ -145,15 +155,23 @@ export function foldMemory(events: ReadonlyArray<SeqEvent | Event>): WorkingStat
       : emptyWorkingState();
 
   const actionBySKey = new Map<string, string>();
+  const userTextByTurn = new Map<string, string>();
 
   for (const ev of plain.slice(snapshotIdx + 1)) {
     switch (ev.t) {
+      case 'turn.started':
+        userTextByTurn.set(ev.turnId, ev.userText);
+        break;
+
       case 'step.started':
         actionBySKey.set(actionKey(ev.turnId, ev.stepId), ev.action);
         break;
 
       case 'plan.ready':
         if (ev.outcome.kind === 'plan') {
+          // A real plan resolves (or supersedes) any pending clarify — the
+          // new frame object below simply doesn't carry `pendingClarify`
+          // forward.
           state = {
             ...state,
             frame: {
@@ -164,6 +182,22 @@ export function foldMemory(events: ReadonlyArray<SeqEvent | Event>): WorkingStat
               planHash: ev.planHash,
             },
           };
+        } else if (ev.outcome.kind === 'clarify') {
+          // Do NOT touch intent/filters (fix: clarify intent carryover).
+          // Chain to the FIRST request across back-to-back clarifies —
+          // only fall back to this turn's own userText when there is no
+          // pending clarify already (i.e. this is the FIRST clarify).
+          const request = state.frame?.pendingClarify?.request ?? userTextByTurn.get(ev.turnId) ?? '';
+          const pendingClarify = { question: ev.outcome.question, request };
+          state =
+            state.frame === null
+              ? { ...state, frame: { intent: '', status: 'active', filters: {}, missingParams: [], pendingClarify } }
+              : { ...state, frame: { ...state.frame, pendingClarify } };
+        } else if (state.frame?.pendingClarify !== undefined) {
+          // 'unsupported' / 'respond' — any OTHER resolution also clears a
+          // pending clarify.
+          const { pendingClarify: _drop, ...rest } = state.frame;
+          state = { ...state, frame: rest };
         }
         break;
 
@@ -237,6 +271,10 @@ function renderHandleLine(h: RefHandle): string {
  * ~600-token guidance even for a full state (6 handles + several entities). */
 export function renderWorkingState(state: WorkingState): string {
   const lines: string[] = ['WORKING_STATE:', renderFrameLine(state.frame)];
+  if (state.frame?.pendingClarify !== undefined) {
+    const { question, request } = state.frame.pendingClarify;
+    lines.push(`awaiting-clarification: ${question} (for: ${request})`);
+  }
 
   const entityEntries = Object.entries(state.entities);
   lines.push(entityEntries.length === 0 ? 'entities: (none)' : 'entities:');
@@ -324,6 +362,24 @@ function hasAnaphoraSignal(text: string): boolean {
  * against a DIFFERENT frame on a later turn is not something this guard can
  * detect or fix — one call site, one time, is the only correct usage. */
 export function rewriteQuery(userText: string, state: WorkingState): string {
+  // Clarify-answer composition (fix: clarify intent carryover) takes
+  // priority over — and is independent of — the anaphora-signal path
+  // below: a clarify reply ("Q1 2026 (Jan–Mar)") typically carries NO
+  // anaphora signal at all, so the stale-intent prefix path would
+  // otherwise never even fire for it, silently dropping the original
+  // request's own words (e.g. "qualified") that the bare answer doesn't
+  // repeat.
+  const pending = state.frame?.pendingClarify;
+  if (pending !== undefined) {
+    const marker = 'clarification answered:';
+    // Idempotence guard, mirroring the anaphora path below: a second call
+    // against output this function already produced is a safe no-op.
+    if (userText.startsWith(pending.request) && userText.includes(marker)) {
+      return userText;
+    }
+    return `${pending.request} — ${marker} ${userText}`;
+  }
+
   if (!hasAnaphoraSignal(userText) || state.frame === null || state.frame.status !== 'active') {
     return userText;
   }
