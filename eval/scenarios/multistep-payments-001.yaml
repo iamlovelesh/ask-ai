@@ -1,0 +1,45 @@
+# Task 17 Batch B part 1 — category: multistep, module: payments (+invoices).
+#
+# `payments.allocate_payment_to_invoice` (m29-payments.ts) is the ONLY
+# writer of the invoice's `amount_paid_cents`/`status` once allocated —
+# `payments.invoice_id` IS the allocation (no separate allocations table).
+# The handler recomputes `paid` from the sum of allocated payments and
+# flips `status` to `'paid'` once `amount_paid_cents >= total_cents`
+# (m29-payments.ts:129-134) — a real state transition, not a stub.
+#
+# Derivation (template copy):
+#   SELECT id,status,total_cents,amount_paid_cents,contact_id FROM invoices
+#     WHERE status='issued' AND amount_paid_cents=0 ORDER BY id LIMIT 1;
+#   -> inv_1, total_cents=110532, amount_paid_cents=0, contact_id='con_3666'
+#   A full-balance simulated payment (amount_cents=110532) allocated to
+#   inv_1 brings amount_paid_cents to exactly total_cents, flipping
+#   invoices.status from 'issued' to 'paid'.
+
+id: multistep-payments-001
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      Invoice inv_1 just got paid in full by the customer — record the
+      payment and allocate it to that invoice.
+    expect:
+      planActions:
+        mustInclude:
+          - payments.record_simulated_payment
+          - payments.allocate_payment_to_invoice
+      paramChecks:
+        - action: payments.record_simulated_payment
+          param: amount_cents
+          equals: 110532
+        - action: payments.allocate_payment_to_invoice
+          param: invoice_id
+          equals: inv_1
+      state:
+        - query: "SELECT status FROM invoices WHERE id='inv_1'"
+          equals: paid
+        - query: "SELECT amount_paid_cents FROM invoices WHERE id='inv_1'"
+          equals: 110532
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

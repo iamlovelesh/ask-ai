@@ -1,0 +1,50 @@
+# Task 17 Batch B part 1 — category: conditional, module: coupons (+orders,
+# +records).
+#
+# `coupons.validate_coupon_for_order` is a READ-ONLY dry run by design
+# (m31-coupons.ts's module header: "don't implement it as a write") — the
+# actual redemption WRITE (`records(kind='coupon_redemption')` + order
+# total recompute) lives on `orders.apply_coupon_to_order`, NOT a coupons
+# action. The "only if valid" condition is exactly this two-module split:
+# validate first (read), then conditionally apply (write).
+#
+# Derivation (template copy):
+#   SELECT id,name,status FROM structures WHERE kind='coupon' AND status='active';
+#   -> struct_200 ('coupon 5'), active, config is the seeded placeholder
+#     `{seeded:true,kind:'coupon'}` -> defaults: discount_type='percent',
+#     discount_value=10, no valid_from/until/redemption_limit/product_ids
+#     (m31-coupons.ts readCouponConfig defaults) -> unconditionally valid.
+#   SELECT id,total_cents,coupon_id FROM orders WHERE id='ord_13';
+#   -> total_cents=265767, coupon_id=NULL (not yet redeemed)
+#   New total = round(265767 * (1 - 10/100)) = round(239190.3) = 239190
+#     (m32-orders.ts applyDiscount/recomputeOrderTotal — MONEY RULE: always
+#     recomputed from live line items + linked coupon, never patched).
+
+id: conditional-coupons-001
+category: conditional
+profile: standard
+turns:
+  - user: >-
+      Check whether coupon "coupon 5" is valid for order ord_13, and if it
+      checks out, go ahead and apply it to the order.
+    expect:
+      planActions:
+        mustInclude:
+          - coupons.validate_coupon_for_order
+          - orders.apply_coupon_to_order
+      paramChecks:
+        - action: orders.apply_coupon_to_order
+          param: coupon_id
+          equals: struct_200
+        - action: orders.apply_coupon_to_order
+          param: id
+          equals: ord_13
+      state:
+        - query: "SELECT total_cents FROM orders WHERE id='ord_13'"
+          equals: 239190
+        - query: "SELECT COUNT(*) AS n FROM records WHERE kind='coupon_redemption' AND parent_id='struct_200'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error, invalid]

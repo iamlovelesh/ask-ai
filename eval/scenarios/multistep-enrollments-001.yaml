@@ -1,0 +1,53 @@
+# Task 17 Batch B part 1 — category: multistep, module: enrollments
+# (+courses, +records).
+#
+# Data home (m42-enrollments.ts): `participations(kind='enrollment',
+# parent_type='course')` for the enrollment itself, PLUS
+# `records(kind='lesson_completion', parent_id=<lesson id>)` — this
+# module is the WRITER of `lesson_completion`. `get_learner_progress`
+# computes `completed_lessons/total_lessons` FRESH from those records
+# every call (never a stale cache).
+#
+# Derivation (template copy):
+#   SELECT id,title,status,lesson_count,lessons FROM courses WHERE
+#     status='published' LIMIT 1;
+#   -> course_2 "Marketing Automation 101", lesson_count=4, lessons =
+#     [course_2_lsn_1..course_2_lsn_4]
+#   SELECT contact_id FROM participations WHERE kind='enrollment' AND
+#     parent_type='course' AND parent_id='course_2';
+#   -> 1 existing enrollee; con_1 is NOT among them (fresh contact to
+#     enroll, avoids the CONFLICT m42-enrollments.ts throws on a duplicate
+#     active enrollment).
+#   2 of 4 lessons completed -> progress_percent = round(2/4*100) = 50.
+
+id: multistep-enrollments-001
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      Enroll contact con_1 in the "Marketing Automation 101" course, mark
+      the first two lessons as completed for them, and tell me how far
+      along they are.
+    expect:
+      planActions:
+        mustInclude:
+          - enrollments.enroll_learner_in_course
+          - enrollments.record_lesson_completion
+          - enrollments.get_learner_progress
+      paramChecks:
+        - action: enrollments.enroll_learner_in_course
+          param: course_id
+          equals: course_2
+        - action: enrollments.enroll_learner_in_course
+          param: contact_id
+          equals: con_1
+      state:
+        - query: "SELECT COUNT(*) AS n FROM participations WHERE kind='enrollment' AND parent_type='course' AND parent_id='course_2' AND contact_id='con_1'"
+          countDelta: 1
+        - query: "SELECT COUNT(*) AS n FROM records WHERE kind='lesson_completion' AND contact_id='con_1'"
+          countDelta: 2
+      behavior:
+        confirmation: false
+      response:
+        mustMention: ["50"]
+        mustNotClaim: [failed, error]

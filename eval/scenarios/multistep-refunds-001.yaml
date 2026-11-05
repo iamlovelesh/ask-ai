@@ -1,0 +1,42 @@
+# Task 17 Batch B part 1 — category: multistep, module: refunds.
+#
+# STATUS VOCABULARY (m33-refunds.ts): `requested` -> `approved` ->
+# `succeeded` (via `execute_simulated_refund`). `refunds.execute_simulated_
+# refund` is declared `risk: 'external'` — per the unified confirmation
+# gate (`shouldGate`, server/src/agent/executor.ts: "fire iff risk ∈
+# {destructive, bulk, external} OR affectedCount > 50"), this ALWAYS
+# requires confirmation regardless of how small the affected set is.
+#
+# Derivation (template copy):
+#   SELECT id,amount_cents,contact_id,invoice_id FROM payments WHERE
+#     kind='payment' AND status='succeeded' LIMIT 1;
+#   -> pay_1, amount_cents=98360, invoice_id='inv_477'
+#   SELECT COUNT(*) FROM payments WHERE kind='refund' AND
+#     parent_payment_id='pay_1'; -> 0 (not already refunded — picked
+#     deliberately to avoid a possible CONFLICT on a payment already
+#     carrying a refund row in the seed).
+
+id: multistep-refunds-001
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      The customer behind payment pay_1 wants their money back — start a
+      refund request for it, approve it, and process the refund.
+    expect:
+      planActions:
+        mustInclude:
+          - refunds.create_refund_request
+          - refunds.approve_refund_request
+          - refunds.execute_simulated_refund
+      paramChecks:
+        - action: refunds.create_refund_request
+          param: payment_id
+          equals: pay_1
+      state:
+        - query: "SELECT COUNT(*) AS n FROM payments WHERE kind='refund' AND parent_payment_id='pay_1' AND status='succeeded'"
+          countDelta: 1
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]
