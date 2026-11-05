@@ -245,6 +245,117 @@ sans the pre-existing unrelated `eval/test/scenario.test.ts` failure, `npm run s
 549/549) pass with the sentinel-value schema in place. Do NOT mark this GO for
 Anthropic/OpenAI until the 3-call re-verification above actually runs and passes.
 
+## 1c. Round-3 fix: params-as-string + uniform required fields (2026-11-05, same day) — **RESOLVED, GO ×3**
+
+**Mandatory call order this round** (per explicit instruction): spend exactly 2 live
+calls FIRST (one per still-failing provider, against the round-2 sentinel schema,
+unchanged) to capture the exact error text, then STOP and diagnose locally before any
+further spend. That is exactly what happened.
+
+**The 2 diagnostic calls' exact errors:**
+
+| Model | Exact provider error (against the round-2 schema) |
+|---|---|
+| `anthropic/claude-haiku-4.5` | `output_config.format.schema: Empty schema ({}) that accepts any JSON value is not supported. Please specify a concrete type.` |
+| `openai/gpt-5-mini` | `Invalid schema for response_format 'response': In context=('properties','plan','properties','steps','items','properties','params','additionalProperties'), schema must have a 'type' key.` |
+
+**Root cause, found by local diagnosis (zero further spend) before any more live
+calls:** both errors point at the exact same place — `stepSchema.params`'s
+`z.looseObject({})` compiles to `"params":{"type":"object","properties":{},
+"additionalProperties":{}}`. The `additionalProperties` value is `{}` — an EMPTY,
+type-less nested schema. Anthropic rejects it outright; OpenAI's strict mode
+specifically requires every schema object to carry a `"type"` key, which `{}` lacks.
+This is a THIRD, independent defect from rounds 1 (recursive `$ref`) and 2 (root/
+nested `oneOf`/`anyOf`) — masked in both those rounds because validation apparently
+stops at the first offending construct it reaches, and `params` sits deep enough in
+the tree that it was never reached until the root-level union was fixed.
+
+A local `z.toJSONSchema` dump of the round-2 schema (zero API cost) additionally
+found, UNEXERCISED by either error (validation stopped at `params` first) but
+structurally present and certain to surface next if left alone:
+- `whenSchema.value` (`z.unknown()`) has the IDENTICAL empty/type-less `{}` shape as
+  `params`.
+- `stepSchema`'s `forEach`/`when`/`expects` are genuinely `.optional()` — omitted from
+  that level's `required` array — the long-flagged-but-never-confirmed hypothesis from
+  round 2 (§1b), now confirmed by direct inspection (not by a live failure).
+- `whenSchema.value` and `expectsSchema`'s 3 fields are likewise omitted from their
+  objects' `required` arrays.
+
+**Fix applied uniformly (not one-at-a-time, to avoid a round 4 chasing a fourth masked
+defect) — the SAME pattern at BOTH remaining `generateObject` call sites
+(`agent/plan-schema.ts`'s `flatPlanOutcomeSchema`, `agent/joiner.ts`'s new
+`wireJoinerDecisionSchema`):**
+
+1. **`params`** — no longer an object schema at all. `z.string()`, a JSON-ENCODED
+   blob of the real `Record<string, unknown>` (LLD §10 Spike B's original option 1,
+   floated all the way back in the very first SPIKES.md §1 entry and finally needed).
+   A plain string has a trivially concrete `type`; this can never hit the "empty
+   schema" rejection again no matter how deeply nested or heterogeneous real param
+   values get. The new `toStep` adapter (`plan-schema.ts`) does `JSON.parse` to
+   reconstruct the real params object for `agent/validator.ts`/`agent/executor.ts`
+   (unchanged — they still receive exactly the `Record<string, unknown>` they always
+   did).
+2. **`forEach`/`when`/`expects`** — ALWAYS present (never `.optional()`), with
+   sentinel/nullable semantics the adapter strips back to `undefined`:
+   `forEach: z.string()` (`""` = absent); `when` is always an object with
+   `ref: z.string()` (`""` = absent, then `op`/`value` are ignored), `op` staying the
+   REAL 5-value enum (never nulled — see point 4), and `value` per point 3; `expects`
+   is always an object with `nonEmpty`/`maxCount`/`minCount` each `.nullable()`
+   (`null` = that field unset — primitive `.nullable()` collapses to a `type` ARRAY,
+   e.g. `{"type":["number","null"]}`, confirmed locally to NOT be `anyOf`, unlike
+   round 2's object/array-nullable finding).
+3. **`when.value`** — `z.union([z.string(), z.number(), z.boolean(), z.null()])`. A
+   union of BARE PRIMITIVES (no enum, no object, no array) collapses cleanly to
+   `{"type":["string","number","boolean","null"]}`, confirmed locally — the one place
+   in this whole investigation a JSON Schema union is actually safe. Every other union
+   tried across all 3 rounds failed because it also contained an enum/object/array
+   branch forcing `anyOf`.
+4. **Why `when.op` stays a real enum instead of also being nulled**: local testing
+   (`z.toJSONSchema`) found `z.enum([...]).nullable()` does NOT collapse to a type
+   array the way plain primitives do — it compiles to `anyOf` (the `enum` keyword
+   can't be folded into a bare `type` array the way a plain `type` can). So `op`
+   itself never goes nullable; `ref===""` carries the "this when clause is unused"
+   signal instead, and `op` is simply ignored by the adapter in that case.
+5. **`joinerDecisionSchema`** (`agent/joiner.ts`) — flagged in round 2 (§1b) as a
+   third `z.discriminatedUnion` with the identical root-`oneOf` defect, never fixed
+   until now. Replaced with `wireJoinerDecisionSchema` (same flat-root + sentinel
+   pattern: `decision` enum, `patchedSteps` sentinel `[]`, `question` nullable),
+   reusing `plan-schema.ts`'s `wireStepSchema`/`toStep` for `patchedSteps` rather than
+   duplicating the step-wire logic. A new `toJoinerDecision` adapter narrows back to
+   the existing `JoinerDecision` shape; `joinerRepair`'s existing `NoObjectGeneratedError`
+   re-throw pattern (mirroring `planner.ts`'s `narrowFlatOutcome`) covers the
+   cross-field-mismatch case with zero new pipeline logic, identically to the planner
+   path.
+
+All of this was implemented and committed LOCALLY (schema + adapters + test suite
+green) BEFORE any further live spend, per this round's explicit sequencing.
+
+### Live re-spike (6 calls — planner ×3 models + joiner ×1 model, on top of the 2 diagnostic calls = 8 of the 10-call budget)
+
+| Call | Model | Result |
+|---|---|---|
+| Planner re-spike | `anthropic/claude-haiku-4.5` | **GO** — `kind:"clarify"` (a legitimate choice, not a plan, but a clean structured-output parse), 3,217 in / 71 out tokens, $0.003572, 9,070 ms |
+| Planner re-spike | `google/gemini-2.5-flash-lite` | **GO** — `kind:"plan"`, 8 steps, 2,133 in / 1,336 out tokens, $0.0007477, 3,613 ms |
+| Planner re-spike | `openai/gpt-5-mini` | **GO** — `kind:"plan"`, 10 steps, 2,229 in / 1,405 out tokens, $0.00336725, 19,162 ms |
+| Joiner-schema spike | `anthropic/claude-haiku-4.5` | **GO** — `decision:"clarify"` with a real question, 936 in / 70 out tokens, $0.001286, 7,794 ms |
+
+All 4 calls succeeded on attempt 1 — zero retries needed, consistent with this being a
+genuine schema-shape fix rather than a flaky/prompt issue. The joiner-schema call used
+Anthropic only ("cheapest sufficient signal" per instruction) — Gemini/OpenAI were
+already proven safe against union/empty-schema/optional-field defects by the planner
+re-spike using the identical `wireStepSchema` building block, so a full 3-model joiner
+re-spike would have been redundant spend.
+
+### VERDICT (a4): Schema GO/NO-GO after the round-3 fix — **GO for all 3 models, planner AND joiner schemas**
+
+`anthropic/claude-haiku-4.5`: **GO**. `google/gemini-2.5-flash-lite`: **GO**.
+`openai/gpt-5-mini`: **GO**. `joiner.ts`'s `wireJoinerDecisionSchema`: **GO**
+(Anthropic-verified; Gemini/OpenAI not independently re-spiked but share every
+provider-sensitive construct with the already-3-model-verified planner schema). This
+closes out the schema-shape blocker from docs/SPIKES.md §1/§1a/§1b — Task 9/10 may
+proceed with real (non-Mock) LLM traffic against the planner AND joiner schemas on all
+3 target models.
+
 ## 2. Cache passthrough spike (`scripts/spike-cache.ts`)
 
 **Setup:** two consecutive calls to `anthropic/claude-haiku-4.5` with an **identical**
@@ -309,7 +420,7 @@ discount on the planner's system prompt** — every cost estimate must use full
 (non-cached) input-token pricing until/unless the system prompt grows past Haiku's
 cache-eligibility floor and a follow-up spike reconfirms caching actually engages.
 
-### 2a. Big-prompt cache probe — implemented but NOT RUN (2026-11-05 follow-up)
+### 2a. Big-prompt cache probe — RUN in round 3 (2026-11-05, same day) — **CONFIRMED ABSENT, now at a size past the floor**
 
 `scripts/spike-cache.ts` was extended with a `--big` mode: pads the real planner system
 prompt with the first ~1,500 tokens of `buildCatalogSummary(registry)`
@@ -337,20 +448,48 @@ updated to the new schema yet (an avoidable mistake, disclosed in §1b), leaving
 room for `--big` even with the "run it first" instruction. `--big` mode itself is
 unchanged and still ready to run.
 
-**Verdict: NOT RUN (two rounds in a row).** `docs/TARGETS.md`'s existing fallback (full
-non-cached pricing for every planner-prompt cost estimate, per VERDICT (b) above)
-stands as-is, unchanged, since no new evidence was collected either way in either
-round. **Baseline-economics implication of staying ABSENT/unconfirmed:** no change to
-the committed budget split (optimized agent: full 110-scenario corpus ×3 trials;
-baseline agent: stratified 40-scenario subset ×1 trial, per `docs/TARGETS.md` §4) — it
-already assumes no cache discount, so an unconfirmed cache state is cost-neutral to
-that decision; it would only matter if `--big` comes back CONFIRMED, which would be
-evidence to revisit the baseline subset size upward in a future planning pass, not a
-blocker to anything committed today. Recommended follow-up: run
-`npx tsx scripts/spike-cache.ts --big` (2 calls, ~$0.003 at Haiku rates) with a fresh,
-SEPARATE budget (not bundled with the next schema-fix re-verification attempt — bundle
-the two only if the schema fix is confirmed GO first, so a schema failure doesn't
-burn through the cache probe's budget a third time).
+**Round 3: finally run, per the explicit "cache probe runs next, before anything
+else, non-negotiable" instruction** — executed immediately after the schema fix was
+confirmed GO ×3 (§1c), BEFORE any optional diagnostics, exactly as instructed. 2
+calls, `anthropic/claude-haiku-4.5`, explicit `cacheControl:{type:'ephemeral'}`,
+identical system prefix:
+
+| Call | tokens in | tokens out | **tokens cached** | cost | latency |
+|---|---|---|---|---|---|
+| 1 | 3,608 | 16 | **0** | $0.003688 | 1,899 ms |
+| 2 (identical system) | 3,608 | 16 | **0** | $0.003688 | 1,362 ms |
+
+Padded system measured at **~3,160 tokens** (`estimateTokens`, verified before any
+API call) — comfortably past BOTH the >2,600-token target AND, critically, Anthropic
+Haiku's documented ~2,048-token cache-eligibility floor that made round 1's result
+inconclusive ("too small to tell"). This time the prompt is unambiguously large
+enough. Result: **zero cached tokens on call 2, and identical cost between call 1 and
+call 2** ($0.003688 both times) — the same "no cost difference" signal round 1 used to
+argue caching never engaged, but now at a size where the floor-based explanation no
+longer applies.
+
+### VERDICT (b2): Cache passthrough — **CONFIRMED ABSENT** (not just "too small to tell" anymore)
+
+Round 1's VERDICT (b) left open the possibility that the explicit-`cacheControl`
+passthrough mechanism was real but simply never got a large-enough prompt to engage.
+This round closes that gap: at ~3,160 system-prompt tokens (>1.5× Haiku's own stated
+floor), two identical-prefix calls through the documented
+`providerOptions.openrouter.cacheControl` passthrough STILL show zero cached tokens
+and identical cost. The mechanism either doesn't actually reach Anthropic's cache
+layer through OpenRouter for this request shape, or some other factor (the
+`<catalog-summary-pad>`-wrapped padding, the `messages[]`-array bypass path itself,
+OpenRouter's current cache-breakpoint support for this model route) prevents it —
+further isolating WHICH is beyond this task's scope, but the practical answer for
+cost planning is now a confirmed **NO**, not a "maybe, retry bigger."
+
+**Baseline-economics implication:** `docs/TARGETS.md`'s existing non-cached-pricing
+assumption for every planner-prompt cost estimate is now CONFIRMED correct (not just
+assumed) — no change needed to the committed budget split (optimized agent: full
+110-scenario corpus ×3 trials; baseline agent: stratified 40-scenario subset ×1
+trial). This closes out the cache-passthrough question for the planner's real system
+prompt size range; no further cache spikes are needed unless the system prompt
+architecture changes significantly (e.g. a shared-prefix multi-turn caching scheme,
+which is a different mechanism than the single-request breakpoint tested here).
 
 ## 3. Total spend (this task)
 
@@ -404,6 +543,27 @@ omitted. No budget remained for the exact-error diagnostic that would explain wh
 Anthropic/OpenAI still fail with the (merely) root-fixed schema, nor for live-verifying
 the sentinel-value redesign devised in response, nor for the `--big` cache probe §2a
 asked for this round.
+
+### 3c. Total spend (2026-11-05 round-3: params-as-string uniform fix + cache probe) — ALL GREEN
+
+| Call batch | Calls | Measured cost |
+|---|---|---|
+| Diagnostic (mandatory first step), `anthropic/claude-haiku-4.5` against round-2 schema | 1 | $0 (400 pre-generation) |
+| Diagnostic (mandatory first step), `openai/gpt-5-mini` against round-2 schema | 1 | $0 (400 pre-generation) |
+| Planner re-spike, `anthropic/claude-haiku-4.5` (attempt 1, succeeded) | 1 | $0.003572 |
+| Planner re-spike, `google/gemini-2.5-flash-lite` (attempt 1, succeeded) | 1 | $0.0007477 |
+| Planner re-spike, `openai/gpt-5-mini` (attempt 1, succeeded) | 1 | $0.00336725 |
+| Joiner-schema spike, `anthropic/claude-haiku-4.5` (attempt 1, succeeded) | 1 | $0.001286 |
+| Big-prompt cache probe, call 1 | 1 | $0.003688 |
+| Big-prompt cache probe, call 2 | 1 | $0.003688 |
+| **Total** | **8** | **≈ $0.0163489** |
+
+8 of the 10-call budget used, 2 calls to spare; well under the $0.30 cost cap. Unlike
+rounds 1 and 2, EVERY live call this round produced new, used signal — no wasted
+calls, and the mandated ordering (diagnose-first, cache-probe-before-anything-else)
+was followed exactly as instructed. This round closes out BOTH the schema GO/NO-GO
+question (§1c, GO ×3 + joiner GO) and the cache-passthrough question (§2a, CONFIRMED
+ABSENT) in a single pass.
 
 ## 4. Cross-reference: `docs/TARGETS.md`
 
