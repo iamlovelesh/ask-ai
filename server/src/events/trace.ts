@@ -6,7 +6,6 @@
 
 import { randomUUID } from 'node:crypto';
 import { openSessions, sessionsDbPath, type SessionsDb } from '../store/sessions-db.js';
-import { VirtualClock } from '../store/clock.js';
 
 export type SpanKind = 'llm' | 'retrieval' | 'step' | 'joiner' | 'compose';
 
@@ -78,7 +77,6 @@ function rowToSpan(row: Record<string, unknown>): Span {
 
 class SpansImpl implements Spans {
   private readonly db: SessionsDb;
-  private readonly clock = new VirtualClock();
 
   constructor(dbPath: string) {
     this.db = openSessions(dbPath);
@@ -86,7 +84,13 @@ class SpansImpl implements Spans {
 
   start(partial: SpanStart): SpanHandle {
     const id = `span_${randomUUID()}`;
-    const startedAt = partial.startedAt ?? this.clock.now();
+    // Span timing is instrumentation (ms deltas for the trace waterfall UI),
+    // not domain time — use a real monotonic timer rather than the pinned
+    // VirtualClock, which would always yield ms:0. `startedAt`/`endedAt` are
+    // only ever compared to each other (never rendered as wall-clock dates —
+    // see `web/src/lib/trace.ts`'s `layoutSpans`), so a `performance.now()`
+    // base is safe.
+    const startedAt = partial.startedAt ?? performance.now();
     this.db.run(
       `INSERT INTO spans (id, turn_id, session_id, kind, name, started_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
@@ -103,7 +107,7 @@ class SpansImpl implements Spans {
   }
 
   end(handle: SpanHandle, patch: SpanEndPatch = {}): void {
-    const endedAt = patch.endedAt ?? this.clock.now();
+    const endedAt = patch.endedAt ?? performance.now();
     const ms = endedAt - handle.startedAt;
     const meta = patch.meta !== undefined ? JSON.stringify(patch.meta) : null;
     this.db.run(

@@ -436,13 +436,17 @@ export async function* runBaselineTurn(input: RunBaselineTurnInput): AsyncGenera
       record({ t: 'step.started', turnId, stepId, action: action.slug });
       const stepSpan: SpanHandle = spans.start({ turnId, kind: 'step', name: action.slug, meta: { stepId } });
       const key = `${turnId}:0:${stepId}:0`;
-      const startedStepAt = clock.now();
+      // Instrumentation timing, not domain time — use a real monotonic
+      // timer. `clock` (VirtualClock, pinned) stays reserved for the
+      // `ActionContext` handed to the handler below. Mirrors the executor
+      // fix in `agent/executor.ts`.
+      const startedStepAt = performance.now();
 
       try {
         const output: unknown = await crm.tx((db) =>
           action.handler(params, { db, clock, idempotencyKey: key, format: 'concise' } satisfies ActionContext),
         );
-        const ms = clock.now() - startedStepAt;
+        const ms = performance.now() - startedStepAt;
 
         let finalResult: unknown = output;
         let spillRef: string | undefined;
@@ -480,7 +484,7 @@ export async function* runBaselineTurn(input: RunBaselineTurnInput): AsyncGenera
         const observed = JSON.stringify(finalResult ?? null).slice(0, 1500);
         history.push(`Step ${step}: call_action("${decision.slug}", ${JSON.stringify(params)}) -> ${summary}. result=${observed}`);
       } catch (err) {
-        const ms = clock.now() - startedStepAt;
+        const ms = performance.now() - startedStepAt;
         const error = describeError(err);
         record({ t: 'step.failed', turnId, stepId, error, ms });
         stepsFailed += 1;

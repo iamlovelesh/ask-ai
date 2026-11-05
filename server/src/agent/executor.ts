@@ -660,7 +660,12 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
   /** Run a single step through its full lifecycle. */
   const runStep = async (step: Step): Promise<void> => {
     const action = registry.get(step.action);
-    const started = clock.now();
+    // Step-duration measurement is instrumentation, not domain time — use a
+    // real monotonic timer (`performance.now()`) rather than `clock`, which
+    // stays the pinned `VirtualClock` for domain timestamps handed to action
+    // handlers via `buildCtx`. See `events/trace.ts` for the matching fix on
+    // span start/end stamps.
+    const started = performance.now();
     if (!action) {
       emitFailed(step.id, { code: 'VALIDATION', message: `unknown action '${step.action}'` }, 0);
       return;
@@ -690,7 +695,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
       params = resolveValue(step.params, rctx) as Record<string, unknown>;
     } catch (err) {
       if (err instanceof RefResolutionError) {
-        const ms = clock.now() - started;
+        const ms = performance.now() - started;
         const error = { code: err.code, message: err.message };
         const { hint } = recordStuck(step.action, stableHash(step.params), err.code);
         emitFailed(step.id, hint ? { ...error, message: `${error.message} [${hint}]` } : error, ms);
@@ -715,7 +720,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     const stepSpan = spans?.start({ turnId, kind: 'step', name: step.action, meta: { stepId: step.id } });
     const key = `${turnId}:${planRev}:${step.id}:0`;
     const res = await invoke(action, params, key, isCore);
-    const ms = clock.now() - started;
+    const ms = performance.now() - started;
 
     if (!res.ok) {
       const err = res.error as { code: string; message: string };
@@ -767,7 +772,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
         message: `forEach fan-out of ${fanOut} exceeds the hard cap of ${BUDGETS.forEachHardCap} — narrow the selection or use a bulk action.`,
       };
       recordStuck(step.action, stableHash({ forEach: fanOut }), err.code);
-      emitFailed(step.id, err, clock.now() - started);
+      emitFailed(step.id, err, performance.now() - started);
       return;
     }
 
@@ -799,7 +804,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
         message: `forEach item(s) [${idxs}] of ${items.length} could not resolve their params — no write ran (the fan-out is aborted before the confirmation gate). First failure (item ${first.index}): ${first.message}`,
       };
       const { hint } = recordStuck(step.action, stableHash(step.params), error.code);
-      emitFailed(step.id, hint ? { ...error, message: `${error.message} [${hint}]` } : error, clock.now() - started);
+      emitFailed(step.id, hint ? { ...error, message: `${error.message} [${hint}]` } : error, performance.now() - started);
       return;
     }
 
@@ -839,7 +844,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
           code: err.code,
           message: `${err.message}${partial}${hint ? ` [${hint}]` : ''}`,
         };
-        emitFailed(step.id, finalErr, clock.now() - started, stepSpan);
+        emitFailed(step.id, finalErr, performance.now() - started, stepSpan);
         return;
       }
       perItemResults.push(res.output);
@@ -850,7 +855,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     states.set(step.id, { state: 'done', result });
 
     const summary = summarize(step, action, fanOut, drift, undefined);
-    emitFinished(step.id, summary, result, undefined, clock.now() - started, fanOut, stepSpan);
+    emitFinished(step.id, summary, result, undefined, performance.now() - started, fanOut, stepSpan);
   };
 
   const emitFinished = (
