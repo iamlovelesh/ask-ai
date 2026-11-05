@@ -1,3 +1,4 @@
+import './env.js';
 import Fastify from 'fastify';
 import { createRegistry } from './catalog/registry.js';
 import { withFailureInjection } from './catalog/inject-failures.js';
