@@ -1,0 +1,26 @@
+# Task 17 Batch C — category: failure, module: contacts.
+#
+# NOT_FOUND injection — honest failure surfacing. Same shape as this
+# batch's `failure-tasks-not-found`: a non-TRANSIENT code is never
+# retried (executor.ts's `invoke` only retries `code === 'TRANSIENT'`),
+# so the step fails on attempt 1 and the turn's overall `status` becomes
+# `'failed'`.
+#
+# Derivation (template copy):
+#   SELECT id FROM contacts WHERE id='con_1'; -> exists — the injected
+#     NOT_FOUND fires regardless of the real row existing.
+
+id: failure-contacts-not-found
+category: failure
+profile: standard
+injectFailures:
+  - action: contacts.get_contact_details
+    code: NOT_FOUND
+    times: 1
+turns:
+  - user: "What's on file for contact con_1?"
+    expect:
+      planActions:
+        mustInclude: [contacts.get_contact_details]
+      behavior:
+        status: failed

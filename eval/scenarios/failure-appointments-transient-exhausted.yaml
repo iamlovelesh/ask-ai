@@ -1,0 +1,31 @@
+# Task 17 Batch C — category: failure, module: appointments.
+#
+# TRANSIENT x2 on a single-action turn — retry exhausted (same shape as
+# this batch's `failure-refunds-transient-exhausted`): attempt 1 and
+# attempt 2 both consume the injected failure, `invoke` returns
+# `ok:false`, the step is recorded `failed`, and the whole turn's
+# `status` becomes `'failed'`. The appointment is left untouched — the
+# write never actually lands.
+#
+# Derivation (template copy):
+#   SELECT id,status,start_at FROM appointments WHERE id='appt_1';
+#   -> status='booked', start_at=1797588000000 (before turn, and
+#     unchanged after since the reschedule write never lands).
+
+id: failure-appointments-transient-exhausted
+category: failure
+profile: standard
+injectFailures:
+  - action: appointments.reschedule_appointment
+    code: TRANSIENT
+    times: 2
+turns:
+  - user: "Reschedule appointment appt_1 to 3pm tomorrow."
+    expect:
+      planActions:
+        mustInclude: [appointments.reschedule_appointment]
+      state:
+        - query: "SELECT start_at AS n FROM appointments WHERE id='appt_1'"
+          equals: 1797588000000
+      behavior:
+        status: failed

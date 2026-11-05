@@ -1,0 +1,32 @@
+# Task 17 Batch C — category: failure, module: leads.
+#
+# TRANSIENT x1 on a single-action turn — same retry-then-succeed shape
+# as this batch's `failure-payments-transient-retry`/
+# `failure-invoices-transient-retry`: consumed on attempt 1, the real
+# handler runs clean on attempt 2, final state identical to the
+# no-failure case.
+#
+# Derivation (template copy):
+#   SELECT id,owner_id FROM leads WHERE id='lead_1'; -> owner_id='user_17'
+#     (before) -> reassigned to 'user_5' (exists in `users`) after the
+#     turn.
+
+id: failure-leads-transient-retry
+category: failure
+profile: standard
+injectFailures:
+  - action: leads.assign_lead_owner
+    code: TRANSIENT
+    times: 1
+turns:
+  - user: "Assign lead lead_1 to owner user_5."
+    expect:
+      planActions:
+        mustInclude: [leads.assign_lead_owner]
+      state:
+        - query: "SELECT owner_id AS n FROM leads WHERE id='lead_1'"
+          equals: user_5
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]
