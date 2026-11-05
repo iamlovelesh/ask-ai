@@ -71,6 +71,10 @@ function jsonResponse(status: number, body: unknown): Response {
 // malformed-on-purpose stays malformed.
 const PLAN_OUTCOME_KINDS: ReadonlySet<string> = new Set(['plan', 'search', 'clarify', 'unsupported', 'respond']);
 const JOINER_DECISIONS: ReadonlySet<string> = new Set(['patch', 'proceed', 'clarify', 'abort']);
+// Baseline flat wire (fix(baseline) 81af86a): {kind, slug, paramsJson, text},
+// all four required, '' sentinels — normalize terse {kind:'call_action',
+// slug, params} / {kind:'final', text} scripted values the same way.
+const BASELINE_KINDS: ReadonlySet<string> = new Set(['call_action', 'final']);
 
 function normalizeWireStep(step: unknown): unknown {
   if (step === null || typeof step !== 'object' || Array.isArray(step)) return step;
@@ -114,6 +118,16 @@ function normalizeMockValue(value: unknown): unknown {
     };
     const plan = merged['plan'] as Record<string, unknown>;
     return { ...merged, plan: { ...plan, steps: normalizeWireSteps(plan['steps']) } };
+  }
+
+  if (typeof obj['kind'] === 'string' && BASELINE_KINDS.has(obj['kind'])) {
+    const params = obj['params'];
+    return {
+      kind: obj['kind'],
+      slug: typeof obj['slug'] === 'string' ? obj['slug'] : '',
+      paramsJson: typeof obj['paramsJson'] === 'string' ? obj['paramsJson'] : JSON.stringify(params ?? {}),
+      text: typeof obj['text'] === 'string' ? obj['text'] : '',
+    };
   }
 
   if (typeof obj['decision'] === 'string' && JOINER_DECISIONS.has(obj['decision'])) {

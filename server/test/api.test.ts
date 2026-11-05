@@ -316,7 +316,7 @@ describe('POST /api/sessions/:id/messages — full turn over SSE', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'find my leads' },
+      payload: { text: 'find my leads', agent: 'plandsl' },
       payloadAsStream: true,
     });
     expect(res.statusCode).toBe(200);
@@ -366,7 +366,7 @@ describe('GET /api/sessions/:id/events — replay', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'find my leads' },
+      payload: { text: 'find my leads', agent: 'plandsl' },
       payloadAsStream: true,
     });
     await new FrameReader(res.stream()).drain();
@@ -403,7 +403,7 @@ describe('SSE drop + reconnect (Review Focus 1)', () => {
     const res1 = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'Archive contact con_1' },
+      payload: { text: 'Archive contact con_1', agent: 'plandsl' },
       payloadAsStream: true,
     });
     expect(res1.statusCode).toBe(200);
@@ -477,7 +477,7 @@ describe('POST /api/sessions/:id/confirm/:confirmId — wrong/stale ids', () => 
     const res = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'Archive contact con_1' },
+      payload: { text: 'Archive contact con_1', agent: 'plandsl' },
       payloadAsStream: true,
     });
     const reader = new FrameReader(res.stream());
@@ -531,7 +531,7 @@ describe('POST /api/sessions/:id/messages — one turn at a time', () => {
     const res1 = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'Archive contact con_1' },
+      payload: { text: 'Archive contact con_1', agent: 'plandsl' },
       payloadAsStream: true,
     });
     expect(res1.statusCode).toBe(200);
@@ -542,7 +542,7 @@ describe('POST /api/sessions/:id/messages — one turn at a time', () => {
     const res2 = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'archive again' },
+      payload: { text: 'archive again', agent: 'plandsl' },
     });
     expect(res2.statusCode).toBe(409);
 
@@ -586,7 +586,7 @@ describe('POST /api/sessions/:id/cancel', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'Archive contact con_1' },
+      payload: { text: 'Archive contact con_1', agent: 'plandsl' },
       payloadAsStream: true,
     });
     expect(res.statusCode).toBe(200);
@@ -609,7 +609,7 @@ describe('POST /api/sessions/:id/cancel', () => {
     const res2 = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'Archive contact con_1' },
+      payload: { text: 'Archive contact con_1', agent: 'plandsl' },
       payloadAsStream: true,
     });
     expect(res2.statusCode).toBe(200);
@@ -649,7 +649,7 @@ describe('POST /api/sessions/:id/cancel', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'Archive contact con_1' },
+      payload: { text: 'Archive contact con_1', agent: 'plandsl' },
       payloadAsStream: true,
     });
     const reader = new FrameReader(res.stream());
@@ -720,7 +720,7 @@ describe('GET /api/metrics', () => {
       const res = await app.inject({
         method: 'POST',
         url: `/api/sessions/${sessionId}/messages`,
-        payload: { text: `find leads ${i}` },
+        payload: { text: `find leads ${i}`, agent: 'plandsl' },
         payloadAsStream: true,
       });
       await new FrameReader(res.stream()).drain();
@@ -738,7 +738,7 @@ describe('GET /api/metrics', () => {
     for (const bucket of [body.overall, ...Object.values(body.byStatus), ...Object.values(body.byAgent)]) {
       for (const v of Object.values(bucket)) expect(Number.isFinite(v)).toBe(true);
     }
-    expect(body.byAgent['optimized']?.['count']).toBe(2);
+    expect(body.byAgent['plandsl']?.['count']).toBe(2);
     expect(body.byStatus['done']?.['count']).toBe(2);
   });
 
@@ -790,7 +790,7 @@ describe('GET /api/metrics', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'find leads now' },
+      payload: { text: 'find leads now', agent: 'plandsl' },
       payloadAsStream: true,
     });
     await new FrameReader(res.stream()).drain();
@@ -940,7 +940,7 @@ describe('GET /api/traces/:turnId', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'find leads' },
+      payload: { text: 'find leads', agent: 'plandsl' },
       payloadAsStream: true,
     });
     const frames = await new FrameReader(res.stream()).drain();
