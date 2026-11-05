@@ -46,6 +46,13 @@ function formatTokens(tokensIn: number | undefined, tokensOut: number | undefine
   if (tokensIn === undefined && tokensOut === undefined) return '';
   return `${tokensIn ?? 0}→${tokensOut ?? 0} tok`;
 }
+
+/** Joins the present ms/tokens/cost metrics with a separating space, so a
+ * span's meta never renders them jammed together ("tok$0.0002"). Empty
+ * parts (unknown/zero) are dropped. */
+function metricText(ms: number | undefined, tokensIn: number | undefined, tokensOut: number | undefined, costUsd: number | undefined): string {
+  return [formatMs(ms), formatTokens(tokensIn, tokensOut), formatCost(costUsd)].filter(Boolean).join('  ');
+}
 </script>
 
 <template>
@@ -68,11 +75,7 @@ function formatTokens(tokensIn: number | undefined, tokensOut: number | undefine
           <span :class="['trace-dot', `kind-${bar.span.kind}`]"></span>
           <span class="trace-row-name">{{ bar.label }}</span>
           <span class="trace-row-meta">
-            {{ formatMs(bar.span.ms) }}
-            <template v-if="formatTokens(bar.span.tokensIn, bar.span.tokensOut)">
-              {{ formatTokens(bar.span.tokensIn, bar.span.tokensOut) }}
-            </template>
-            <template v-if="formatCost(bar.span.costUsd)">{{ formatCost(bar.span.costUsd) }}</template>
+            {{ metricText(bar.span.ms, bar.span.tokensIn, bar.span.tokensOut, bar.span.costUsd) }}
             <span v-if="bar.status === 'failed'" class="trace-row-failed">failed</span>
             <span v-else-if="bar.status === 'running'" class="trace-row-running">running</span>
           </span>

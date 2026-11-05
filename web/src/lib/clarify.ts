@@ -19,6 +19,15 @@
 const MAX_OPTIONS = 4;
 const MAX_OPTION_LENGTH = 40;
 
+/** A clause that opens with an interrogative ("Are you asking about…",
+ * "Should I…", "Which…") still carries the question STEM before its first
+ * comma — with no lead-in marker to strip it, the first "option" would be
+ * the stem itself ("Are you asking about overdue invoices"), a chip that
+ * SENDS garbage. Only lead-in-marked questions ("Which X: A, B, or C") get
+ * the stem removed, so a bare interrogative enumeration is not chip-able. */
+const INTERROGATIVE_LEAD_RE =
+  /^(?:are|is|was|were|do|does|did|should|shall|can|could|would|will|which|what|whom|who|where|when|how|may|might|has|have|had)\b/i;
+
 export function parseClarifyOptions(question: string): string[] | null {
   const trimmed = question.trim().replace(/[?!.]+$/, '');
   if (!trimmed) return null;
@@ -42,6 +51,9 @@ export function parseClarifyOptions(question: string): string[] | null {
     // prose. Require BOTH a comma AND an explicit 'or' to treat it as a
     // genuine choice list ("Acme Corp, Acme Inc, or Acme LLC?").
     if (!hasComma || !hasOr) return null;
+    // ...and that list must not open with a question stem, or the first
+    // chip would send the stem rather than a clean option.
+    if (INTERROGATIVE_LEAD_RE.test(clause)) return null;
   }
 
   const parts = clause

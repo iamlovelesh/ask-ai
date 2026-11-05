@@ -73,6 +73,20 @@ describe('parseClarifyOptions', () => {
     expect(parseClarifyOptions('Acme, Globex, or Initech?')).toEqual(['Acme', 'Globex', 'Initech']);
   });
 
+  it('returns null for a no-lead-in enumeration that opens with a question stem (first chip would send the stem)', () => {
+    // Regression from the hunt: this rendered a garbage first chip
+    // "Are you asking about overdue invoices".
+    expect(
+      parseClarifyOptions('Are you asking about overdue invoices, tasks, opportunities, or something else?'),
+    ).toBeNull();
+    expect(parseClarifyOptions('Should I send this email now, or schedule it?')).toBeNull();
+    expect(parseClarifyOptions('Do you mean leads, contacts, or accounts?')).toBeNull();
+  });
+
+  it('still parses a clean bare enumeration of noun phrases (no question stem)', () => {
+    expect(parseClarifyOptions('Red, green, or blue?')).toEqual(['Red', 'green', 'blue']);
+  });
+
   it('still parses a colon lead-in with commas even when there is no "or"', () => {
     expect(parseClarifyOptions('Which contact did you mean: Jane Smith, John Doe?')).toEqual([
       'Jane Smith',
