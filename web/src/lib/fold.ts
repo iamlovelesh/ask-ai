@@ -83,6 +83,13 @@ export interface SessionChatState {
   /** True while a turn is known to be in flight (between `turn.started`
    * and `turn.completed`/`memory.snapshot`) for this session. */
   running: boolean;
+  /** `turnId` of the turn currently in flight (set on `turn.started`,
+   * cleared on `turn.completed`), or `null` when nothing is live. Lets the
+   * UI scope live-only affordances — notably the aria-live step-progress
+   * announcement — to a genuinely running turn, so bulk-replaying a
+   * historical session (or switching to a finished one) never re-announces
+   * its last turn's progress to assistive tech. */
+  activeTurnId: string | null;
   /** True while an automatic reconnect loop is active. */
   reconnecting: boolean;
   /** User-facing banner text for a MID-STREAM drop (≥1 frame already
@@ -111,6 +118,7 @@ export function emptyChatState(): SessionChatState {
     turnIndex: {},
     lastSeq: 0,
     running: false,
+    activeTurnId: null,
     reconnecting: false,
     error: null,
     sendError: null,
@@ -155,6 +163,7 @@ export function applyEvent(chat: SessionChatState, ev: AppEvent): void {
       const turn = findOrCreateTurn(chat, ev.turnId, ev.userText);
       turn.userText = ev.userText;
       chat.running = true;
+      chat.activeTurnId = ev.turnId;
       chat.error = null;
       return;
     }
@@ -256,6 +265,7 @@ export function applyEvent(chat: SessionChatState, ev: AppEvent): void {
         turn.pendingConfirm.resolvedSeq = ev.seq;
       }
       chat.running = false;
+      if (chat.activeTurnId === ev.turnId) chat.activeTurnId = null;
       return;
     }
     case 'memory.snapshot':

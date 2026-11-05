@@ -53,4 +53,30 @@ describe('parseClarifyOptions', () => {
   it('returns null for an empty question', () => {
     expect(parseClarifyOptions('   ')).toBeNull();
   });
+
+  // Compound questions: a bare comma with no lead-in and no 'or' is almost
+  // always two separate asks, NOT a choice list — parsing it would emit
+  // chips that send the wrong text (the original bug).
+  it('returns null for a compound "which X, and what Y?" question (bare comma, no or, no lead-in)', () => {
+    expect(parseClarifyOptions('Which contact, and what date?')).toBeNull();
+  });
+
+  it('returns null for a compound question with multiple bare commas and no or', () => {
+    expect(parseClarifyOptions('Who should I assign this to, which account, and when is it due?')).toBeNull();
+  });
+
+  it('returns null for a two-part "A, and B" compound with no or', () => {
+    expect(parseClarifyOptions('Should I update the status, and notify the owner?')).toBeNull();
+  });
+
+  it('still parses a bare comma list once an explicit "or" makes it a real choice list', () => {
+    expect(parseClarifyOptions('Acme, Globex, or Initech?')).toEqual(['Acme', 'Globex', 'Initech']);
+  });
+
+  it('still parses a colon lead-in with commas even when there is no "or"', () => {
+    expect(parseClarifyOptions('Which contact did you mean: Jane Smith, John Doe?')).toEqual([
+      'Jane Smith',
+      'John Doe',
+    ]);
+  });
 });

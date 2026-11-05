@@ -41,6 +41,26 @@ describe('deriveGateReason', () => {
     );
   });
 
+  it('labels an "un"-prefixed external verb (unpublish) as a retraction, NOT an external send', () => {
+    // Regression: the bare `publish` substring in `unpublish` used to
+    // mis-label a retraction as "External send".
+    expect(
+      deriveGateReason({ actions: ['posts.unpublish_announcement'], affectedCount: 1, targetSample: [], description: '' }),
+    ).toBe('Destructive action');
+    expect(
+      deriveGateReason({ actions: ['campaigns.unsend_blast'], affectedCount: 3, targetSample: [], description: '' }),
+    ).toBe('Destructive action');
+    expect(
+      deriveGateReason({ actions: ['posts.unschedule_post'], affectedCount: 2, targetSample: [], description: '' }),
+    ).toBe('Destructive action');
+  });
+
+  it('still labels a genuine re-publish/re-send as an external send (only the "un" negation is a retraction)', () => {
+    expect(
+      deriveGateReason({ actions: ['posts.republish_announcement'], affectedCount: 1, targetSample: [], description: '' }),
+    ).toBe('External send');
+  });
+
   it('prefers destructive over external when a scope somehow carries both signals', () => {
     expect(
       deriveGateReason({ actions: ['leads.delete_lead', 'emails.send_email'], affectedCount: 2, targetSample: [], description: '' }),

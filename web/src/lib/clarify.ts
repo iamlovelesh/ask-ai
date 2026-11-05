@@ -5,11 +5,15 @@
  * `['Jane Smith', 'John Doe', 'Jane Doe']`. `ClarifyCard` renders these as
  * reply chips that fill the composer and send immediately.
  *
- * Deliberately conservative: a question with no colon/dash/'between'/'among'
- * lead-in AND no comma (a bare "X or Y?") is NOT parsed, even though it has
- * an "or" — too easily confused with ordinary prose ("did you want me to
- * search leads or contacts for this?"). False negatives (no chips offered)
- * are harmless; false positives would offer a chip that sends garbage.
+ * Deliberately conservative. With no colon/dash/'between'/'among' lead-in,
+ * a bare comma list NEVER qualifies on its own — a comma with no 'or' is
+ * almost always a compound question ("Which contact, and what date?", which
+ * would otherwise emit garbage chips that SEND the wrong text), and a bare
+ * "X or Y?" with no comma is too easily ordinary prose ("did you want me to
+ * search leads or contacts for this?"). So without a lead-in we require BOTH
+ * a comma AND an explicit 'or'; a lead-in marker is itself sufficient. False
+ * negatives (no chips offered) are harmless; false positives would offer a
+ * chip that sends garbage.
  */
 
 const MAX_OPTIONS = 4;
@@ -27,8 +31,18 @@ export function parseClarifyOptions(question: string): string[] | null {
 
   const hasComma = clause.includes(',');
   const hasOr = /\bor\b/i.test(clause);
-  if (!hasComma && !hasOr) return null;
-  if (!leadInMatch && !hasComma) return null; // see header: bare "X or Y?" is too ambiguous
+  if (leadInMatch) {
+    // A lead-in marker (colon/dash/between/among) is itself the enumeration
+    // signal; we still need a comma or an 'or' to split into ≥2 options.
+    if (!hasComma && !hasOr) return null;
+  } else {
+    // No lead-in marker: a bare comma list alone NEVER qualifies — a comma
+    // with no 'or' is almost always a compound question ("Which contact,
+    // and what date?"), and a bare "X or Y?" with no comma is ambiguous
+    // prose. Require BOTH a comma AND an explicit 'or' to treat it as a
+    // genuine choice list ("Acme Corp, Acme Inc, or Acme LLC?").
+    if (!hasComma || !hasOr) return null;
+  }
 
   const parts = clause
     .split(/,\s*(?:or\s+)?|\s+or\s+/i)

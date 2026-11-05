@@ -58,7 +58,14 @@ function isPlanning(turn: TurnView): boolean {
  * step settles so nothing is announced for a turn with no steps yet. */
 const stepAnnouncement = computed(() => {
   const turn = chat.value?.turns.at(-1);
-  if (!turn || turn.stepOrder.length === 0) return '';
+  // Only announce for the turn that is genuinely in flight RIGHT NOW. Bulk-
+  // replaying a historical session (or switching to a finished one) folds
+  // every step to its terminal state, which would otherwise make this
+  // recompute to "Step N of N done" and re-announce a long-finished turn to
+  // assistive tech. `activeTurnId` is set on `turn.started` and cleared on
+  // `turn.completed`, so it's non-null only while a live turn is running.
+  if (!turn || turn.turnId !== chat.value?.activeTurnId) return '';
+  if (turn.stepOrder.length === 0) return '';
   const total = turn.stepOrder.length;
   const settled = turn.stepOrder.filter((id) => {
     const s = turn.steps[id];
