@@ -1,15 +1,26 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import type { TurnView } from '../lib/fold.js';
 
 const props = defineProps<{ turn: TurnView }>();
+
+const activityOpen = ref(false);
 
 function orderedSteps() {
   return props.turn.stepOrder.map((id) => props.turn.steps[id]).filter((s) => s !== undefined);
 }
 
+/** Renders nothing for an unknown OR genuinely-zero duration — the backend's
+ * per-step clock is currently pinned (see the redesign report's polish
+ * section), so `ms: 0` on every step is real upstream data, not a replay
+ * fold bug. Never render a "0ms" placeholder either way. */
 function formatMs(ms: number | undefined): string {
-  if (ms === undefined || !Number.isFinite(ms)) return '';
+  if (ms === undefined || !Number.isFinite(ms) || ms <= 0) return '';
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+}
+
+function adjustmentsLabel(count: number): string {
+  return `${count} adjustment${count === 1 ? '' : 's'} during planning`;
 }
 </script>
 
@@ -45,6 +56,19 @@ function formatMs(ms: number | undefined): string {
         }}</span>
       </li>
     </ol>
-    <div v-for="(line, i) in turn.activity" :key="i" class="tracker-activity">{{ line }}</div>
+    <div v-if="turn.activity.length > 0" class="tracker-activity-disclosure">
+      <button
+        type="button"
+        class="tracker-activity-toggle"
+        :aria-expanded="activityOpen"
+        @click="activityOpen = !activityOpen"
+      >
+        <span class="tracker-activity-caret" :class="{ open: activityOpen }" aria-hidden="true">›</span>
+        {{ adjustmentsLabel(turn.activity.length) }}
+      </button>
+      <div v-if="activityOpen" class="tracker-activity-raw">
+        <div v-for="(line, i) in turn.activity" :key="i" class="tracker-activity-line">{{ line }}</div>
+      </div>
+    </div>
   </div>
 </template>
