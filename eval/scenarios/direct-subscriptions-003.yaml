@@ -1,0 +1,24 @@
+# Task 17 Batch C — category: direct, module: subscriptions (corpus
+# padding — subscriptions already clears the lint module-coverage
+# floor).
+#
+# get_subscription_details is a plain read — same minimal-risk pattern
+# as typo-calendars-001 (mustInclude the slug + mustMention the slug in
+# the response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id FROM subscriptions WHERE id='sub_1'; -> exists
+
+id: direct-subscriptions-003
+category: direct
+profile: standard
+turns:
+  - user: "What are the details on subscription sub_1?"
+    expect:
+      planActions:
+        mustInclude: [subscriptions.get_subscription_details]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [subscriptions.get_subscription_details]
+        mustNotClaim: [failed, error]

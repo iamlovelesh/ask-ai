@@ -1,0 +1,23 @@
+# Task 17 Batch C — category: direct, module: opportunities (corpus
+# padding — opportunities already clears the lint module-coverage floor).
+#
+# get_opportunity_details is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id,name FROM opportunities WHERE id='opp_1'; -> exists
+
+id: direct-opportunities-003
+category: direct
+profile: standard
+turns:
+  - user: "What's the status on opportunity opp_1?"
+    expect:
+      planActions:
+        mustInclude: [opportunities.get_opportunity_details]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [opportunities.get_opportunity_details]
+        mustNotClaim: [failed, error]

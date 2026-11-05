@@ -1,0 +1,23 @@
+# Task 17 Batch C — category: direct, module: orders (corpus padding —
+# orders already clears the lint module-coverage floor).
+#
+# get_order_details is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id FROM orders WHERE id='ord_1'; -> exists
+
+id: direct-orders-003
+category: direct
+profile: standard
+turns:
+  - user: "Pull up the details on order ord_1."
+    expect:
+      planActions:
+        mustInclude: [orders.get_order_details]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [orders.get_order_details]
+        mustNotClaim: [failed, error]

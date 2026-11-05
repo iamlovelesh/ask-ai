@@ -1,0 +1,24 @@
+# Task 17 Batch C — category: direct, module: conversations (corpus
+# padding — conversations already clears the lint module-coverage
+# floor).
+#
+# get_conversation is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id FROM conversations WHERE id='conv_1'; -> exists
+
+id: direct-conversations-002
+category: direct
+profile: standard
+turns:
+  - user: "Show me the conversation conv_1."
+    expect:
+      planActions:
+        mustInclude: [conversations.get_conversation]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [conversations.get_conversation]
+        mustNotClaim: [failed, error]
