@@ -1,14 +1,17 @@
 <script setup lang="ts">
 /**
- * Per-turn span waterfall (LLD §6/§2.4, Task 19). Collapsed by default —
- * fetches `GET /api/traces/:turnId` only the first time it's expanded
- * (`store.loadTrace`, cached by `turnId`). Pure CSS bars, no chart library.
+ * Per-turn span waterfall (LLD §6/§2.4, Task 19; full-pipeline span
+ * instrumentation landed as a Task 19 carry-forward). Collapsed by
+ * default — fetches `GET /api/traces/:turnId` only the first time it's
+ * expanded (`store.loadTrace`, cached by `turnId`). Pure CSS bars, no
+ * chart library.
  *
- * Honesty note rendered inline (see template): the server's current span
- * recorder only ever writes `kind:'llm'` spans with no parent linkage (see
- * `lib/trace.ts`'s header) — so there is no indentation to draw. If a
- * future recorder starts tagging `meta.parentId`, this component can grow
- * indentation without changing its data contract.
+ * Honesty note rendered inline (see template): the server's span recorder
+ * writes every `SpanKind` (`llm`/`retrieval`/`step`/`joiner`/`compose`,
+ * see `lib/trace.ts`'s header) but still with no parent linkage — so there
+ * is no indentation to draw. If a future recorder starts tagging
+ * `meta.parentId`, this component can grow indentation without changing
+ * its data contract.
  */
 import { computed, ref } from 'vue';
 import { useSessionStore } from '../stores/session.js';
@@ -52,8 +55,8 @@ function formatTokens(tokensIn: number | undefined, tokensOut: number | undefine
       <div v-else-if="bars.length === 0" class="trace-status">No spans recorded for this turn.</div>
       <template v-else>
         <div class="trace-note">
-          Spans today are LLM calls only (planner/repair/replan/search/joiner) — no retrieval/step/joiner/compose
-          spans or parent links are persisted yet, so this list is flat.
+          Spans cover the full pipeline (llm/retrieval/step/joiner/compose) — there are still no parent
+          links persisted, so this list is flat rather than nested.
         </div>
         <div v-for="bar in bars" :key="bar.span.id" class="trace-row">
           <div class="trace-row-label">

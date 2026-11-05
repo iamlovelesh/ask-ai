@@ -33,6 +33,7 @@ import { VirtualClock } from '../store/clock.js';
 import { BUDGETS } from './validator.js';
 import { parseRefGrammar } from './validator.js';
 import type { RefStore, ResolveResult } from './refs.js';
+import type { Spans, SpanHandle } from '../events/trace.js';
 
 // --- public contract --------------------------------------------------------
 
@@ -120,6 +121,13 @@ export interface ExecuteInput {
   handles: RefHandle[];
   onEvent: (e: Event) => void;
   confirm: ConfirmBroker;
+  /** LLD §2.4 kind:'step' spans, one per dispatched step (scalar or
+   * forEach). Optional — and deliberately threaded in from the caller
+   * (`agent/pipeline.ts`) rather than opened here: this module stays
+   * LLM/DB-handle-free by design (see the `onWriteStratum` doc comment
+   * above for the same rationale). Omitted entirely (every pre-Task-19
+   * test), this is a no-op — byte-identical to the pre-Task-19 executor. */
+  spans?: Spans;
   /** TRANSIENT retry backoff (LLD §5.3: 250ms). Overridable for tests. */
   retryDelayMs?: number;
   /** LLD §5.4 joiner checkpoint hook — called once per write-bearing
@@ -391,7 +399,7 @@ function sampleNames(items: readonly unknown[], max = 5): string[] {
 // --- the executor -----------------------------------------------------------
 
 export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
-  const { turnId, registry, crm, refs, onEvent, confirm } = input;
+  const { turnId, registry, crm, refs, onEvent, confirm, spans } = input;
   // Mutable: a `'patch'` joiner decision (LLD §5.4) replaces the remaining
   // step array and bumps planRev — every other reference in this function
   // reads these two via closure, so reassigning here is all a patch needs.
@@ -510,9 +518,20 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     return {};
   };
 
-  const emitFailed = (stepId: string, error: { code: string; message: string }, ms: number): void => {
+  const emitFailed = (
+    stepId: string,
+    error: { code: string; message: string },
+    ms: number,
+    spanHandle?: SpanHandle,
+  ): void => {
     states.set(stepId, { state: 'failed', error });
     onEvent({ t: 'step.failed', turnId, stepId, error, ms });
+    // `spanHandle` is only ever set once `step.started` has already fired
+    // (see `runStep`/`runForEachStep`) — every early-exit failure path
+    // above that point (unknown action, unresolved ref, forEach hard cap,
+    // forEach per-item resolution errors) never started a span, so there
+    // is nothing to end here.
+    if (spanHandle) spans?.end(spanHandle, { meta: { stepId, status: 'failed', errorCode: error.code } });
   };
 
   /** Fire the confirmation gate for a write step; returns the broker verdict. */
@@ -693,6 +712,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     }
 
     onEvent({ t: 'step.started', turnId, stepId: step.id, action: step.action });
+    const stepSpan = spans?.start({ turnId, kind: 'step', name: step.action, meta: { stepId: step.id } });
     const key = `${turnId}:${planRev}:${step.id}:0`;
     const res = await invoke(action, params, key, isCore);
     const ms = clock.now() - started;
@@ -701,7 +721,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
       const err = res.error as { code: string; message: string };
       const { hint } = recordStuck(step.action, stableHash(params), err.code);
       const finalErr = hint ? { code: err.code, message: `${err.message} [${hint}]` } : err;
-      emitFailed(step.id, finalErr, ms);
+      emitFailed(step.id, finalErr, ms, stepSpan);
       return;
     }
 
@@ -719,7 +739,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     if (!isWrite) completedReads.push(step.id);
 
     const summary = summarize(step, action, isWrite ? affectedCount : count, drift, spillRef);
-    emitFinished(step.id, summary, result, spillRef, ms, undefined);
+    emitFinished(step.id, summary, result, spillRef, ms, undefined, stepSpan);
   };
 
   const runForEachStep = async (
@@ -795,6 +815,12 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     }
 
     onEvent({ t: 'step.started', turnId, stepId: step.id, action: step.action, itemCount: fanOut });
+    const stepSpan = spans?.start({
+      turnId,
+      kind: 'step',
+      name: step.action,
+      meta: { stepId: step.id, itemCount: fanOut },
+    });
 
     const isCore = isCoreSlug(step.action);
     const perItemResults: unknown[] = [];
@@ -813,7 +839,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
           code: err.code,
           message: `${err.message}${partial}${hint ? ` [${hint}]` : ''}`,
         };
-        emitFailed(step.id, finalErr, clock.now() - started);
+        emitFailed(step.id, finalErr, clock.now() - started, stepSpan);
         return;
       }
       perItemResults.push(res.output);
@@ -824,7 +850,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     states.set(step.id, { state: 'done', result });
 
     const summary = summarize(step, action, fanOut, drift, undefined);
-    emitFinished(step.id, summary, result, undefined, clock.now() - started, fanOut);
+    emitFinished(step.id, summary, result, undefined, clock.now() - started, fanOut, stepSpan);
   };
 
   const emitFinished = (
@@ -834,6 +860,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     spillRef: string | undefined,
     ms: number,
     _itemCount: number | undefined,
+    spanHandle?: SpanHandle,
   ): void => {
     const ev: Extract<Event, { t: 'step.finished' }> = { t: 'step.finished', turnId, stepId, summary, ms };
     if (spillRef !== undefined) {
@@ -845,6 +872,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
       }
     }
     onEvent(ev);
+    if (spanHandle) spans?.end(spanHandle, { meta: { stepId, status: 'done' } });
   };
 
   // --- scheduling loop ------------------------------------------------------

@@ -4,17 +4,22 @@
  * `{spans: Span[]}` (LLD §2.4/§6). Kept in sync by hand, same convention as
  * `lib/events.ts` — the web build never imports server code.
  *
- * NOTE on what this endpoint actually returns today (verified by reading
- * `server/src/events/trace.ts` and `server/src/llm/client.ts`, not assumed):
- * the only call site that ever records a span is `llmCall()` — one
- * `kind:'llm'` span per planner/repair/replan/search/joiner LLM call, with
- * `name` set to the call's `stage` string. There is no `parentId` field on
- * the row (spans are flat, ordered by insertion only), no `model` column
- * (the model name lives on the `plan.ready`/`repair`/etc. *event*'s
- * `llm.model`, never written back onto the span), and no `tokensCached`.
- * `retrieval`/`step`/`joiner`/`compose` spans are declared in the `SpanKind`
- * union but never actually written by the current pipeline. `layoutSpans`
- * below works honestly with exactly what is persisted — it does not invent
+ * NOTE on what this endpoint actually returns (verified by reading
+ * `server/src/events/trace.ts`, `server/src/llm/client.ts`,
+ * `server/src/agent/pipeline.ts`, `server/src/agent/executor.ts`, and
+ * `server/src/baseline/agent.ts`, not assumed): every `SpanKind` (`llm` |
+ * `retrieval` | `step` | `joiner` | `compose`) is now actually written —
+ * `llmCall()` writes `kind:'llm'` (one per planner/repair/replan/search/
+ * joiner LLM call, `name` set to the call's `stage`), `agent/pipeline.ts`
+ * writes `kind:'retrieval'` and `kind:'compose'` around its retrieval and
+ * composer calls plus `kind:'joiner'` around a checkpoint violation's
+ * repair/decision (never around the free-pass case), and `agent/
+ * executor.ts`/`baseline/agent.ts` write `kind:'step'` around each
+ * dispatched step. There is still no `parentId` field on the row (spans
+ * are flat, ordered by insertion only), no `model` column (the model name
+ * lives on the `plan.ready`/`repair`/etc. *event*'s `llm.model`, never
+ * written back onto the span), and no `tokensCached`. `layoutSpans` below
+ * works honestly with exactly what is persisted — it does not invent
  * parent/model data the server never recorded.
  */
 

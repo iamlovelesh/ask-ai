@@ -69,6 +69,7 @@ import type { TurnResult } from '../agent/pipeline.js';
 import { llmCall } from '../llm/client.js';
 import { plannerModel } from '../llm/router.js';
 import { buildCatalogSummary } from './catalog-summary.js';
+import { getDefaultSpans, type SpanHandle } from '../events/trace.js';
 
 // --- public contract ---------------------------------------------------------
 
@@ -266,6 +267,12 @@ export async function* runBaselineTurn(input: RunBaselineTurnInput): AsyncGenera
   const { registry, crm, refs, eventLog, confirm } = sessionDeps;
   const clock = new VirtualClock();
   const startedAtMs = performance.now();
+  // LLD §2.4 kind:'step' spans, one per dispatched `call_action` — same
+  // shared default sink `agent/pipeline.ts`'s retrieval/compose/joiner
+  // spans and `llm/client.ts`'s kind:'llm' spans write onto, so a baseline
+  // turn's trace waterfall is populated the same way an optimized turn's is
+  // (LLD §8's "same Event vocabulary" extended to spans).
+  const spans = getDefaultSpans();
   const model = plannerModel(); // LLD §8: no routing — always PLANNER_MODEL.
   const system = buildBaselineSystemPrompt(registry);
   // Synthetic — see this module's header comment on `planRev`/`planHash`.
@@ -427,6 +434,7 @@ export async function* runBaselineTurn(input: RunBaselineTurnInput): AsyncGenera
 
       markTtfur(); // tool-intent: dispatching for real.
       record({ t: 'step.started', turnId, stepId, action: action.slug });
+      const stepSpan: SpanHandle = spans.start({ turnId, kind: 'step', name: action.slug, meta: { stepId } });
       const key = `${turnId}:0:${stepId}:0`;
       const startedStepAt = clock.now();
 
@@ -467,6 +475,7 @@ export async function* runBaselineTurn(input: RunBaselineTurnInput): AsyncGenera
         }
         record(finishedEv);
         stepsOk += 1;
+        spans.end(stepSpan, { meta: { stepId, status: 'done' } });
 
         const observed = JSON.stringify(finalResult ?? null).slice(0, 1500);
         history.push(`Step ${step}: call_action("${decision.slug}", ${JSON.stringify(params)}) -> ${summary}. result=${observed}`);
@@ -475,6 +484,7 @@ export async function* runBaselineTurn(input: RunBaselineTurnInput): AsyncGenera
         const error = describeError(err);
         record({ t: 'step.failed', turnId, stepId, error, ms });
         stepsFailed += 1;
+        spans.end(stepSpan, { meta: { stepId, status: 'failed', errorCode: error.code } });
         history.push(
           `Step ${step}: call_action("${decision.slug}", ${JSON.stringify(params)}) -> ` +
             `ERROR[${error.code}]: ${error.message}`,

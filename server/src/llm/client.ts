@@ -12,7 +12,7 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { withBackoff, type BackoffOptions } from './backoff.js';
 import { priceFor } from './prices.js';
 import { isGpt5Family } from './router.js';
-import { openSpans, type Spans, type SpanHandle } from '../events/trace.js';
+import { getDefaultSpans, type Spans, type SpanHandle } from '../events/trace.js';
 import type { LlmUsage } from '../events/types.js';
 
 export type Stage = 'plan' | 'repair' | 'replan' | 'compose' | 'baseline' | 'spike';
@@ -104,18 +104,21 @@ export function __setTestFetch(fn: typeof fetch | undefined): void {
 }
 
 // --- spans -------------------------------------------------------------
-
-let spansInstance: Spans | undefined;
+//
+// Delegates to `events/trace.ts`'s shared process-wide default sink (Task
+// 19 carry-forward: `agent/pipeline.ts`, `agent/executor.ts`, and
+// `baseline/agent.ts` now also write spans — kind:'retrieval'/'step'/
+// 'joiner'/'compose' — onto that SAME sink, so a single `__setTestSpans`
+// override here redirects every one of them, not just `llmCall`'s
+// kind:'llm' spans).
 
 function getSpans(): Spans {
-  if (!spansInstance) spansInstance = openSpans();
-  return spansInstance;
+  return getDefaultSpans();
 }
 
-/** Test-only: swap the `Spans` sink (e.g. onto a tmp DB) between test files. */
-export function __setTestSpans(spans: Spans | undefined): void {
-  spansInstance = spans;
-}
+/** Test-only: swap the `Spans` sink (e.g. onto a tmp DB) between test
+ * files. Re-exported verbatim from `events/trace.ts`. */
+export { __setTestSpans } from '../events/trace.js';
 
 // --- test seam: shrink the real 1s→16s backoff schedule for fast tests -----
 

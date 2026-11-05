@@ -143,3 +143,33 @@ class SpansImpl implements Spans {
 export function openSpans(dbPath: string = sessionsDbPath()): Spans {
   return new SpansImpl(dbPath);
 }
+
+// --- shared default sink -----------------------------------------------
+//
+// Every span-writing call site in the process — `llm/client.ts`'s
+// `llmCall` (kind:'llm'), `agent/pipeline.ts`'s retrieval/compose/joiner
+// spans, `agent/executor.ts`'s step spans (threaded in via
+// `ExecuteInput.spans`, since the executor itself stays LLM/DB-handle-free
+// by design), and `baseline/agent.ts`'s step spans — shares ONE lazily
+// opened `Spans` instance rather than each module opening its own
+// connection onto the same `sessions.db` file. This keeps a single
+// `__setTestSpans` override (already used by existing tests, e.g.
+// `api.test.ts`) redirecting every one of them at once, rather than needing
+// a per-module test seam.
+
+let defaultSpans: Spans | undefined;
+
+/** The process-wide default `Spans` sink, opened on first use against
+ * `sessionsDbPath()` unless `__setTestSpans` has swapped it for a test
+ * instance. */
+export function getDefaultSpans(): Spans {
+  if (!defaultSpans) defaultSpans = openSpans();
+  return defaultSpans;
+}
+
+/** Test-only: override (or clear, passing `undefined`) the shared default
+ * `Spans` sink between test files. Re-exported verbatim from
+ * `llm/client.ts` for existing call sites that import it from there. */
+export function __setTestSpans(spans: Spans | undefined): void {
+  defaultSpans = spans;
+}

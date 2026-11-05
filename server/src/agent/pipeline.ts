@@ -38,7 +38,7 @@ import type { Playbook } from '../playbooks/loader.js';
 import { matchPlaybook } from '../playbooks/loader.js';
 import { buildPlannerPrompt, plan as plannerPlan, narrowFlatOutcome, type PlannerPromptCtx, type PlanResult } from './planner.js';
 import { validate, repairPrompt, BUDGETS, type HandleRef, type ValidationError } from './validator.js';
-import { checkStratum, joinerRepair } from './joiner.js';
+import { checkStratum, joinerRepair, type JoinerViolation } from './joiner.js';
 import { compose, type ComposeInput, type ComposeStepState } from './composer.js';
 import {
   foldMemory,
@@ -51,6 +51,7 @@ import {
 import { llmCall, BudgetExceededError } from '../llm/client.js';
 import { flatPlanOutcomeSchema, type FlatPlanOutcome, type Plan, type PlanOutcome, type Step } from './plan-schema.js';
 import { pickPlannerModel, escalate, fastModel } from '../llm/router.js';
+import { getDefaultSpans } from '../events/trace.js';
 
 // --- public contract (Task 13) ----------------------------------------------
 
@@ -515,6 +516,11 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
   const clock = new VirtualClock();
   const startedAtMs = performance.now();
   const budget = new TurnBudget(startedAtMs, sessionDeps.turnTimeoutMs ?? BUDGETS.turnTimeoutMs);
+  // LLD §2.4 span kinds: this turn's span sink, shared process-wide (Task 19
+  // carry-forward — `llm/client.ts`'s llmCall writes kind:'llm' spans onto
+  // the SAME default sink; this adds retrieval/compose/joiner here, and
+  // step spans via `executeInput.spans` below).
+  const spans = getDefaultSpans();
 
   // first-useful-event timestamp for TTFUR (LLD: plan.ready for plan-led
   // turns, first answer.delta for respond/clarify/refused/failed turns).
@@ -539,7 +545,18 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
     // them into THIS generator's yield stream.
     for (const e of buffer.splice(0, buffer.length)) yield e;
 
-    const text = finalTextOverride ?? compose(composeInput as ComposeInput);
+    // compose span (LLD §2.4 kind:'compose') — only when `compose()` is
+    // actually invoked; a `'respond'` outcome supplies `finalTextOverride`
+    // directly and never calls the (pure, template-only) composer.
+    let text: string;
+    if (finalTextOverride !== undefined) {
+      text = finalTextOverride;
+    } else {
+      const input = composeInput as ComposeInput;
+      const composeSpan = spans.start({ turnId, kind: 'compose', name: 'compose' });
+      text = compose(input);
+      spans.end(composeSpan, { meta: { outcome: input.outcome } });
+    }
     for (const chunk of chunkText(text)) {
       if (ttfurAtMs === undefined) ttfurAtMs = performance.now();
       const ev: Event = { t: 'answer.delta', turnId, text: chunk };
@@ -605,7 +622,18 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
 
     const rewrittenQuery = rewriteQuery(userText, priorState);
 
+    // retrieval span (LLD §2.4 kind:'retrieval') — `ms` is NOT re-measured
+    // here; it's derived from `retrieval.ms`, the real wall-clock duration
+    // `agent/retrieval.ts`'s `retrieve()` already measures internally
+    // (`performance.now()`), so the span's duration matches the SAME
+    // number `retrieval.done.ms` reports rather than a second, slightly
+    // different measurement of the same call.
+    const retrievalSpan = spans.start({ turnId, kind: 'retrieval', name: 'retrieval' });
     const retrieval = retrieve(rewrittenQuery, sessionCtx);
+    spans.end(retrievalSpan, {
+      endedAt: retrievalSpan.startedAt + retrieval.ms,
+      meta: { candidates: retrieval.cards.length },
+    });
     const matched = matchPlaybook(rewrittenQuery, playbooks);
     const retrievalEvent: Event = {
       t: 'retrieval.done',
@@ -671,14 +699,18 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
 
     let replanRounds = 0;
 
-    const onWriteStratum = async (ctx: WriteStratumCtx): Promise<WriteStratumDecision> => {
-      const verdict = checkStratum(ctx.plan, ctx.completed, ctx.upcoming);
-      if (verdict.ok) return { decision: 'proceed' };
-
+    /** Everything `onWriteStratum` does once `checkStratum` has already
+     * found a violation — extracted so the caller can wrap exactly this
+     * (the repair/decision work) in a 'joiner' span without a span around
+     * every early return. */
+    async function resolveJoinerViolation(
+      ctx: WriteStratumCtx,
+      violation: JoinerViolation,
+    ): Promise<WriteStratumDecision> {
       if (replanRounds >= BUDGETS.maxReplans) {
         return {
           decision: 'abort',
-          reason: `Joiner checkpoint violated and the replan budget (${BUDGETS.maxReplans}) is exhausted: ${verdict.violation.summary}`,
+          reason: `Joiner checkpoint violated and the replan budget (${BUDGETS.maxReplans}) is exhausted: ${violation.summary}`,
         };
       }
       replanRounds += 1;
@@ -688,7 +720,7 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
         .filter((e): e is Extract<Event, { t: 'step.finished' }> => e.t === 'step.finished')
         .map((e) => e.summary);
       const attempt = await callBudgeted(budget, () =>
-        joinerRepair({ plan: ctx.plan, violation: verdict.violation, summaries, model: repairModel, turnId }),
+        joinerRepair({ plan: ctx.plan, violation, summaries, model: repairModel, turnId }),
       );
       if (!attempt.ok) {
         return { decision: 'abort', reason: budget.describeReason(attempt.reason) };
@@ -699,7 +731,7 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
         t: 'replan',
         turnId,
         round: replanRounds,
-        reason: verdict.violation.summary,
+        reason: violation.summary,
         llm: repairResult.usage,
       };
       record(replanEvent);
@@ -709,7 +741,7 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
         return { decision: 'clarify', question: repairResult.question ?? 'Could you clarify your request?' };
       }
       if (repairResult.decision === 'abort') {
-        return { decision: 'abort', reason: verdict.violation.summary };
+        return { decision: 'abort', reason: violation.summary };
       }
 
       // decision === 'patch' → re-validate the patched steps against the
@@ -731,6 +763,25 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
       }
       budget.planRev += 1;
       return { decision: 'patch', patchedSteps: repairResult.patchedSteps as Step[], planRev: budget.planRev };
+    }
+
+    const onWriteStratum = async (ctx: WriteStratumCtx): Promise<WriteStratumDecision> => {
+      const verdict = checkStratum(ctx.plan, ctx.completed, ctx.upcoming);
+      if (verdict.ok) return { decision: 'proceed' };
+
+      // 'joiner' span (LLD §2.4) — deliberately only around the violation
+      // path: `checkStratum`'s free pass (`verdict.ok`, the common case)
+      // never gets a span, so a clean write-bearing stratum stays
+      // span-free.
+      const joinerSpan = spans.start({
+        turnId,
+        kind: 'joiner',
+        name: 'joiner',
+        meta: { stepId: verdict.violation.stepId, expect: verdict.violation.expect },
+      });
+      const decision = await resolveJoinerViolation(ctx, verdict.violation);
+      spans.end(joinerSpan, { meta: { stepId: verdict.violation.stepId, decision: decision.decision } });
+      return decision;
     };
 
     const executeInput: ExecuteInput = {
@@ -748,6 +799,7 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
       confirm,
       onWriteStratum,
       deadlineAtMs: budget.deadlineAtMs,
+      spans,
     };
 
     const execResult = await execute(executeInput);
