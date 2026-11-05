@@ -400,6 +400,16 @@ function resolversForModule(module: string): ActionDef[] {
   return registry.byModule(module).filter(isResolverAction);
 }
 
+/** Resolver actions that PRODUCE records of `entity` (their `entities`
+ * declaration includes it) — so a write that references another entity by
+ * name (e.g. `assign_ticket_owner`, whose `entities` include `users`) can
+ * always get that entity's name→id resolver (`users.list_users`) into the
+ * shortlist, even when the query never names the module ("reassign … to Nora
+ * Haddad" has no "user" token). Derived from the registry, not a hand list. */
+function resolversForEntity(entity: string): ActionDef[] {
+  return registry.all().filter((a) => isResolverAction(a) && a.entities.includes(entity));
+}
+
 /**
  * Guarantees resolver coverage in the shortlist (TRIAGE rec #1):
  *   (b) a module NAMED in the query → its resolvers are ALWAYS included.
@@ -453,7 +463,45 @@ function reserveResolverSlots(
     }
   }
 
-  const combined = [...picked, ...forced, ...reserved];
+  // (c) cross-entity resolvers: any entity a picked action REFERENCES (via
+  // its `entities` array) beyond its own module gets that entity's name→id
+  // resolver reserved — the forcing function for assign/launch-by-name
+  // (round-2 marketing NEW-1, support oldest-ticket reassign). Bounded by the
+  // same budget; skips entities already covered by a present resolver.
+  // Only WRITE actions that reference a FOREIGN entity drive this: that is
+  // exactly the assign/launch/create-by-name case (assign_ticket_owner →
+  // users). A read-only query references entities too, but doesn't need the
+  // extra name→id resolver, so restricting to writes keeps read-query
+  // recall@20 unchanged.
+  // Fire ONLY when the query carries a person-name reference to resolve — a
+  // "Firstname Lastname" pair — AND a high-ranked WRITE references a foreign
+  // entity. Gating on the name signal keeps ordinary read queries' shortlists
+  // (and recall@20) untouched: a query like "find available slots" has an
+  // availability WRITE referencing users, but no name to resolve, so the
+  // extra resolver would only displace a legitimately-retrieved read card.
+  const hasPersonName = /\b[A-Z][a-z]+\s+[A-Z][a-z]+\b/.test(q);
+  const referencedEntities = new Set<string>();
+  if (hasPersonName) {
+    for (const p of picked.slice(0, Math.ceil(TOP_K / 2))) {
+      const a = registry.get(p.slug);
+      if (!a || a.risk === 'read') continue;
+      for (const e of a.entities) {
+        if (e !== a.module) referencedEntities.add(e);
+      }
+    }
+  }
+  const crossEntity: Scored[] = [];
+  for (const entity of referencedEntities) {
+    if (crossEntity.length >= RESOLVER_SLOT_BUDGET) break;
+    for (const action of resolversForEntity(entity)) {
+      if (crossEntity.length >= RESOLVER_SLOT_BUDGET) break;
+      if (present.has(action.slug)) continue;
+      crossEntity.push(toScored(action));
+      present.add(action.slug);
+    }
+  }
+
+  const combined = [...picked, ...forced, ...reserved, ...crossEntity];
   if (combined.length <= MAX_CARDS) return combined;
 
   // Trim to MAX_CARDS by dropping the lowest-scored NON-resolver cards.

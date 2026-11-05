@@ -170,6 +170,19 @@ describe('renderCards', () => {
     expect(apptCard).toMatch(/status\?:\([a-z_|]+\)/); // enum values inlined for the status param
   });
 
+  it('reserves a cross-entity name->id resolver for an assign-by-name turn (users.list_users)', () => {
+    // "reassign … to <person>" surfaces an assignment WRITE whose `entities`
+    // include `users`; the users name->id resolver must be in the shortlist
+    // even though the query never says "user" — the forcing function for
+    // assign/launch-by-name (round-2 support oldest-ticket, marketing NEW-1).
+    const result = retrieve('reassign the oldest ticket assigned to user_38 to Nora Haddad', {
+      usedActionSlugs: ['support_tickets.search_tickets'],
+      activeModules: ['support_tickets'],
+    });
+    const slugs = result.cards.map((c) => c.slug);
+    expect(slugs.some((s) => /^users\.(list|search)_/.test(s))).toBe(true);
+  });
+
   it('shows schema-derived OUTPUT row fields (so the planner stops guessing field names)', () => {
     const invCard = renderCard(registry.get('invoices.search_invoices')!);
     expect(invCard).toContain('→ items:');
