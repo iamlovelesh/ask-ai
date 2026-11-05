@@ -18,7 +18,7 @@ const SESSION_TITLE_MAX_CHARS = 40;
 
 const messageBodySchema = z.object({
   text: z.string().min(1, 'text must not be empty'),
-  agent: z.enum(['optimized', 'baseline']).optional(),
+  agent: z.enum(['optimized', 'baseline', 'plandsl']).optional(),
 });
 
 const confirmBodySchema = z.object({

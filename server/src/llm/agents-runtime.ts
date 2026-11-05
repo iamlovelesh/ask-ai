@@ -120,14 +120,27 @@ export interface CreateLoopRunnerOptions {
   testFetch?: typeof fetch;
 }
 
+// Module-level test seam, mirroring `llm/client.ts`'s `__setTestFetch`:
+// callers that construct their own deps (unit tests) pass `testFetch`
+// directly; integration layers (SessionRuntime) have no test plumbing, so
+// tests inject here instead.
+let loopTestFetch: typeof fetch | undefined;
+
+/** Test-only: override (or clear) the fetch used by `createLoopRunner`
+ * when the caller does not supply one. Never call from application code. */
+export function __setLoopTestFetch(fn: typeof fetch | undefined): void {
+  loopTestFetch = fn;
+}
+
 /** A Runner wired to OpenRouter with metering and tracing-off. One runner
  * can serve many runLoopOnce calls; per-call state (turnId, deadline)
  * travels with the call, not the runner. */
 export function createLoopRunner(opts: CreateLoopRunnerOptions = {}): Runner {
+  const effectiveFetch = opts.testFetch ?? loopTestFetch;
   const client = new OpenAI({
     apiKey: process.env['OPENROUTER_API_KEY'] || 'test-key',
     baseURL: OPENROUTER_BASE_URL,
-    ...(opts.testFetch !== undefined ? { fetch: opts.testFetch } : {}),
+    ...(effectiveFetch !== undefined ? { fetch: effectiveFetch } : {}),
   });
   const provider = new OpenAIProvider({ openAIClient: client, useResponses: false });
   return new Runner({ modelProvider: new MeteredProvider(provider), tracingDisabled: true });

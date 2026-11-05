@@ -25,9 +25,13 @@ import type { ConfirmBroker, ConfirmRequest } from '../agent/executor.js';
 import type { Playbook } from '../playbooks/loader.js';
 import { runTurn, type SessionDeps } from '../agent/pipeline.js';
 import { runBaselineTurn, type BaselineSessionDeps } from '../baseline/agent.js';
+import { runLoopTurn, type LoopSessionDeps } from '../loop/agent.js';
 import type { Event } from '../events/types.js';
 
-export type AgentKind = 'optimized' | 'baseline';
+/** 'optimized' = the production tool-loop agent (plan rev 3 pivot);
+ * 'plandsl' = the retired plan-then-execute pipeline, kept callable as the
+ * benchmark comparator; 'baseline' = the full-catalog ReAct comparator. */
+export type AgentKind = 'optimized' | 'baseline' | 'plandsl';
 
 /** `sessionsDb.get('SELECT id FROM sessions WHERE id = ?', [id])` — shared
  * by every session-scoped route handler that needs a quick 404 check
@@ -189,19 +193,32 @@ export class SessionRuntime {
               confirm,
             } satisfies BaselineSessionDeps,
           })
-        : runTurn({
-            sessionId,
-            turnId: state.turnId,
-            userText,
-            sessionDeps: {
-              registry: this.registry,
-              crm,
-              refs,
-              eventLog: this.eventLog,
-              confirm,
-              playbooks: this.playbooks as Playbook[],
-            } satisfies SessionDeps,
-          });
+        : state.agent === 'plandsl'
+          ? runTurn({
+              sessionId,
+              turnId: state.turnId,
+              userText,
+              sessionDeps: {
+                registry: this.registry,
+                crm,
+                refs,
+                eventLog: this.eventLog,
+                confirm,
+                playbooks: this.playbooks as Playbook[],
+              } satisfies SessionDeps,
+            })
+          : runLoopTurn({
+              sessionId,
+              turnId: state.turnId,
+              userText,
+              sessionDeps: {
+                registry: this.registry,
+                crm,
+                refs,
+                eventLog: this.eventLog,
+                confirm,
+              } satisfies LoopSessionDeps,
+            });
 
     // NOTE on why there is no "check a cancelled flag between steps" here
     // (a prior revision had one, and it was dead code at best, actively
