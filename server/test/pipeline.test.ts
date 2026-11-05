@@ -12,6 +12,7 @@ import { openSessions, type SessionsDb } from '../src/store/sessions-db';
 import { createRefStore, type RefStore } from '../src/agent/refs';
 import { buildRegistry, type Registry } from '../src/catalog/registry';
 import { coreOps } from '../src/catalog/core-ops';
+import { listOutputSchema } from '../src/catalog/list-output';
 import type { ActionDef, ActionContext, Risk } from '../src/catalog/types';
 import type { Crm, StoreTx } from '../src/store/db';
 import type { ConfirmBroker } from '../src/agent/executor';
@@ -239,6 +240,127 @@ describe('runTurn — repair loop', () => {
     }
     expect(completedOf(events).status).toBe('done');
     expect(completedOf(events).metrics.repairs).toBe(1);
+  });
+});
+
+describe('runTurn — repair escalation (Fix C, task-refconverge)', () => {
+  function actionWith(slug: string, risk: Risk, outputSchema: z.ZodType<unknown>, handler: Handler): ActionDef {
+    return {
+      id: slug,
+      slug,
+      module: slug.split('.')[0] as string,
+      name: slug,
+      description: slug,
+      risk,
+      entities: [slug.split('.')[0] as string],
+      inputSchema: z.strictObject({}),
+      outputSchema,
+      searchCard: { synonyms: [], examplePhrasings: [] },
+      handler: handler as ActionDef['handler'],
+    };
+  }
+
+  /** Wraps `queueMockLlm`'s fetch to additionally capture the `model` field
+   * of every outgoing request body — `queueMockLlm` itself ignores the
+   * request entirely (FIFO value replay only), so this is the only way to
+   * assert WHICH model a given repair round actually dialed. */
+  function withModelCapture(queue: ReturnType<typeof queueMockLlm>): { fetch: typeof fetch; models: string[] } {
+    const models: string[] = [];
+    const wrapped = (async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      try {
+        const bodyText = typeof init?.body === 'string' ? init.body : undefined;
+        const body = bodyText ? (JSON.parse(bodyText) as { model?: unknown }) : undefined;
+        if (typeof body?.model === 'string') models.push(body.model);
+      } catch {
+        // a malformed body is the real fetch's problem to report, not this probe's
+      }
+      return queue.fetch(url, init);
+    }) as typeof fetch;
+    return { fetch: wrapped, models };
+  }
+
+  it('round ≥2 STILL on a ref-path issue escalates to REPAIR_ESCALATION_MODEL once; round 1 does not', async () => {
+    const brokenPlan = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'x.search_x', params: {}, dependsOn: [] },
+          { id: 's2', action: 'y.act', params: {}, dependsOn: ['s1'], when: { ref: '$s1.bogus', op: 'nonempty' } },
+        ],
+      },
+    };
+    const fixedPlan = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'x.search_x', params: {}, dependsOn: [] },
+          { id: 's2', action: 'y.act', params: {}, dependsOn: ['s1'], when: { ref: '$s1.items[*].id', op: 'nonempty' } },
+        ],
+      },
+    };
+    // `$s1.bogus` is NOT uniquely autofixable (the row schema only has
+    // `id` — zero fuzzy-match/structural candidates) — a real REF_PATH_
+    // MISMATCH repair round is unavoidable, and round 1's repair (below)
+    // re-sends the SAME broken ref, forcing a round-2 escalation.
+    const queue = queueMockLlm([
+      brokenPlan, // 1: initial plan
+      brokenPlan, // 2: repair round 1 (normal escalate(model)) — STILL broken
+      fixedPlan, // 3: repair round 2 — escalated model — now valid
+    ]);
+    const { fetch: captureFetch, models } = withModelCapture(queue);
+    __setTestFetch(captureFetch);
+
+    const registry = buildRegistry(
+      [
+        [
+          actionWith('x.search_x', 'read', listOutputSchema(z.object({ id: z.string() })), async () => ({
+            items: [{ id: 'row_1' }],
+            total: 1,
+          })),
+          actionWith('y.act', 'read', z.unknown(), async () => ({ ok: true })),
+        ],
+      ],
+      coreOps,
+    );
+
+    const events = await drive(registry, 'do the ref thing');
+
+    expect(queue.callCount()).toBe(3);
+    expect(completedOf(events).status).toBe('done');
+    expect(completedOf(events).metrics.repairs).toBe(2);
+
+    // [0] = initial plan call (whichever model routing picked — not
+    // asserted here); [1] = repair round 1, ALWAYS `escalate(model)` ==
+    // the default planner model; [2] = repair round 2, the ONE call that
+    // must have escalated further, to `REPAIR_ESCALATION_MODEL`.
+    expect(models).toHaveLength(3);
+    expect(models[1]).toBe('anthropic/claude-haiku-4.5');
+    expect(models[2]).toBe('anthropic/claude-sonnet-4.5');
+    expect(models[2]).not.toBe(models[1]);
+  });
+
+  it('does NOT escalate when round ≥2 is triggered by a NON-ref issue (e.g. UNKNOWN_SLUG repeated)', async () => {
+    const badSlugPlan = { kind: 'plan', plan: { goal: 'g', steps: [{ id: 's1', action: 'bogus.not_real', params: {}, dependsOn: [] }] } };
+    const goodPlan = { kind: 'plan', plan: { goal: 'g', steps: [{ id: 's1', action: 'x.search_x', params: {}, dependsOn: [] }] } };
+    const queue = queueMockLlm([badSlugPlan, badSlugPlan, goodPlan]);
+    const { fetch: captureFetch, models } = withModelCapture(queue);
+    __setTestFetch(captureFetch);
+
+    const registry = buildRegistry(
+      [[actionWith('x.search_x', 'read', z.unknown(), async () => ({ items: [], total: 0 }))]],
+      coreOps,
+    );
+
+    const events = await drive(registry, 'unknown slug twice');
+
+    expect(queue.callCount()).toBe(3);
+    expect(completedOf(events).metrics.repairs).toBe(2);
+    // Both repair rounds stay on the normal planner model — UNKNOWN_SLUG
+    // is not a ref-path/grammar issue, so Fix C's escalation never fires.
+    expect(models[1]).toBe('anthropic/claude-haiku-4.5');
+    expect(models[2]).toBe('anthropic/claude-haiku-4.5');
   });
 });
 

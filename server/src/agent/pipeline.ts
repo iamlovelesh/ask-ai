@@ -51,7 +51,7 @@ import {
 } from './memory.js';
 import { llmCall, BudgetExceededError } from '../llm/client.js';
 import { flatPlanOutcomeSchema, type FlatPlanOutcome, type Plan, type PlanOutcome, type Step } from './plan-schema.js';
-import { pickPlannerModel, escalate, fastModel } from '../llm/router.js';
+import { pickPlannerModel, escalate, fastModel, repairEscalationModel } from '../llm/router.js';
 import { getDefaultSpans } from '../events/trace.js';
 
 // --- public contract (Task 13) ----------------------------------------------
@@ -385,6 +385,10 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
     // kind === 'plan' → validate, repair loop (LLD §5.1 maxRepairs:2).
     let candidateOutcome: PlanOutcome = outcome;
     let repairs = 0;
+    // Fix C (task-refconverge): bounded, ONCE-per-turn escalation past the
+    // normal repair model when round ≥2 is STILL triggered by a ref-path/
+    // grammar issue that round 1's repair didn't clear.
+    let refRepairEscalated = false;
     for (;;) {
       const verdict = validate(candidateOutcome, shortlist, handleRefs, registry);
       if (verdict.ok) {
@@ -396,6 +400,7 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
           planRev: budget.planRev,
           planHash,
           llm: llmUsage,
+          ...(verdict.autofixes && verdict.autofixes.length > 0 ? { refAutofixes: verdict.autofixes } : {}),
         };
         emit(ev);
         args.markPlanReady();
@@ -413,11 +418,22 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
       budget.repairs += 1;
       budget.planRev += 1;
       // LLD §5.5 "misroute escalates via validator failure" — repair
-      // always uses the full planner model, regardless of what was
-      // routed initially.
-      const repairModel = escalate(model);
+      // normally uses the full planner model, regardless of what was
+      // routed initially. Fix C (task-refconverge): when round ≥2 is
+      // STILL a ref-path/grammar issue (round 1's repair didn't clear it),
+      // escalate ONE level further, to `REPAIR_ESCALATION_MODEL`
+      // (default claude-sonnet-4.5, ~$0.015/call) — at most once per turn,
+      // and only on turns that would otherwise be heading for repair
+      // exhaustion. `BUDGETS.maxLlmCallsPerTurn`/the cost meter are still
+      // enforced exactly as for any other repair call, via `callBudgeted`
+      // below — this only changes WHICH model name is dialed.
+      const isRefIssue = verdict.errors.some((e) => e.code === 'REF_PATH_MISMATCH' || e.code === 'REF_GRAMMAR');
+      const useEscalationModel = repairs >= 2 && isRefIssue && !refRepairEscalated;
+      if (useEscalationModel) refRepairEscalated = true;
+      const repairModel = useEscalationModel ? repairEscalationModel() : escalate(model);
       const plannerSystem = buildPlannerPrompt(ctx).system;
-      const promptText = repairPrompt((candidateOutcome as Extract<PlanOutcome, { kind: 'plan' }>).plan, verdict.errors);
+      const repairPlan = verdict.plan ?? (candidateOutcome as Extract<PlanOutcome, { kind: 'plan' }>).plan;
+      const promptText = repairPrompt(repairPlan, verdict.errors);
       // `schema: flatPlanOutcomeSchema`, not `planOutcomeSchema` — the same
       // root-level-`oneOf` cross-provider defect fixed in `planner.ts`'s
       // `plan()` applies here too (this is the OTHER place that ever asks

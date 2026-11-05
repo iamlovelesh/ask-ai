@@ -11,10 +11,12 @@
 
 const FAST_MODEL_ENV = 'FAST_MODEL';
 const PLANNER_MODEL_ENV = 'PLANNER_MODEL';
+const REPAIR_ESCALATION_MODEL_ENV = 'REPAIR_ESCALATION_MODEL';
 
 /** Defaults mirror `.env.example` (LLD §10). */
 const DEFAULT_FAST_MODEL = 'google/gemini-2.5-flash-lite';
 const DEFAULT_PLANNER_MODEL = 'anthropic/claude-haiku-4.5';
+const DEFAULT_REPAIR_ESCALATION_MODEL = 'anthropic/claude-sonnet-4.5';
 
 export function fastModel(): string {
   return process.env[FAST_MODEL_ENV] || DEFAULT_FAST_MODEL;
@@ -22,6 +24,21 @@ export function fastModel(): string {
 
 export function plannerModel(): string {
   return process.env[PLANNER_MODEL_ENV] || DEFAULT_PLANNER_MODEL;
+}
+
+/**
+ * Bounded second-tier escalation target (task-refconverge Fix C) for a
+ * repair round that is STILL failing on a ref-path/grammar issue after
+ * `escalate()`'s normal target (the default planner model) already had one
+ * attempt — a stronger model for the specific stuck cases most likely to
+ * otherwise exhaust `BUDGETS.maxRepairs` and hard-fail the whole turn.
+ * ~$0.015/escalation call (claude-sonnet-4.5 vs. haiku pricing) — paid at
+ * most ONCE per turn (`pipeline.ts`'s repair loop enforces the "once";
+ * this function only resolves the model name), and only on turns that
+ * would otherwise exhaust the repair budget and fail outright.
+ */
+export function repairEscalationModel(): string {
+  return process.env[REPAIR_ESCALATION_MODEL_ENV] || DEFAULT_REPAIR_ESCALATION_MODEL;
 }
 
 export interface RouteInput {
