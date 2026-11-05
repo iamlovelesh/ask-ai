@@ -802,6 +802,10 @@ const CORE_OP_FIELD_PARAMS: Readonly<Record<string, Readonly<Record<string, stri
   'core.exclude_by': { field: 'in' },
   'core.pluck': { field: 'in' },
   'core.sort': { field: 'in' },
+  // `right` is validated only when it's a literal field name (a numeric
+  // literal is skipped by the validator's `typeof fieldVal !== 'string'`
+  // guard); `as` names a NEW output field and is never checked.
+  'core.compute': { left: 'in', right: 'in' },
   'core.anti_join': { key: 'in', excludeKey: 'exclude' },
   'core.join': { key: 'in', withKey: 'with' },
   'core.distribute': {},

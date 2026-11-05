@@ -468,11 +468,24 @@ function describeScalarList(step: Step, values: readonly unknown[]): string {
       : '';
     const isMoney = CENTS_SUFFIX_RE.test(field);
     const formatted = isMoney ? formatCents(sum) : String(sum);
+    // P3 (derived-metric honesty): name WHAT was summed so a gross aggregate
+    // is never silently presented as a derived one. The composer has no way
+    // to know the user asked for "owed" vs "invoice value"; by labeling the
+    // basis (the plucked field) the user can see sum(total_cents) is the
+    // gross total, NOT net-of-payments owed (billing N3/R-F1 overstated owed
+    // by 16% by summing total_cents). The field-name convention is the same
+    // structural one `pickAmount` uses — never a guess from English.
+    const basis = field.replace(CENTS_SUFFIX_RE, '').replace(/_/g, ' ').trim();
+    const count = nonNull.length;
+    const plural = count === 1 ? '' : 's';
+    const across = basis.length > 0 ? `, summing ${basis} across ${count} record${plural}` : '';
     const partial =
       nonNull.length < values.length
-        ? ` (based on ${nonNull.length} of ${values.length} — the rest didn't have that figure)`
+        ? ` (${values.length - nonNull.length} record(s) had no value)`
         : '';
-    return isMoney ? `That comes to ${formatted}${partial}.` : `That adds up to ${formatted}${partial}.`;
+    return isMoney
+      ? `That comes to ${formatted}${across}${partial}.`
+      : `That adds up to ${formatted}${across}${partial}.`;
   }
   const shown = nonNull.slice(0, 5).map((v) => String(v));
   return `I found ${nonNull.length} value(s): ${shown.join(', ')}${nonNull.length > 5 ? ', …' : ''}.`;

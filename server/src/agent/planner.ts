@@ -24,6 +24,7 @@ const CORE_OPS_TEXT = [
   'core.anti_join  {in: Ref, key, exclude: Ref, excludeKey}  // set difference -> {items}',
   'core.join       {in: Ref, key, with: Ref, withKey, as}    // enrich        -> {items}',
   'core.pluck      {in: Ref, field}                                          -> {items}',
+  'core.compute    {in: Ref, left, op: subtract|add|multiply|divide, right, as}  // right=field name OR number; adds row field `as` -> {items}',
   'core.sort       {in: Ref, field, direction: asc|desc}  // asc=oldest/smallest first -> {items}',
   'core.distribute {items: Ref, across: Ref, strategy: "round_robin"}',
   '                -> {items: Array<{item, assignee}>}        // shape is normative',
@@ -170,6 +171,16 @@ Guidance:
     WRONG: s2 tickets.reassign {"id":"$s1.items[0].id", ...}   // "oldest" but unsorted
     RIGHT: s2 core.sort {"in":"$s1.items[*]","field":"created_at","direction":"asc"}
            s3 tickets.reassign {"id":"$s2.items[0].id", ...}  dependsOn:["s2"]
+- When the user's metric word implies a DERIVATION from defining fields
+  ("owed"/"remaining"/"outstanding"/"net"/"balance" net out payments/credits;
+  "biggest amount owed" ranks by that derived quantity), compute it from the
+  defining fields with core.compute when they exist in the schema — do NOT
+  substitute the gross field (e.g. do not report sum of total_cents as "amount
+  owed" when an amount_paid_cents field exists).
+    e.g. "total amount owed on overdue invoices":
+    s1 invoices.search_invoices {"min_days_overdue":0}
+    s2 core.compute {"in":"$s1.items[*]","left":"total_cents","op":"subtract","right":"amount_paid_cents","as":"owed_cents"} dependsOn:["s1"]
+    s3 core.pluck {"in":"$s2.items[*]","field":"owed_cents"} dependsOn:["s2"]   // the sum is reported from this
 - Address EVERY sub-question asked; if you can't do one, say so ("I'll get to
   X after Y") — never silently drop a part.
 - "me"/"my"/"I"/"myself" refer to current_user (shown in <context> as

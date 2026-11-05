@@ -155,3 +155,56 @@ describe('core.sort — ordinal/superlative resolution (P1)', () => {
     expect(rows.map((r) => r['id'])).toEqual(['a', 'b']);
   });
 });
+
+// --- core.compute (P3: derived-metric honesty) -----------------------------
+
+const coreCompute = coreOps.find((a) => a.slug === 'core.compute') as ActionDef;
+
+async function compute(
+  rows: Array<Record<string, unknown>>,
+  left: string,
+  op: 'subtract' | 'add' | 'multiply' | 'divide',
+  right: string | number,
+  as: string,
+): Promise<Array<Record<string, unknown>>> {
+  const out = (await coreCompute.handler({ in: rows, left, op, right, as }, ctx)) as {
+    items: Array<Record<string, unknown>>;
+  };
+  return out.items;
+}
+
+describe('core.compute — derived per-row field (P3)', () => {
+  it('amount owed = total_cents subtract amount_paid_cents (field right operand)', async () => {
+    const rows = [
+      { id: 'inv_1', total_cents: 10000, amount_paid_cents: 3000 },
+      { id: 'inv_2', total_cents: 5000, amount_paid_cents: 0 },
+    ];
+    const out = await compute(rows, 'total_cents', 'subtract', 'amount_paid_cents', 'owed_cents');
+    expect(out.map((r) => r['owed_cents'])).toEqual([7000, 5000]);
+  });
+
+  it('treats a nullish operand as 0 (unpaid invoice → owed = total)', async () => {
+    const rows = [{ id: 'inv_3', total_cents: 8000, amount_paid_cents: null }];
+    const out = await compute(rows, 'total_cents', 'subtract', 'amount_paid_cents', 'owed_cents');
+    expect(out[0]?.['owed_cents']).toBe(8000);
+  });
+
+  it('supports a numeric literal right operand and other ops', async () => {
+    const rows = [{ id: 'a', n: 10 }];
+    expect((await compute(rows, 'n', 'multiply', 2, 'd'))[0]?.['d']).toBe(20);
+    expect((await compute(rows, 'n', 'add', 5, 'd'))[0]?.['d']).toBe(15);
+    expect((await compute(rows, 'n', 'divide', 0, 'd'))[0]?.['d']).toBe(null); // div-by-zero → null
+  });
+
+  it('non-numeric operand → null (downstream pluck surfaces honest "couldn\'t compute")', async () => {
+    const rows = [{ id: 'a', left: 'not a number', amount_paid_cents: 10 }];
+    const out = await compute(rows, 'left', 'subtract', 'amount_paid_cents', 'owed');
+    expect(out[0]?.['owed']).toBe(null);
+  });
+
+  it('does not mutate input rows (adds a new field on copies)', async () => {
+    const rows = [{ id: 'a', total_cents: 100, amount_paid_cents: 40 }];
+    await compute(rows, 'total_cents', 'subtract', 'amount_paid_cents', 'owed_cents');
+    expect('owed_cents' in rows[0]!).toBe(false);
+  });
+});

@@ -217,6 +217,83 @@ const corePluck: ActionDef<PluckInput, PluckOutput> = {
   handler: async (input) => ({ items: input.in.map((row) => row[input.field]) }),
 };
 
+// --- core.compute -----------------------------------------------------------
+//
+// P3 (derived-metric honesty): a user's metric word often implies a
+// DERIVATION from defining fields — "amount owed" = total_cents minus
+// amount_paid_cents, "remaining"/"net"/"outstanding" likewise net out
+// payments/credits. Before this op there was no way to express per-row
+// arithmetic, so the planner summed the gross field (total_cents) and the
+// answer overstated owed by 16% with zero error signal (billing N3/R-F1).
+// core.compute writes a NEW per-row field `as` = `left` <op> `right`, where
+// `right` is either another field name (string) or a numeric literal. The
+// planner then plucks/sorts/sums that derived field. `left` (and `right`
+// when it names a field) are schema-validated against the row schema exactly
+// like the other core ops (validator E2); `as` is a new output field, never
+// checked. Nullish operands count as 0 (an unpaid invoice's null
+// amount_paid_cents means 0 paid). A non-numeric operand or divide-by-zero
+// yields null for that row, so the downstream pluck surfaces an honest
+// "couldn't compute", never a fabricated figure.
+
+const computeOp = z.enum(['subtract', 'add', 'multiply', 'divide']);
+type ComputeOp = z.infer<typeof computeOp>;
+
+function applyCompute(op: ComputeOp, a: number, b: number): number | null {
+  switch (op) {
+    case 'add':
+      return a + b;
+    case 'subtract':
+      return a - b;
+    case 'multiply':
+      return a * b;
+    case 'divide':
+      return b === 0 ? null : a / b;
+    default:
+      return null;
+  }
+}
+
+/** Coerce an operand to a number: nullish → 0; a number stays; anything else
+ * (a non-numeric string, object) → null (uncomputable). */
+function toOperand(v: unknown): number | null {
+  if (v === null || v === undefined) return 0;
+  return typeof v === 'number' ? v : null;
+}
+
+const computeInput = z.strictObject({
+  in: rowsSchema,
+  left: z.string(),
+  op: computeOp,
+  right: z.union([z.string(), z.number()]),
+  as: z.string(),
+});
+type ComputeInput = z.infer<typeof computeInput>;
+
+const coreCompute: ActionDef<ComputeInput, ItemsOutput> = {
+  id: 'core.compute',
+  slug: 'core.compute',
+  module: 'core',
+  name: 'Compute derived field',
+  description:
+    'Add a per-row field `as` = `left` <op> `right` (op: subtract|add|multiply|divide). `right` is another field name OR a numeric literal. Use for derived metrics like amount owed = total_cents subtract amount_paid_cents, then pluck/sort/sum the new field.',
+  risk: 'read',
+  entities: [],
+  inputSchema: computeInput,
+  outputSchema: itemsOutput,
+  searchCard: { synonyms: ['compute', 'derive', 'subtract', 'net', 'remaining', 'difference'], examplePhrasings: [] },
+  handler: async (input) => {
+    const rightIsField = typeof input.right === 'string';
+    return {
+      items: input.in.map((row) => {
+        const a = toOperand(row[input.left]);
+        const b = rightIsField ? toOperand(row[input.right as string]) : (input.right as number);
+        const result = a === null || b === null ? null : applyCompute(input.op, a, b);
+        return { ...row, [input.as]: result };
+      }),
+    };
+  },
+};
+
 // --- core.sort --------------------------------------------------------------
 //
 // P1 (round-2 triage): "the oldest/newest/biggest/first one" MUST be an
@@ -340,6 +417,7 @@ export const coreOps: ActionDef[] = [
   coreAntiJoin as ActionDef,
   coreJoin as ActionDef,
   corePluck as ActionDef,
+  coreCompute as ActionDef,
   coreSort as ActionDef,
   coreDistribute as ActionDef,
 ];

@@ -232,7 +232,7 @@ describe('compose — genericity self-check: an UNTESTED, fictitious module', ()
         s2: { state: 'done', result: { items: [2500, 1500] } },
       },
     });
-    expect(summed).toBe('That comes to $40.00.');
+    expect(summed).toBe('That comes to $40.00, summing price across 2 records.');
 
     const writePlan: Plan = {
       goal: 'discontinue widget W-1',
@@ -248,6 +248,51 @@ describe('compose — genericity self-check: an UNTESTED, fictitious module', ()
     expect(written).toContain('W-1');
     expect(written).not.toContain('12345'); // raw epoch isn't echoed...
     expect(written).toContain(new Date(12345).toISOString().slice(0, 10)); // ...the ACTUAL written date is, formatted
+  });
+});
+
+describe('compose — derived-metric honesty (P3)', () => {
+  it('billing N3: a money sum names the field basis so gross is never presented as "owed"', () => {
+    const plan: Plan = {
+      goal: 'total amount owed',
+      steps: [
+        { id: 's1', action: 'invoices.search_invoices', params: {}, dependsOn: [] },
+        { id: 's2', action: 'core.pluck', params: { field: 'total_cents' }, dependsOn: ['s1'] },
+      ],
+    };
+    const text = compose({
+      outcome: 'done',
+      plan,
+      stepStates: {
+        s1: { state: 'done', result: { items: [{ id: 'inv_1' }, { id: 'inv_2' }], total: 2 } },
+        s2: { state: 'done', result: { items: [100000, 50000] } },
+      },
+    });
+    expect(text).toContain('$1500.00');
+    expect(text).toContain('total'); // names WHAT was summed (the field basis)
+    expect(text).toContain('across 2 records');
+  });
+
+  it('a derived owed field (computed upstream) is summed and labeled by its name', () => {
+    const plan: Plan = {
+      goal: 'total owed',
+      steps: [
+        { id: 's1', action: 'invoices.search_invoices', params: {}, dependsOn: [] },
+        { id: 's2', action: 'core.compute', params: { in: '$s1.items[*]', left: 'total_cents', op: 'subtract', right: 'amount_paid_cents', as: 'owed_cents' }, dependsOn: ['s1'] },
+        { id: 's3', action: 'core.pluck', params: { field: 'owed_cents' }, dependsOn: ['s2'] },
+      ],
+    };
+    const text = compose({
+      outcome: 'done',
+      plan,
+      stepStates: {
+        s1: { state: 'done', result: { items: [{ id: 'inv_1' }], total: 1 } },
+        s2: { state: 'done', result: { items: [{ id: 'inv_1', owed_cents: 41586349 }] } },
+        s3: { state: 'done', result: { items: [41586349] } },
+      },
+    });
+    expect(text).toContain('$415863.49');
+    expect(text).toContain('owed');
   });
 });
 
