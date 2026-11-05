@@ -222,6 +222,15 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['--agent', 'nonsense'])).toThrow();
   });
 
+  it('parses --scenario-ids into a trimmed, non-empty id list', () => {
+    const opts = parseArgs(['--scenario-ids', 'a-001, b-002 ,c-003']);
+    expect(opts.scenarioIds).toEqual(['a-001', 'b-002', 'c-003']);
+  });
+
+  it('omits scenarioIds entirely when the flag is absent', () => {
+    expect(parseArgs([]).scenarioIds).toBeUndefined();
+  });
+
   it('--server-url without --profile is accepted at parse time (validated later by main())', () => {
     const opts = parseArgs(['--server-url', 'http://localhost:4000']);
     expect(opts.serverUrl).toBe('http://localhost:4000');

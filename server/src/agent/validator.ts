@@ -166,14 +166,27 @@ function isObjectShape(schema: unknown): schema is ShapeLike {
 
 // --- id-fabrication guard (TRIAGE conditional-coupons-001) -----------------
 //
-// Entity ids in this CRM are minted as `<prefix>_<n>` (e.g. `con_123`,
-// `struct_200`, `course_2`). A LITERAL value sitting in an `*_id`/`id` param
-// that does NOT look like an id (e.g. a quoted name "coupon 5") is almost
-// always the planner typing in a name it should have RESOLVED via a search
-// action first — a repairable mistake, not a crash. Refs (`$s1.items[*].id`,
-// `$r_t3_s1`) are never literals and are excluded before this check runs.
+// Entity ids in this CRM are minted as `<prefix>_<n>`, INCLUDING composites
+// like `course_2_lsn_1`, `community_12_ch_1`, `funnel_7_step_2`, `struct_5_p1`.
+// A naive `^[a-z]+_\d+$` match would FALSE-POSITIVE on every composite id, so
+// instead of trying to positively match the id shape we flag only values that
+// are clearly NAME-shaped: they contain whitespace, OR any uppercase letter,
+// OR no digit at all. That catches "coupon 5", "Summer Sale", "premium plan",
+// "Acme" while passing every real (simple or composite) lowercase id. A
+// LITERAL name in an `*_id`/`id` param is almost always the planner typing in
+// a value it should have RESOLVED via a search action first — repairable, not
+// a crash. Refs (`$s1.items[*].id`, `$r_t3_s1`) are excluded before this runs.
 
-const ENTITY_ID_SHAPE = /^[a-z]+_\d+$/;
+/** True when a literal value is clearly a human NAME rather than an entity id
+ * (whitespace, any uppercase, or no digit at all). Deliberately conservative:
+ * every lowercase-with-digit id (`con_123`, `course_2_lsn_1`, `struct_5_p1`)
+ * passes. */
+function looksLikeName(value: string): boolean {
+  if (/\s/.test(value)) return true; // "coupon 5", "premium plan"
+  if (/[A-Z]/.test(value)) return true; // "Summer Sale", "SPRING20"
+  if (!/\d/.test(value)) return true; // "acme", "widget" — no digit at all
+  return false;
+}
 
 /** True when `key` is an entity-id param by name (`id` or `*_id`), but NOT
  * a plural id-LIST param (`*_ids`) — an array of ids is a different shape
@@ -275,6 +288,12 @@ function listUnionFacade(schema: unknown): ObjClass | undefined {
     }
   }
   if (itemsArray === undefined) return undefined; // not a list-shaped union
+  // `sample` is treated as always-present and item-typed even though it only
+  // exists on the spill branch at run time: this is fails-SAFE — a plan that
+  // reads `$sN.sample[*].field` is never wrongly rejected (the executor's
+  // post-spill shape also exposes `items`), and the item-field check still
+  // runs against the real row schema. We never want to false-positive on a
+  // ref that MIGHT be valid depending on inline-vs-spill at run time.
   const keys = new Set(['items', 'total', 'sample']);
   return {
     kind: 'object',
@@ -626,12 +645,12 @@ export function validate(
           typeof value === 'string' &&
           isIdParamName(key) &&
           isPlainStringSchema(shape[key]) &&
-          !ENTITY_ID_SHAPE.test(value)
+          looksLikeName(value)
         ) {
           errors.push({
             code: 'ID_NOT_RESOLVED',
             stepId: step.id,
-            message: `Step '${step.id}': param '${key}' for '${step.action}' is the literal '${value}', which does not look like an entity id (expected '<prefix>_<number>', e.g. 'con_123') — it looks like a name. Resolve it via a search action first (e.g. a '*.search_*' action) and reference its result with a $ref, never a typed-in id.`,
+            message: `Step '${step.id}': param '${key}' for '${step.action}' is the literal '${value}', which looks like a name, not an entity id (ids are lowercase with a numeric segment, e.g. 'con_123' or 'course_2_lsn_1'). Resolve it via a search action first (e.g. a '*.search_*' action) and reference its result with a $ref, never a typed-in id.`,
           });
         }
       }
@@ -651,6 +670,7 @@ export function validate(
     // that a spurious REF_GRAMMAR failure.
     if (step.when) {
       checkRef(step.when.ref, step, `Step '${step.id}' when.ref`, reachable);
+      checkRefPath(step.when.ref, step, `Step '${step.id}' when.ref`);
     }
 
     // 4. forEach target must itself be a ref (and not $item — you cannot

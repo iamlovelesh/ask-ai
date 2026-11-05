@@ -449,6 +449,128 @@ describe('executor — unresolved ref (REF_RESOLUTION)', () => {
   });
 });
 
+describe('executor — forEach gate ordering + partial success', () => {
+  it('a bad ref in item 1 fails the step (REF_RESOLUTION) BEFORE the gate — zero handler calls, zero confirmation.required', async () => {
+    let handlerCalls = 0;
+    const registry = buildRegistry(
+      [
+        [
+          action('leads.search_leads', 'read', async () => ({
+            items: [
+              { id: 'l1', owner: 'u_1' },
+              { id: 'l2' }, // no `owner` — $item.owner won't resolve
+            ],
+            total: 2,
+          })),
+          // 'bulk' risk → shouldGate is true for any fan-out; the point is the
+          // gate must NEVER fire because resolution aborts the step first.
+          action('leads.bulk_archive', 'bulk', async () => {
+            handlerCalls += 1;
+            return { ok: true };
+          }),
+        ],
+      ],
+      coreOps,
+    );
+    const plan: Plan = {
+      goal: 'foreach-bad-ref',
+      steps: [
+        { id: 's1', action: 'leads.search_leads', params: {}, dependsOn: [] },
+        {
+          id: 's2',
+          action: 'leads.bulk_archive',
+          params: { lead_id: '$item.id', owner_id: '$item.owner' },
+          forEach: '$s1.items',
+          dependsOn: ['s1'],
+        },
+      ],
+    };
+    const input = baseInput(plan, registry);
+    const result = await execute(input);
+
+    expect(result.status).toBe('failed');
+    expect(result.stepStates['s2']?.state).toBe('failed');
+    expect(result.stepStates['s2']?.error?.code).toBe('REF_RESOLUTION');
+    expect(result.stepStates['s2']?.error?.message).toContain('item');
+    // failing index is reported
+    expect(result.stepStates['s2']?.error?.message).toContain('1');
+    // NEITHER a handler call NOR a confirmation fired
+    expect(handlerCalls).toBe(0);
+    expect(eventsOf(input).some((e) => e.t === 'confirmation.required')).toBe(false);
+  });
+
+  it('a mid-fan-out handler failure records partial success in the error message', async () => {
+    let calls = 0;
+    const registry = buildRegistry(
+      [
+        [
+          action('leads.search_leads', 'read', async () => ({
+            items: [{ id: 'l1' }, { id: 'l2' }, { id: 'l3' }],
+            total: 3,
+          })),
+          action('tasks.create_task', 'write', async () => {
+            calls += 1;
+            if (calls === 3) throw new ActionError('CONFLICT', 'boom on the third');
+            return { ok: true };
+          }),
+        ],
+      ],
+      coreOps,
+    );
+    const plan: Plan = {
+      goal: 'partial',
+      steps: [
+        { id: 's1', action: 'leads.search_leads', params: {}, dependsOn: [] },
+        { id: 's2', action: 'tasks.create_task', params: { lead_id: '$item.id' }, forEach: '$s1.items', dependsOn: ['s1'] },
+      ],
+    };
+    const input = baseInput(plan, registry);
+    const result = await execute(input);
+    expect(result.status).toBe('failed');
+    expect(calls).toBe(3); // items 0,1 succeeded; item 2 threw
+    expect(result.stepStates['s2']?.error?.message).toContain('items 0-1 of 3 completed before this failure');
+  });
+});
+
+describe('executor — all-undefined pluck guard (REF_RESOLUTION)', () => {
+  it('a pluck of a bogus field over opaque rows fails the step; the handler is never called', async () => {
+    let handlerCalls = 0;
+    const registry = buildRegistry(
+      [
+        [
+          action('data.search', 'read', async () => ({ items: [{ id: 'l1' }, { id: 'l2' }], total: 2 })),
+          action('leads.bulk_update', 'write', async () => {
+            handlerCalls += 1;
+            return { ok: true };
+          }),
+        ],
+      ],
+      coreOps,
+    );
+    const plan: Plan = {
+      goal: 'all-undefined-pluck',
+      steps: [
+        { id: 's1', action: 'data.search', params: {}, dependsOn: [] },
+        // core.filter passes the rows through unchanged (opaque records)…
+        {
+          id: 's2',
+          action: 'core.filter',
+          params: { in: '$s1.items', field: 'id', op: 'contains', value: 'l' },
+          dependsOn: ['s1'],
+        },
+        // …then plucking a field that exists on NO row yields [undefined,…].
+        { id: 's3', action: 'leads.bulk_update', params: { ids: '$s2.items[*].bogus' }, dependsOn: ['s2'] },
+      ],
+    };
+    const input = baseInput(plan, registry);
+    const result = await execute(input);
+    expect(result.status).toBe('failed');
+    expect(result.stepStates['s3']?.state).toBe('failed');
+    expect(result.stepStates['s3']?.error?.code).toBe('REF_RESOLUTION');
+    expect(handlerCalls).toBe(0);
+  });
+});
+
 describe('executor — resilience', () => {
   it('TRANSIENT error retries once with the SAME key, then succeeds (one result)', async () => {
     const keys: string[] = [];

@@ -753,6 +753,51 @@ describe('validator — ref-path vs output schema (REF_PATH_MISMATCH)', () => {
       expect(result.errors.some((e) => e.code === 'REF_PATH_MISMATCH')).toBe(true);
     }
   });
+
+  it('when.ref is also path-checked ($s1.id on a list output → REF_PATH_MISMATCH)', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+          {
+            id: 's2',
+            action: 'enrollments.enroll',
+            params: {},
+            dependsOn: ['s1'],
+            when: { ref: '$s1.id', op: 'nonempty' },
+          },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), refPathRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'REF_PATH_MISMATCH')).toBe(true);
+    }
+  });
+
+  it('when.ref $s1.items (valid array path on a list output) is accepted', () => {
+    const outcome: PlanOutcome = {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: 'courses.search_courses', params: {}, dependsOn: [] },
+          {
+            id: 's2',
+            action: 'enrollments.enroll',
+            params: {},
+            dependsOn: ['s1'],
+            when: { ref: '$s1.items', op: 'nonempty' },
+          },
+        ],
+      },
+    };
+    const result = validate(outcome, new Set(), noHandles(), refPathRegistry);
+    expect(result.ok).toBe(true);
+  });
 });
 
 describe('BUDGETS (LLD §5.1)', () => {

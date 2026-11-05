@@ -320,6 +320,16 @@ function resolveValue(value: unknown, rctx: ResolveCtx): unknown {
         throw new RefResolutionError(describeUnresolvedRef(value, rctx));
       }
       if (Array.isArray(resolved)) {
+        // A pluck (`items[*].field`) over opaque rows that yields an
+        // ALL-undefined, non-empty array means the field is absent on every
+        // row — it would otherwise feed `[undefined, undefined, …]` silently
+        // into a write handler. Fail loudly. A MIXED array (some defined) is
+        // deliberately allowed through — ambiguous, so we stay defensive.
+        if (resolved.length > 0 && resolved.every((e) => e === undefined)) {
+          throw new RefResolutionError(
+            `Ref '${value}' plucked a field that is absent on all ${resolved.length} row(s) of the result — the field does not exist on these rows. Check the field name against the producing action's row shape.`,
+          );
+        }
         rctx.meta.maxArrayLen = Math.max(rctx.meta.maxArrayLen, resolved.length);
       }
       return resolved;
@@ -741,7 +751,40 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
       return;
     }
 
-    // Gate ONCE with aggregate scope (affectedCount = fan-out size).
+    // Resolve EVERY item's params FIRST — before the gate or any handler
+    // call. An unresolvable ref on ANY item must fail the whole step with
+    // REF_RESOLUTION (listing the failing indices) BEFORE a confirmation
+    // ever fires: approving a bulk write and only THEN discovering item N's
+    // ref is broken (executing items 0..N-1, aborting at N with no
+    // partial-success record, gate already spent) is the defect this guards.
+    const resolvedParams: Record<string, unknown>[] = [];
+    const resolutionErrors: { index: number; message: string }[] = [];
+    for (let i = 0; i < items.length; i += 1) {
+      const rctx = makeResolveCtx(items[i], true);
+      try {
+        resolvedParams.push(resolveValue(step.params, rctx) as Record<string, unknown>);
+      } catch (err) {
+        if (err instanceof RefResolutionError) {
+          resolutionErrors.push({ index: i, message: err.message });
+          continue;
+        }
+        throw err;
+      }
+    }
+    if (resolutionErrors.length > 0) {
+      const idxs = resolutionErrors.map((e) => e.index).join(', ');
+      const first = resolutionErrors[0] as { index: number; message: string };
+      const error = {
+        code: 'REF_RESOLUTION',
+        message: `forEach item(s) [${idxs}] of ${items.length} could not resolve their params — no write ran (the fan-out is aborted before the confirmation gate). First failure (item ${first.index}): ${first.message}`,
+      };
+      const { hint } = recordStuck(step.action, stableHash(step.params), error.code);
+      emitFailed(step.id, hint ? { ...error, message: `${error.message} [${hint}]` } : error, clock.now() - started);
+      return;
+    }
+
+    // Only a FULLY-resolvable fan-out reaches the gate. Gate ONCE with
+    // aggregate scope (affectedCount = fan-out size).
     if (isWrite && shouldGate(action.risk, fanOut, drift)) {
       const approved = await gate(step, fanOut, sampleNames(items), drift);
       if (!approved) {
@@ -756,25 +799,20 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     const isCore = isCoreSlug(step.action);
     const perItemResults: unknown[] = [];
     for (let i = 0; i < items.length; i += 1) {
-      const rctx = makeResolveCtx(items[i], true);
-      let params: Record<string, unknown>;
-      try {
-        params = resolveValue(step.params, rctx) as Record<string, unknown>;
-      } catch (err) {
-        if (err instanceof RefResolutionError) {
-          const error = { code: err.code, message: err.message };
-          const { hint } = recordStuck(step.action, stableHash(step.params), err.code);
-          emitFailed(step.id, hint ? { ...error, message: `${error.message} [${hint}]` } : error, clock.now() - started);
-          return;
-        }
-        throw err;
-      }
+      const params = resolvedParams[i] as Record<string, unknown>;
       const key = `${turnId}:${planRev}:${step.id}:${i}`;
       const res = await invoke(action, params, key, isCore);
       if (!res.ok) {
         const err = res.error as { code: string; message: string };
         const { hint } = recordStuck(step.action, stableHash(params), err.code);
-        const finalErr = hint ? { code: err.code, message: `${err.message} [${hint}]` } : err;
+        // Honest partial-success note: a mid-fan-out handler failure means
+        // items 0..i-1 already executed (and committed) — surface that in
+        // the failure message rather than pretending nothing happened.
+        const partial = i > 0 ? ` (items 0-${i - 1} of ${items.length} completed before this failure)` : '';
+        const finalErr = {
+          code: err.code,
+          message: `${err.message}${partial}${hint ? ` [${hint}]` : ''}`,
+        };
         emitFailed(step.id, finalErr, clock.now() - started);
         return;
       }
