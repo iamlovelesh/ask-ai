@@ -31,7 +31,7 @@ import { ActionError } from '../catalog/types.js';
 import type { Crm, StoreTx } from '../store/db.js';
 import { VirtualClock } from '../store/clock.js';
 import { BUDGETS } from './validator.js';
-import { parseRefGrammar } from './validator.js';
+import { parseRefGrammar, coerceDateParams } from './validator.js';
 import type { RefStore, ResolveResult } from './refs.js';
 import type { Spans, SpanHandle } from '../events/trace.js';
 
@@ -727,6 +727,9 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
       }
       throw err;
     }
+    // TRIAGE fix #6: ISO-8601 date strings → epoch-ms for date-named numeric
+    // params, so the typed handler receives the ms number it expects.
+    params = coerceDateParams(params, action.inputSchema);
     const drift = rctx.meta.drift;
     const affectedCount = isWrite ? Math.max(rctx.meta.maxArrayLen, 1) : rctx.meta.maxArrayLen;
 
@@ -811,7 +814,9 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     for (let i = 0; i < items.length; i += 1) {
       const rctx = makeResolveCtx(items[i], true);
       try {
-        resolvedParams.push(resolveValue(step.params, rctx) as Record<string, unknown>);
+        resolvedParams.push(
+          coerceDateParams(resolveValue(step.params, rctx) as Record<string, unknown>, action.inputSchema),
+        );
       } catch (err) {
         if (err instanceof RefResolutionError) {
           resolutionErrors.push({ index: i, message: err.message });

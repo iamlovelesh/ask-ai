@@ -6,6 +6,9 @@ import {
   computePlanHash,
   repairPrompt,
   BUDGETS,
+  coerceDateParams,
+  coerceDateParamValue,
+  isDateParamName,
   type HandleRef,
 } from '../src/agent/validator';
 import { buildRegistry } from '../src/catalog/registry';
@@ -807,6 +810,70 @@ describe('validator — ref-path vs output schema (REF_PATH_MISMATCH)', () => {
     };
     const result = validate(outcome, new Set(), noHandles(), refPathRegistry);
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('validator — ISO date coercion for date-named numeric params (TRIAGE #6)', () => {
+  const dateRegistry = buildRegistry(
+    [
+      [
+        stubAction(
+          'leads.search_leads',
+          z.strictObject({
+            created_after: z.number().int().optional(),
+            name: z.string().optional(),
+          }),
+        ),
+      ],
+    ],
+    coreOps,
+  );
+
+  const planWithParam = (params: Record<string, unknown>): PlanOutcome => ({
+    kind: 'plan',
+    plan: { goal: 'g', steps: [{ id: 's1', action: 'leads.search_leads', params, dependsOn: [] }] },
+  });
+
+  it('accepts an ISO-8601 string in a numeric date-named param', () => {
+    const result = validate(planWithParam({ created_after: '2026-10-28' }), new Set(), noHandles(), dateRegistry);
+    expect(result.ok).toBe(true);
+  });
+
+  it('still rejects a NON-date string in the same numeric param', () => {
+    const result = validate(planWithParam({ created_after: 'last week' }), new Set(), noHandles(), dateRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.some((e) => e.code === 'PARAM_SCHEMA')).toBe(true);
+  });
+
+  it('leaves a plain epoch-ms integer unchanged (still valid)', () => {
+    const result = validate(planWithParam({ created_after: 1793577600000 }), new Set(), noHandles(), dateRegistry);
+    expect(result.ok).toBe(true);
+  });
+
+  it('coerceDateParamValue converts ISO→epoch-ms only for a number schema', () => {
+    expect(coerceDateParamValue('2026-10-28', z.number())).toBe(Date.parse('2026-10-28'));
+    // string schema → untouched
+    expect(coerceDateParamValue('2026-10-28', z.string())).toBe('2026-10-28');
+    // non-ISO → untouched
+    expect(coerceDateParamValue('soon', z.number())).toBe('soon');
+    // already a number → untouched
+    expect(coerceDateParamValue(123, z.number())).toBe(123);
+  });
+
+  it('coerceDateParams only touches date-named number params', () => {
+    const schema = z.strictObject({ created_after: z.number(), name: z.string() });
+    const out = coerceDateParams({ created_after: '2026-10-28', name: '2026-10-28' }, schema);
+    expect(out['created_after']).toBe(Date.parse('2026-10-28'));
+    expect(out['name']).toBe('2026-10-28'); // not date-named → untouched
+  });
+
+  it('isDateParamName matches the documented suffixes/names', () => {
+    for (const k of ['created_at', 'due_date', 'starts_before', 'ends_after', 'window_start', 'range_end', 'from', 'to', 'start', 'end']) {
+      expect(isDateParamName(k)).toBe(true);
+    }
+    for (const k of ['id', 'name', 'owner_id', 'status']) {
+      expect(isDateParamName(k)).toBe(false);
+    }
   });
 });
 
