@@ -1,0 +1,24 @@
+# Task 17 Batch C — category: direct, module: companies (3rd scenario;
+# padding the corpus total — companies already clears the lint
+# module-coverage floor, this just adds variety).
+#
+# get_company_details is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id,name FROM companies WHERE id='co_1'; -> 'Cobalt Networks 618'
+
+id: direct-companies-002
+category: direct
+profile: standard
+turns:
+  - user: "Give me the details on company co_1."
+    expect:
+      planActions:
+        mustInclude: [companies.get_company_details]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [companies.get_company_details]
+        mustNotClaim: [failed, error]

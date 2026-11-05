@@ -1,0 +1,24 @@
+# Task 17 Batch C — category: followup, subtype: no_repeat.
+#
+# Turn 1 gives a date range (read-only — no state derivation needed).
+# Turn 2 asks for a reschedule with a vague "sometime after that" —
+# needing clarification of the exact new date/time (a DIFFERENT missing
+# field than the original range) — the clarify question must not re-ask
+# the already-given range ("the 10th", "the 14th").
+
+id: followup-appointments-no-repeat
+category: followup
+subtype: no_repeat
+profile: standard
+turns:
+  - user: "What meetings do I have between the 10th and the 14th?"
+    expect:
+      planActions:
+        mustInclude: [appointments.search_appointments]
+      behavior:
+        confirmation: false
+  - user: "Reschedule the one with Kenji to sometime after that."
+    expect:
+      behavior:
+        clarify: true
+        mustNotAsk: ["10th", "14th"]

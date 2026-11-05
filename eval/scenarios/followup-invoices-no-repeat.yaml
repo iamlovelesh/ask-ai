@@ -1,0 +1,26 @@
+# Task 17 Batch C — category: followup, subtype: no_repeat (lint gap:
+# no_repeat touched by only 1 scenario before this — the existing
+# ambiguous-no-repeat.yaml).
+#
+# Turn 1 gives a date range (read-only — no state derivation needed;
+# the exact overdue count is irrelevant to this scenario). Turn 2 asks
+# for something that needs clarification of a DIFFERENT missing field
+# (the payment amount) — the clarify question must not re-ask the
+# already-given date range ("end of the month").
+
+id: followup-invoices-no-repeat
+category: followup
+subtype: no_repeat
+profile: standard
+turns:
+  - user: "What's overdue between now and the end of the month?"
+    expect:
+      planActions:
+        mustInclude: [invoices.list_overdue_invoices]
+      behavior:
+        confirmation: false
+  - user: "Go ahead and record a payment against the first one."
+    expect:
+      behavior:
+        clarify: true
+        mustNotAsk: ["end of the month"]

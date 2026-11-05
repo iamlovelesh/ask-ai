@@ -1,0 +1,23 @@
+# Task 17 Batch C — category: followup, subtype: no_repeat.
+#
+# Turn 1 gives a date range (read-only — no state derivation needed).
+# Turn 2 asks for something that needs clarification of a DIFFERENT
+# missing field (which priority level to set) — the clarify question
+# must not re-ask the already-given date range ("next week").
+
+id: followup-tasks-no-repeat
+category: followup
+subtype: no_repeat
+profile: standard
+turns:
+  - user: "What's on my task list for next week?"
+    expect:
+      planActions:
+        mustInclude: [tasks.search_tasks]
+      behavior:
+        confirmation: false
+  - user: "Bump up the priority on the contract review task."
+    expect:
+      behavior:
+        clarify: true
+        mustNotAsk: ["next week"]
