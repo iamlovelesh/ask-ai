@@ -551,23 +551,106 @@ describe('runTurn — top-level error guard + fast-model escalation (reviewer I-
     expect(completed.metrics.llmCalls).toBe(2);
   });
 
-  it('a malformed response from the routed PLANNER model has no further escalation — fails honestly, completed+snapshot still emitted', async () => {
-    const queue = queueMockLlm([{ nonsense: true }]);
+  it('a malformed response gets exactly ONE structured retry (E8a); both bad → fails honestly, completed+snapshot still emitted', async () => {
+    // E8(a): a NoObjectGeneratedError now ALWAYS gets one augmented retry on
+    // PLANNER_MODEL, even when the turn was routed straight to the planner
+    // model (previously: no retry, 1 call). Two bad responses → 2 calls, then
+    // an honest failure.
+    const queue = queueMockLlm([{ nonsense: true }, { nonsense: true }]);
     __setTestFetch(queue.fetch);
 
     const registry = buildRegistry([], coreOps);
 
-    // A comma + "and"/"then" forces the multi-intent branch regardless of
-    // retrieval score → router.ts routes this turn to PLANNER_MODEL, so
-    // there is no weaker model left to escalate FROM.
     const events = await drive(registry, 'create a contact, and then do something else');
 
-    expect(queue.callCount()).toBe(1); // no retry attempted
+    expect(queue.callCount()).toBe(2); // initial + ONE structured retry
     const completed = completedOf(events);
     expect(completed.status).toBe('failed');
-    expect(completed.metrics.llmCalls).toBe(1);
+    expect(completed.metrics.llmCalls).toBe(2);
 
     // the generic top-level guard still gets the turn to a clean finish.
     expect(typesOf(events).slice(-3)).toEqual(['answer.final', 'turn.completed', 'memory.snapshot']);
+  });
+});
+
+// --- engine-wave E8: parse-failure retry + sticky escalation ---------------
+
+describe('runTurn — E8 parse-failure retry + sticky repair escalation', () => {
+  function actionE8(slug: string, risk: Risk, outputSchema: z.ZodType<unknown>, handler: Handler): ActionDef {
+    return {
+      id: slug, slug, module: slug.split('.')[0] as string, name: slug, description: slug,
+      risk, entities: [slug.split('.')[0] as string], inputSchema: z.strictObject({}),
+      outputSchema, searchCard: { synonyms: [], examplePhrasings: [] }, handler: handler as ActionDef['handler'],
+    };
+  }
+
+  function capture(queue: ReturnType<typeof queueMockLlm>): { fetch: typeof fetch; models: string[]; prompts: string[] } {
+    const models: string[] = [];
+    const prompts: string[] = [];
+    const wrapped = (async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      try {
+        const bodyText = typeof init?.body === 'string' ? init.body : undefined;
+        const body = bodyText ? (JSON.parse(bodyText) as { model?: unknown; messages?: { content?: unknown }[] }) : undefined;
+        if (typeof body?.model === 'string') models.push(body.model);
+        prompts.push(JSON.stringify(body?.messages ?? ''));
+      } catch { /* ignore */ }
+      return queue.fetch(url, init);
+    }) as typeof fetch;
+    return { fetch: wrapped, models, prompts };
+  }
+
+  it('E8(a): a parse failure gets ONE augmented retry on PLANNER_MODEL and succeeds (2 calls)', async () => {
+    const good = { kind: 'plan', plan: { goal: 'ok', steps: [{ id: 's1', action: 'x.search_x', params: {}, dependsOn: [] }] } };
+    const queue = queueMockLlm([{ nonsense: true }, good]);
+    const cap = capture(queue);
+    __setTestFetch(cap.fetch);
+    const registry = buildRegistry([[actionE8('x.search_x', 'read', z.unknown(), async () => ({ items: [], total: 0 }))]], coreOps);
+
+    // Multi-intent text → routed straight to PLANNER_MODEL; previously that
+    // meant NO retry. E8(a) retries anyway.
+    const events = await drive(registry, 'do the thing, and then do the other thing');
+
+    expect(queue.callCount()).toBe(2);
+    expect(completedOf(events).status).toBe('done');
+    expect(cap.models[1]).toBe('anthropic/claude-haiku-4.5'); // PLANNER_MODEL
+    expect(cap.prompts[1]).toContain('RETRY'); // the augmented retry directive
+  });
+
+  it('E8(b): once escalated, every REMAINING repair round stays on REPAIR_ESCALATION_MODEL', async () => {
+    const broken = {
+      kind: 'plan',
+      plan: { goal: 'g', steps: [
+        { id: 's1', action: 'x.search_x', params: {}, dependsOn: [] },
+        { id: 's2', action: 'y.act', params: {}, dependsOn: ['s1'], when: { ref: '$s1.bogus', op: 'nonempty' } },
+      ] },
+    };
+    const fixed = {
+      kind: 'plan',
+      plan: { goal: 'g', steps: [
+        { id: 's1', action: 'x.search_x', params: {}, dependsOn: [] },
+        { id: 's2', action: 'y.act', params: {}, dependsOn: ['s1'], when: { ref: '$s1.items[*].id', op: 'nonempty' } },
+      ] },
+    };
+    // initial, repair1 (haiku), repair2 (escalate→sonnet, still broken),
+    // repair3 (STICKY sonnet → fixed).
+    const queue = queueMockLlm([broken, broken, broken, fixed]);
+    const cap = capture(queue);
+    __setTestFetch(cap.fetch);
+    const registry = buildRegistry(
+      [[
+        actionE8('x.search_x', 'read', listOutputSchema(z.object({ id: z.string() })), async () => ({ items: [{ id: 'r1' }], total: 1 })),
+        actionE8('y.act', 'read', z.unknown(), async () => ({ ok: true })),
+      ]],
+      coreOps,
+    );
+
+    const events = await drive(registry, 'do the sticky ref thing');
+
+    expect(queue.callCount()).toBe(4);
+    expect(completedOf(events).status).toBe('done');
+    expect(completedOf(events).metrics.repairs).toBe(3);
+    expect(cap.models[1]).toBe('anthropic/claude-haiku-4.5'); // repair round 1
+    expect(cap.models[2]).toBe('anthropic/claude-sonnet-4.5'); // round 2 escalates
+    expect(cap.models[3]).toBe('anthropic/claude-sonnet-4.5'); // round 3 STAYS escalated (sticky)
   });
 });

@@ -51,7 +51,7 @@ import {
 } from './memory.js';
 import { llmCall, BudgetExceededError } from '../llm/client.js';
 import { flatPlanOutcomeSchema, type FlatPlanOutcome, type Plan, type PlanOutcome, type Step } from './plan-schema.js';
-import { pickPlannerModel, escalate, fastModel, repairEscalationModel } from '../llm/router.js';
+import { pickPlannerModel, escalate, fastModel, plannerModel, repairEscalationModel } from '../llm/router.js';
 import { getDefaultSpans } from '../events/trace.js';
 
 // --- public contract (Task 13) ----------------------------------------------
@@ -265,7 +265,7 @@ type PlanningOutcome =
 type PlanAttempt =
   | { outcome: 'ok'; result: PlanResult }
   | { outcome: 'budget'; reason: BudgetReason }
-  | { outcome: 'parseError' };
+  | { outcome: 'parseError'; message?: string };
 
 /**
  * One attempt at the TOP-level planner call (the initial call, or a
@@ -295,7 +295,8 @@ async function attemptPlannerCall(
     if (err instanceof BudgetExceededError) return { outcome: 'budget', reason: 'costBudget' };
     if (NoObjectGeneratedError.isInstance(err)) {
       budget.recordFailedCall();
-      return { outcome: 'parseError' };
+      const message = err instanceof Error ? err.message : undefined;
+      return message !== undefined ? { outcome: 'parseError', message } : { outcome: 'parseError' };
     }
     throw err;
   }
@@ -329,13 +330,20 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
 
   for (;;) {
     let attempt = await attemptPlannerCall(budget, ctx, turnId, model);
-    if (attempt.outcome === 'parseError' && model === fastModel() && budgetPreCheck(budget) === 'ok') {
-      // LLD §5.5 "misroute escalates" extended to an outright malformed
-      // response, not just a validator-caught structural plan: a weak
-      // FAST_MODEL that couldn't produce a schema-conforming object at
-      // all gets exactly ONE retry on the full planner model before the
-      // turn gives up.
-      attempt = await attemptPlannerCall(budget, ctx, turnId, escalate(model));
+    if (attempt.outcome === 'parseError' && budgetPreCheck(budget) === 'ok') {
+      // Engine-wave E8(a): a NoObjectGeneratedError (the model didn't emit a
+      // schema-conforming JSON object at all) gets exactly ONE structured
+      // retry — on the full PLANNER_MODEL, with the parse error + an explicit
+      // "return ONLY the JSON object" appended to the request. Fires
+      // regardless of which model was routed first (not only FAST_MODEL), and
+      // still counts against maxLlmCallsPerTurn/budget via attemptPlannerCall.
+      const note =
+        `\n\n[RETRY: your previous reply could not be parsed as the required JSON` +
+        `${attempt.message ? ` (${attempt.message})` : ''}. Return ONLY the JSON object ` +
+        `with ALL SIX fields ("kind"/"plan"/"queries"/"question"/"reason"/"text") — ` +
+        `no prose, no explanation, no markdown fences.]`;
+      const retryCtx = { ...ctx, rewrittenRequest: `${ctx.rewrittenRequest}${note}` };
+      attempt = await attemptPlannerCall(budget, retryCtx, turnId, plannerModel());
     }
     if (attempt.outcome === 'parseError') {
       return {
@@ -434,10 +442,15 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
       // exhaustion. `BUDGETS.maxLlmCallsPerTurn`/the cost meter are still
       // enforced exactly as for any other repair call, via `callBudgeted`
       // below — this only changes WHICH model name is dialed.
+      // Engine-wave E8(b): escalation is STICKY. The first time a round ≥2 is
+      // still a ref-path/grammar issue, flip to REPAIR_ESCALATION_MODEL — and
+      // STAY there for every remaining repair round this turn. (Previously it
+      // escalated for exactly ONE round then regressed to haiku and looped on
+      // multistep-enrollments — round2 escalated, rounds 3-4 back on haiku,
+      // identical errors.)
       const isRefIssue = verdict.errors.some((e) => e.code === 'REF_PATH_MISMATCH' || e.code === 'REF_GRAMMAR');
-      const useEscalationModel = repairs >= 2 && isRefIssue && !refRepairEscalated;
-      if (useEscalationModel) refRepairEscalated = true;
-      const repairModel = useEscalationModel ? repairEscalationModel() : escalate(model);
+      if (!refRepairEscalated && repairs >= 2 && isRefIssue) refRepairEscalated = true;
+      const repairModel = refRepairEscalated ? repairEscalationModel() : escalate(model);
       const plannerSystem = buildPlannerPrompt(ctx).system;
       const repairPlan = verdict.plan ?? (candidateOutcome as Extract<PlanOutcome, { kind: 'plan' }>).plan;
       const promptText = repairPrompt(repairPlan, verdict.errors);
