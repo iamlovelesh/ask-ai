@@ -24,27 +24,32 @@ type CompareOp = z.infer<typeof compareOp>;
 // parses as a date (TRIAGE C5 requires non-date strings untouched).
 const ISO_8601_RE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
 
-/** TRIAGE C5 (date type-mismatch): an ordered comparison where exactly one
- * operand is an ISO-8601 date string and the other is numeric (epoch-ms).
- * Coerce BOTH to epoch-ms so e.g. `created_at` (epoch-ms number) compares
- * correctly against `"2026-10-04T.."`. Returns `null` when the pair is not
- * this strict one-numeric/one-ISO shape (callers then fall back to the
- * original number/number comparison — non-date strings stay untouched). */
+/** TRIAGE C5 / engine-wave E3 (date type-mismatch): an ordered comparison
+ * where at least one operand is an ISO-8601 date string and the counterpart
+ * is a number (epoch-ms) OR another ISO-8601 string. Coerce BOTH to epoch-ms
+ * so `updated_at` (epoch-ms number) compares correctly against
+ * `"2026-10-04T.."` in EITHER operand order, and so two ISO strings compare
+ * chronologically (the "string-side" hole F4b hit — two ISO operands
+ * previously returned `null`, silently excluding every row). Returns `null`
+ * only when a NON-date operand is involved (a plain number/number pair is
+ * compared directly by the caller before this is ever reached; a non-ISO
+ * string stays untouched). */
 function coerceDatePair(a: unknown, b: unknown): [number, number] | null {
   const asEpoch = (v: unknown): number | null => {
+    if (typeof v === 'number') return v;
     if (typeof v !== 'string' || !ISO_8601_RE.test(v)) return null;
     const ms = Date.parse(v);
     return Number.isNaN(ms) ? null : ms;
   };
-  if (typeof a === 'number') {
-    const bMs = asEpoch(b);
-    return bMs === null ? null : [a, bMs];
-  }
-  if (typeof b === 'number') {
-    const aMs = asEpoch(a);
-    return aMs === null ? null : [aMs, b];
-  }
-  return null;
+  // Only engage when at least one side is an ISO-8601 string (otherwise a
+  // plain number/number comparison the caller already handled, or an
+  // incomparable pair → null).
+  const aIso = typeof a === 'string' && ISO_8601_RE.test(a);
+  const bIso = typeof b === 'string' && ISO_8601_RE.test(b);
+  if (!aIso && !bIso) return null;
+  const aMs = asEpoch(a);
+  const bMs = asEpoch(b);
+  return aMs === null || bMs === null ? null : [aMs, bMs];
 }
 
 function matches(row: Row, field: string, op: CompareOp, value: unknown): boolean {

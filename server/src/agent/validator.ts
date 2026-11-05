@@ -296,22 +296,24 @@ function unwrapSchema(schema: unknown): unknown {
   return s;
 }
 
-// --- date-named numeric param coercion (TRIAGE fix #6) ---------------------
+// --- ISO-date → epoch-ms param coercion (TRIAGE fix #6; engine-wave E3) -----
 //
 // Models compute epoch-ms from training-time intuition and get the YEAR wrong
 // ("last week" → Oct 2024 instead of 2026). The planner is instructed to emit
 // ISO-8601 strings for date params; here we coerce such a string to epoch-ms
-// when the target field expects a NUMBER and is date-named, so validation
-// passes and the typed handler still receives the ms number it expects. Both
-// the validator (literal compile below) and the executor (param resolution)
-// call these — the one coercion rule lives in one place.
+// when the TARGET FIELD EXPECTS A NUMBER, so validation passes and the typed
+// handler still receives the ms number it expects. Both the validator
+// (literal compile below) and the executor (param resolution) call these —
+// the one coercion rule lives in one place.
+//
+// E3 (user-flagged): the trigger is purely SCHEMA-SHAPED — a number-typed
+// param receiving a strict ISO-8601 string — NOT a field-NAME regex. The
+// old name allow-list (`_at`/`_date`/`valid_until`-style) let `valid_until`
+// and any never-seen date field slip through uncoerced. A plain number
+// ("5") or arbitrary label never matches `ISO_DATE_RE`, and a non-number
+// schema is left untouched, so this stays safe without enumerating names.
 
-const DATE_PARAM_RE = /(?:_at|_date|_before|_after|_start|_end)$|^(?:from|to|start|end)$/;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
-
-export function isDateParamName(key: string): boolean {
-  return DATE_PARAM_RE.test(key);
-}
 
 function isNumberSchema(schema: unknown): boolean {
   return unwrapSchema(schema) instanceof z.ZodNumber;
@@ -338,7 +340,9 @@ export function coerceDateParams(
   let changed = false;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(params)) {
-    if (isDateParamName(k) && k in shape) {
+    // E3: coerce by SCHEMA shape (number param + ISO string value), for ANY
+    // param name — `coerceDateParamValue` is a no-op unless both hold.
+    if (k in shape) {
       const coerced = coerceDateParamValue(v, shape[k]);
       out[k] = coerced;
       if (coerced !== v) changed = true;
@@ -1148,10 +1152,10 @@ export function validate(
           });
           continue;
         }
-        // Date-named numeric params accept an ISO-8601 string (coerced to
-        // epoch-ms at execution time, TRIAGE fix #6) — validate the coerced
-        // form so the plan isn't rejected for a well-formed date string.
-        const valueToCheck = isDateParamName(key) ? coerceDateParamValue(value, shape[key]) : value;
+        // A number-typed param accepts an ISO-8601 string (coerced to
+        // epoch-ms at execution time, E3) — validate the coerced form so a
+        // well-formed date string on ANY number field isn't rejected.
+        const valueToCheck = coerceDateParamValue(value, shape[key]);
         const fieldResult = shape[key]?.safeParse(valueToCheck);
         if (fieldResult && !fieldResult.success) {
           errors.push({

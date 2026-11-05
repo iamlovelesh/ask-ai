@@ -9,7 +9,6 @@ import {
   BUDGETS,
   coerceDateParams,
   coerceDateParamValue,
-  isDateParamName,
   type HandleRef,
 } from '../src/agent/validator';
 import { buildRegistry } from '../src/catalog/registry';
@@ -1190,20 +1189,21 @@ describe('validator — ISO date coercion for date-named numeric params (TRIAGE 
     expect(coerceDateParamValue(123, z.number())).toBe(123);
   });
 
-  it('coerceDateParams only touches date-named number params', () => {
-    const schema = z.strictObject({ created_after: z.number(), name: z.string() });
-    const out = coerceDateParams({ created_after: '2026-10-28', name: '2026-10-28' }, schema);
+  it('coerceDateParams coerces by SCHEMA shape for ANY param name (E3), never a name list', () => {
+    const schema = z.strictObject({
+      created_after: z.number(),
+      name: z.string(),
+      valid_until: z.number(), // the field 6b's name regex missed
+      snoozed_thru: z.number(), // an arbitrary, never-seen date field name
+    });
+    const out = coerceDateParams(
+      { created_after: '2026-10-28', name: '2026-10-28', valid_until: '2026-12-31', snoozed_thru: '2027-01-15' },
+      schema,
+    );
     expect(out['created_after']).toBe(Date.parse('2026-10-28'));
-    expect(out['name']).toBe('2026-10-28'); // not date-named → untouched
-  });
-
-  it('isDateParamName matches the documented suffixes/names', () => {
-    for (const k of ['created_at', 'due_date', 'starts_before', 'ends_after', 'window_start', 'range_end', 'from', 'to', 'start', 'end']) {
-      expect(isDateParamName(k)).toBe(true);
-    }
-    for (const k of ['id', 'name', 'owner_id', 'status']) {
-      expect(isDateParamName(k)).toBe(false);
-    }
+    expect(out['valid_until']).toBe(Date.parse('2026-12-31')); // coerced despite no name match
+    expect(out['snoozed_thru']).toBe(Date.parse('2027-01-15')); // coerced despite never-seen name
+    expect(out['name']).toBe('2026-10-28'); // string schema → untouched (shape, not name, is the gate)
   });
 });
 

@@ -48,6 +48,21 @@ describe('core.filter — ISO/epoch date coercion (TRIAGE C5)', () => {
     expect(kept.map((r) => r['id'])).toEqual(['a']);
   });
 
+  it('compares TWO ISO-string operands chronologically (E3 string-side hole, F4b)', async () => {
+    // Both the field and the cutoff are ISO strings — previously returned
+    // null → excluded EVERY row (the silent all-pass/all-drop class).
+    const rows = [
+      { id: 'stale1', updated_at: '2026-06-19T00:00:00Z' },
+      { id: 'stale2', updated_at: '2026-07-01T00:00:00Z' },
+      { id: 'fresh1', updated_at: '2026-10-20T00:00:00Z' },
+      { id: 'fresh2', updated_at: '2026-10-25T00:00:00Z' },
+    ];
+    const kept = await filter(rows, 'updated_at', 'lt', '2026-10-05T10:00:00.000Z');
+    expect(kept.map((r) => r['id'])).toEqual(['stale1', 'stale2']);
+    const after = await filter(rows, 'updated_at', 'gt', '2026-10-05T10:00:00.000Z');
+    expect(after.map((r) => r['id'])).toEqual(['fresh1', 'fresh2']);
+  });
+
   it('accepts a date-only ISO value (no time component)', async () => {
     const rows = [{ id: 'a', created_at: epoch('2026-09-01T00:00:00Z') }];
     const kept = await filter(rows, 'created_at', 'lt', '2026-10-04');
