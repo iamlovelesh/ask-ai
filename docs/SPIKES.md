@@ -80,6 +80,81 @@ Either way: this is a schema-shape fix, not a prompt fix — no amount of prompt
 unblocks this, since the 400 happens before the model ever sees a token (provider-side
 schema compilation failure).
 
+## 1a. Fix applied + re-spike (Task 6 follow-up, 2026-11-05)
+
+**Fix (`server/src/agent/plan-schema.ts`):** `stepSchema.params` changed from
+`z.record(z.string(), valueSchema)` (the self-referencing `Value` union) to
+`z.looseObject({})` — a flat `{"type":"object","properties":{},"additionalProperties":{}}`
+JSON Schema with **no `$ref`, no `propertyNames`**. `z.record(z.string(), z.unknown())`
+was tried first and rejected as the fix: Zod still compiles ANY `z.record` (even with a
+plain `z.string()` key schema) to a `propertyNames` keyword — exactly the second,
+independent defect the original spike found on OpenAI's strict mode
+(`'propertyNames' is not permitted`). `z.looseObject({})` avoids both the `$ref` cycle
+and `propertyNames` while still inferring as an open `{[key: string]: unknown}` record.
+`valueSchema`/`Value` are kept in the file (now unreachable from `planOutcomeSchema`) as
+documentation + their own unit test. **No other file needed changes**:
+`agent/validator.ts` already validates every param as `unknown` against the action's own
+`inputSchema` at runtime (never relied on the `Value` zod type), and
+`executor.ts`/`joiner.ts`/`memory.ts` already treat `step.params` values as `unknown`.
+Verified locally (no API spend) by mirroring `@ai-sdk/provider-utils`' exact zod4
+conversion call (`z.toJSONSchema(planOutcomeSchema, {target:'draft-7', io:'input',
+reused:'inline'})`) and walking the result for `$ref` cycles and `propertyNames` —
+confirmed clean. New regression test: `server/test/plan-schema.test.ts` → "schema
+converts to JSON Schema without self-references". Full server suite (299 tests), eval
+suite (93 tests), and `npm run smoke` (549/549) all pass unchanged.
+
+**Re-spike (`npx tsx scripts/spike-schema.ts`, live, 5 calls — 2 attempts each for
+Haiku/GPT-5-mini since attempt 1 failed, 1 attempt for Gemini which succeeded
+immediately):**
+
+| Model | Result after fix |
+|---|---|
+| `google/gemini-2.5-flash-lite` | **GO** — parsed clean on attempt 1 (`kind:"plan"`, 7 steps, 1,710 in / 766 out tokens, $0.0004774, 2,684 ms). |
+| `anthropic/claude-haiku-4.5` | **Still NO-GO** — both attempts failed with a 400, but a **different, previously-masked error** (see below). |
+| `openai/gpt-5-mini` | **Still NO-GO** — same new error family as Haiku. |
+
+**New finding — the recursive-`Value` fix was necessary but not sufficient.** A
+follow-up diagnostic call per model (2 calls, exact-error capture, bringing this
+follow-up's live-call total to 7) recovered the real rejection reason for the two
+still-failing providers:
+
+| Model | Exact provider error (post-fix) |
+|---|---|
+| `anthropic/claude-haiku-4.5` | `output_config.format.schema: Schema type 'oneOf' is not supported` (identical error repeated from the Bedrock/Azure/Google fallback routes OpenRouter tried) |
+| `openai/gpt-5-mini` | `Invalid schema for response_format 'response': In context=(), 'oneOf' is not permitted.` (identical from the Azure fallback route) |
+
+**Root cause:** `planOutcomeSchema` is a `z.discriminatedUnion('kind', [...5 variants])`,
+which Zod compiles to a **top-level `oneOf`** (`{"oneOf":[{...plan...},{...search...},
+...]}` — confirmed in the local JSON Schema dump). Anthropic's and OpenAI's structured
+output /strict modes both reject `oneOf` **as the schema root** ("In context=()" is
+OpenAI's own way of saying "at the top level") — a union is only acceptable nested
+inside an object's property, not as the whole response schema. Gemini does not have
+this restriction, which is why it alone now passes. This defect was **present in the
+original spike run too**, but was masked: the self-referencing `Value` type's `$ref`
+cycle failed validation first (and more loudly) for all three providers, so this
+second, independent `oneOf`-at-root defect never surfaced until now.
+
+### VERDICT (a2): Schema GO/NO-GO after the flatten fix — **GO for Gemini only; NO-GO for Anthropic and OpenAI (new defect)**
+
+The recursive-`Value` defect documented above IS fixed and confirmed gone (no more
+circular-reference/`propertyNames` errors from any of the three providers). A **second,
+independent, pre-existing defect** — `planOutcomeSchema`'s top-level `oneOf` from
+`z.discriminatedUnion` — blocks Anthropic and OpenAI structured outputs and must be
+fixed before Task 9/10 can use this schema with those two providers. The live-call
+budget for this follow-up (7 calls: 5 for the re-spike incl. retries, 2 for exact-error
+diagnostics) was fully spent reaching this finding, so **no fix for the `oneOf`-at-root
+defect was attempted or verified in this pass** — it needs its own follow-up spike with
+fresh budget. Two candidate directions for whoever picks this up (neither validated
+against a live API yet):
+1. Wrap the union in a named property (`{"type":"object","properties":{"outcome":
+   <union>}}`) instead of using it as the schema root — the common workaround for
+   OpenAI/Anthropic strict-mode "union not allowed at root" restrictions — then unwrap
+   `.outcome` in `llm/client.ts`/`agent/pipeline.ts`.
+2. Replace the discriminated union with a single flat object (`kind` plus every
+   variant's fields as optional, validated for mutual exclusivity by a `.refine()` or by
+   `agent/validator.ts` post-parse) — avoids `oneOf` entirely but is a bigger shape
+   change for every consumer of `PlanOutcome`.
+
 ## 2. Cache passthrough spike (`scripts/spike-cache.ts`)
 
 **Setup:** two consecutive calls to `anthropic/claude-haiku-4.5` with an **identical**
@@ -144,6 +219,32 @@ discount on the planner's system prompt** — every cost estimate must use full
 (non-cached) input-token pricing until/unless the system prompt grows past Haiku's
 cache-eligibility floor and a follow-up spike reconfirms caching actually engages.
 
+### 2a. Big-prompt cache probe — implemented but NOT RUN (2026-11-05 follow-up)
+
+`scripts/spike-cache.ts` was extended with a `--big` mode: pads the real planner system
+prompt with the first ~1,500 tokens of `buildCatalogSummary(registry)`
+(`server/src/baseline/catalog-summary.ts`) — a real, deterministic text source, not
+filler — pushing the padded system prompt to **~2,669 tokens** (measured locally via
+the module's own `estimateTokens`, no API call needed), comfortably past both the
+>2,600-token target and Anthropic Haiku's ~2,048-token cache-eligibility floor. In
+`--big` mode the script skips the default (`llmCall`) path entirely — already
+confirmed structurally cache-incapable regardless of prompt size (§2 above: no
+per-message `providerOptions` seam) — and spends its whole budget (2 calls) on the
+explicit-`cacheControl` path from §2, with the padded system as the identical prefix.
+
+**This mode was written and locally verified (token count only) but never executed
+against the live API in this pass.** The live-call budget for this whole follow-up
+task was capped at 7 calls total, and the re-spike + exact-error diagnostics in §1a
+(5 + 2 calls) consumed all 7 before the schema defect was fully characterized. Running
+`--big` would have required 2 more calls, over the cap.
+
+**Verdict: NOT RUN.** `docs/TARGETS.md`'s existing fallback (full non-cached pricing for
+every planner-prompt cost estimate, per VERDICT (b) above) stands as-is, unchanged,
+since no new evidence was collected either way. Recommended follow-up: run
+`npx tsx scripts/spike-cache.ts --big` (2 calls, ~$0.003 at Haiku rates) with a fresh
+budget once the `oneOf`-at-root defect in §1a is also resolved, so a single follow-up
+pass can close out both open questions together.
+
 ## 3. Total spend (this task)
 
 | Call batch | Calls | Measured cost (from `usage.cost`/reported `costUsd`) |
@@ -162,6 +263,20 @@ budget but were added because the official run's generic error message
 the real provider `responseBody` was necessary to satisfy Task 6 deliverable #4 ("record
 NO-GO with the exact error"). They cost nothing measurable (pre-generation 400s) and are
 disclosed here rather than omitted.
+
+### 3a. Total spend (2026-11-05 flatten-fix follow-up)
+
+| Call batch | Calls | Measured cost |
+|---|---|---|
+| Re-spike, `anthropic/claude-haiku-4.5` (attempt 1 + 1 retry, both 400 pre-generation) | 2 | $0 |
+| Re-spike, `google/gemini-2.5-flash-lite` (attempt 1, succeeded) | 1 | $0.0004774 |
+| Re-spike, `openai/gpt-5-mini` (attempt 1 + 1 retry, both 400 pre-generation) | 2 | $0 |
+| Exact-error diagnostic, Haiku (1 call, 400 pre-generation) | 1 | $0 |
+| Exact-error diagnostic, gpt-5-mini (1 call, 400 pre-generation) | 1 | $0 |
+| **Total** | **7** | **≈ $0.0004774** |
+
+Exactly at the 7-live-call cap set for this follow-up task; the `--big` cache probe
+(§2a) was consequently not run. Well under the $0.20 cost cap.
 
 ## 4. Cross-reference: `docs/TARGETS.md`
 
