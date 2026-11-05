@@ -169,6 +169,19 @@ describe('runLoopTurn — read turn', () => {
     const started = events.find((e) => e.t === 'step.started');
     expect(started && started.t === 'step.started' ? started.resolvedParams?.[0] : undefined).toEqual({ query: 'new' });
   });
+
+  it('caps max_tokens on every model request (402 pre-auth guard)', async () => {
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'find leads',
+      sessionDeps: { registry, crm: fakeCrm, refs, eventLog, confirm: approveAll, testFetch: scriptedFetch([textResponse('None.')], seen) },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const body = JSON.parse(seen.bodies[0] ?? '{}') as Record<string, unknown>;
+    expect(body['max_tokens']).toBe(4096);
+  });
 });
 
 describe('runLoopTurn — date rail end to end', () => {

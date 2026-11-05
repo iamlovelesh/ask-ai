@@ -35,6 +35,11 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toContain('session__refuse');
   });
 
+  it('forbids clarifying or refusing in plain text instead of the exit tools', () => {
+    expect(system).toMatch(/never ask .*question.*plain text|question.*ONLY.*session__ask_user/i);
+    expect(system).toMatch(/never decline in plain text|decline.*ONLY.*session__refuse/i);
+  });
+
   it('names the catalog search escape hatch', () => {
     expect(system).toContain('catalog__search_actions');
   });

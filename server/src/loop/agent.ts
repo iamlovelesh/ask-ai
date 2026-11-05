@@ -61,6 +61,10 @@ export interface RunLoopTurnInput {
 
 const MAX_LOOP_STEPS = 12;
 const LOOP_DEADLINE_MS = 90_000;
+/** Providers pre-authorize max_tokens against remaining account credit —
+ * the SDK's unlimited default turned a low OpenRouter balance into 402s on
+ * EVERY call. Answers here are short; 4096 is generous. */
+const MAX_OUTPUT_TOKENS = 4096;
 const DELTA_CHUNK_CHARS = 80;
 /** When the whole deps registry fits in the tool budget, bind it all —
  * retrieval scoping only matters above this (and keeps small test
@@ -192,7 +196,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       model: plannerModel(),
       instructions: buildLoopSystemPrompt(),
       tools,
-      modelSettings: { parallelToolCalls: false },
+      modelSettings: { parallelToolCalls: false, maxTokens: MAX_OUTPUT_TOKENS },
     });
 
     const runner = createLoopRunner(sessionDeps.testFetch !== undefined ? { testFetch: sessionDeps.testFetch } : {});
