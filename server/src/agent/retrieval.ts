@@ -39,6 +39,17 @@ const TOP_K = 20;
 const MAX_PER_MODULE = 4;
 const WEIGHTS = { bm25: 0.7, sessionBoost: 0.2, moduleCohesion: 0.1 } as const;
 
+// Resolver-slot reservation (TRIAGE rec #1, fixes C1=44 + unblocks C2): the
+// planner can only resolve a name→id if the target module's list_*/search_*
+// resolver is in its candidate set. Under pure BM25+diversify an "update X"
+// request fills the top-20 with `update_*` verbs and crowds the resolver out,
+// so the planner fabricates a shape-valid id (`calendar_6`) that passes the
+// validator and dies at runtime (NOT_FOUND). After scoring we therefore
+// RESERVE slots for resolvers.
+const RESOLVER_SLOT_BUDGET = 4;
+const MAX_CARDS = 24;
+const RESOLVER_SLUG_RE = /\.(?:list|search)_/;
+
 // --- index (built once, lazily, over the static catalog) -------------------
 
 interface IndexedDoc {
@@ -121,10 +132,24 @@ function getIndex(): MiniSearch<IndexedDoc> {
   return cachedIndex;
 }
 
+let cachedModules: string[] | undefined;
+
+/** Distinct non-core module names in the catalog (cached — the registry is a
+ * process-wide singleton). */
+function allModules(): string[] {
+  if (!cachedModules) {
+    const set = new Set<string>();
+    for (const a of registry.all()) if (a.module !== 'core') set.add(a.module);
+    cachedModules = [...set];
+  }
+  return cachedModules;
+}
+
 /** Test-only: force a rebuild on the next `retrieve()` call (e.g. after
  * swapping in a different registry instance between test files). */
 export function __resetIndexForTest(): void {
   cachedIndex = undefined;
+  cachedModules = undefined;
 }
 
 // --- scoring helpers (exported for direct unit testing) --------------------
@@ -182,6 +207,128 @@ function renderCard(action: ActionDef): string {
   return `${action.slug} — ${action.name}: ${action.description}${keyParams ? ` [${keyParams}]` : ''}`;
 }
 
+// --- resolver-slot reservation (TRIAGE rec #1) ------------------------------
+
+/** A module's "primary resolver" actions — read-risk `list_*`/`search_*`
+ * actions, identified purely from the registry by slug prefix + risk (per the
+ * triage recommendation). These are the actions the planner uses to turn a
+ * name/label into an entity id. */
+export function isResolverAction(action: ActionDef): boolean {
+  return action.risk === 'read' && RESOLVER_SLUG_RE.test(action.slug);
+}
+
+/** Singular/plural stems of a module name, for matching a name-like entity
+ * reference in the query ("calendar" → module "calendars"). Also derives the
+ * last underscore-segment so a multi-word module ("support_tickets") still
+ * matches a bare "ticket(s)". */
+function moduleStems(module: string): string[] {
+  const stems = new Set<string>();
+  const add = (w: string): void => {
+    if (!w) return;
+    stems.add(w);
+    if (w.endsWith('ies')) stems.add(`${w.slice(0, -3)}y`);
+    else if (w.endsWith('ses')) stems.add(w.slice(0, -2));
+    else if (w.endsWith('s')) stems.add(w.slice(0, -1));
+    else stems.add(`${w}s`);
+  };
+  add(module);
+  if (module.includes('_')) add(module.slice(module.lastIndexOf('_') + 1));
+  return [...stems];
+}
+
+/** Modules whose name-like entity reference appears in the rewritten query. */
+function queryNamedModules(q: string): Set<string> {
+  const tokens = new Set(tokenize(q));
+  const matched = new Set<string>();
+  for (const module of allModules()) {
+    for (const stem of moduleStems(module)) {
+      if (tokens.has(stem)) {
+        matched.add(module);
+        break;
+      }
+    }
+  }
+  return matched;
+}
+
+function resolversForModule(module: string): ActionDef[] {
+  return registry.byModule(module).filter(isResolverAction);
+}
+
+/**
+ * Guarantees resolver coverage in the shortlist (TRIAGE rec #1):
+ *   (b) a module NAMED in the query → its resolvers are ALWAYS included.
+ *   (a) a module already REPRESENTED in the shortlist → its resolvers get up
+ *       to `RESOLVER_SLOT_BUDGET` reserved slots (skipping modules already at
+ *       the ≤`MAX_PER_MODULE` diversify cap, so that invariant still holds).
+ * Added resolvers displace the lowest-scored NON-resolver cards to keep the
+ * total ≤ `MAX_CARDS`; every resolver card is protected from displacement.
+ */
+function reserveResolverSlots(
+  picked: readonly Scored[],
+  q: string,
+  scoreBySlug: ReadonlyMap<string, number>,
+): Scored[] {
+  const present = new Set(picked.map((p) => p.slug));
+  const represented = new Set(picked.map((p) => p.module));
+  const named = queryNamedModules(q);
+  const perModule = new Map<string, number>();
+  for (const p of picked) perModule.set(p.module, (perModule.get(p.module) ?? 0) + 1);
+
+  const toScored = (action: ActionDef): Scored => ({
+    slug: action.slug,
+    module: action.module,
+    text: renderCard(action),
+    score: scoreBySlug.get(action.slug) ?? 0,
+  });
+
+  // (b) query-named modules — always include every missing resolver.
+  const forced: Scored[] = [];
+  for (const module of named) {
+    for (const action of resolversForModule(module)) {
+      if (present.has(action.slug)) continue;
+      forced.push(toScored(action));
+      present.add(action.slug);
+    }
+  }
+
+  // (a) represented (non-named) modules — up to RESOLVER_SLOT_BUDGET total.
+  const reserved: Scored[] = [];
+  for (const module of represented) {
+    if (reserved.length >= RESOLVER_SLOT_BUDGET) break;
+    if (named.has(module)) continue;
+    if ((perModule.get(module) ?? 0) >= MAX_PER_MODULE) continue; // keep ≤4/module
+    for (const action of resolversForModule(module)) {
+      if (reserved.length >= RESOLVER_SLOT_BUDGET) break;
+      if ((perModule.get(module) ?? 0) >= MAX_PER_MODULE) break;
+      if (present.has(action.slug)) continue;
+      reserved.push(toScored(action));
+      present.add(action.slug);
+      perModule.set(module, (perModule.get(module) ?? 0) + 1);
+    }
+  }
+
+  const combined = [...picked, ...forced, ...reserved];
+  if (combined.length <= MAX_CARDS) return combined;
+
+  // Trim to MAX_CARDS by dropping the lowest-scored NON-resolver cards.
+  const isRes = (s: Scored): boolean => {
+    const a = registry.get(s.slug);
+    return a ? isResolverAction(a) : false;
+  };
+  const resolverCards = combined.filter(isRes);
+  const keep = MAX_CARDS - resolverCards.length;
+  if (keep <= 0) return resolverCards; // pathological: resolvers alone exceed the cap
+  const keptSlugs = new Set(
+    combined
+      .filter((s) => !isRes(s))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, keep)
+      .map((s) => s.slug),
+  );
+  return combined.filter((s) => isRes(s) || keptSlugs.has(s.slug));
+}
+
 // --- retrieve ----------------------------------------------------------------
 
 export function retrieve(q: string, session: SessionCtx): RetrievalResult {
@@ -208,8 +355,10 @@ export function retrieve(q: string, session: SessionCtx): RetrievalResult {
 
   scored.sort((a, b) => b.score - a.score);
   const diversified = diversify(scored, MAX_PER_MODULE, TOP_K);
+  const scoreBySlug = new Map(scored.map((s) => [s.slug, s.score]));
+  const withResolvers = reserveResolverSlots(diversified, q, scoreBySlug);
 
-  const cards: Card[] = diversified.map(({ slug, text, score }) => ({ slug, text, score }));
+  const cards: Card[] = withResolvers.map(({ slug, text, score }) => ({ slug, text, score }));
   return { cards, ms: performance.now() - startedAtMs };
 }
 

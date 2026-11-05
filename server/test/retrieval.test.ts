@@ -63,9 +63,9 @@ describe('retrieval — diversify (≤4/module cap)', () => {
 });
 
 describe('retrieve() — against the real 500-action catalog', () => {
-  it('returns at most 20 cards, each with a slug/text/score', () => {
+  it('returns at most 24 cards (20 ranked + ≤4 reserved resolvers), each with a slug/text/score', () => {
     const result = retrieve('create a contact', emptySession());
-    expect(result.cards.length).toBeLessThanOrEqual(20);
+    expect(result.cards.length).toBeLessThanOrEqual(24);
     expect(result.ms).toBeGreaterThanOrEqual(0);
     for (const card of result.cards) {
       expect(typeof card.slug).toBe('string');
@@ -99,6 +99,23 @@ describe('retrieve() — against the real 500-action catalog', () => {
     const result = retrieve('creat a contct', emptySession());
     const slugs = result.cards.map((c) => c.slug);
     expect(slugs).toContain('contacts.create_contact');
+  });
+
+  it('reserves the module resolver when the query names an entity to update (TRIAGE C1)', () => {
+    // "update calendar 6's timezone" matches the calendars.* update verbs; the
+    // calendars.list_calendars resolver must be reserved so the planner can
+    // resolve the name instead of fabricating `calendar_6`.
+    const result = retrieve("update calendar 6's timezone", emptySession());
+    const slugs = result.cards.map((c) => c.slug);
+    expect(slugs).toContain('calendars.list_calendars');
+    expect(result.cards.length).toBeLessThanOrEqual(24);
+  });
+
+  it('keeps the ≤24-card ceiling even with resolver reservation', () => {
+    for (const q of ['update a company', 'overdue invoices for a contact', 'pipeline opportunities']) {
+      const result = retrieve(q, emptySession());
+      expect(result.cards.length).toBeLessThanOrEqual(24);
+    }
   });
 
   it('sessionBoost raises a slug the session already used, for an otherwise-tied query', () => {
