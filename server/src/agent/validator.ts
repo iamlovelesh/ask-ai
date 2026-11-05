@@ -1233,15 +1233,22 @@ export function validate(
             message: `Step '${step.id}': param '${key}' for '${step.action}' is the literal '${value}', which looks like a name, not an entity id (ids are lowercase with a numeric segment, e.g. 'con_123' or 'course_2_lsn_1'). Resolve it via a search action first (e.g. a '*.search_*' action) and reference its result with a $ref, never a typed-in id.`,
           });
         } else if (
-          // id-provenance guard (E4): an id-SHAPED literal (so `looksLikeName`
-          // passed it) that the planner never actually saw — not in working
-          // memory, not in the user's words — is fabricated. A prior step's
-          // output always arrives as a $ref, never a literal, so it never
-          // reaches here.
+          // id-provenance guard (E4 + P4): ANY literal in an `id`/`*_id`
+          // param (on a plain-string schema) that the planner never actually
+          // saw — not in working memory, not in the user's words — is
+          // fabricated. P4 drops the old `looksLikeEntityId` precondition:
+          // that only flagged literals shaped `<known-prefix>_<n>`, so a
+          // WRONG-shape fake ("cam_8"/"campaign_16" invented for "campaign 8",
+          // marketing NEW-1) slipped past BOTH the name guard (it has a
+          // digit, no caps) and this one (unknown prefix) and rode a bogus id
+          // straight through the confirmation gate to a runtime NOT_FOUND.
+          // Non-name literals are the only ones reaching this branch (names
+          // were caught above); any that the planner can't account for must
+          // come from a lookup $ref instead. A prior step's output always
+          // arrives as a $ref, never a literal, so it never reaches here.
           typeof value === 'string' &&
           isIdParamName(key) &&
           isPlainStringSchema(shape[key]) &&
-          looksLikeEntityId(value) &&
           !isProvenanced(value, provenance)
         ) {
           errors.push({

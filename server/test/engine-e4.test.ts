@@ -81,4 +81,25 @@ describe('E4 — id provenance guard', () => {
     const verdict = validate(plan('con_1'), new Set(), [], registry);
     expect(verdict.ok).toBe(true);
   });
+
+  // P4: a wrong-SHAPE fabricated id ("cam_8"/"campaign_16" for "campaign 8")
+  // has an unknown prefix, so `looksLikeEntityId` is false and the old guard
+  // let it through to the confirmation gate → NOT_FOUND (marketing NEW-1).
+  // The guard must flag ANY unprovenanced, non-name literal in an id param.
+  it('flags an unprovenanced wrong-shape id literal (unknown prefix) → ID_NOT_PROVENANCED', () => {
+    const prov: Provenance = { knownIds: new Set(), userText: 'launch campaign 8 for me' };
+    for (const fake of ['cam_8', 'campaign_16']) {
+      const verdict = validate(plan(fake), new Set(), [], registry, prov);
+      expect(verdict.ok).toBe(false);
+      if (!verdict.ok) {
+        expect(verdict.errors.some((e) => e.code === 'ID_NOT_PROVENANCED')).toBe(true);
+      }
+    }
+  });
+
+  it('still allows an unprovenanced-shape id the user typed verbatim (even weird shape)', () => {
+    const prov: Provenance = { knownIds: new Set(), userText: 'use cam_8 as the id' };
+    const verdict = validate(plan('cam_8'), new Set(), [], registry, prov);
+    expect(verdict.ok).toBe(true);
+  });
 });
