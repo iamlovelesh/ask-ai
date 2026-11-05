@@ -13,6 +13,7 @@ import { coreOps } from '../src/catalog/core-ops';
 import type { ActionDef, ActionContext } from '../src/catalog/types';
 import type { PlanOutcome, Plan } from '../src/agent/plan-schema';
 import { CONFORMANCE_PLAN_OUTCOME } from './fixtures/conformance-plan';
+import { listOutputSchema } from '../src/catalog/list-output';
 
 // --- a fake registry whose field TYPES match the LLD §2.2 flagship
 // example's literal params exactly (the real catalog's `leads.search_leads`
@@ -651,6 +652,106 @@ describe('validator — id-fabrication guard (ID_NOT_RESOLVED)', () => {
     };
     const result = validate(outcome, new Set(), noHandles(), idRegistry);
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('validator — ref-path vs output schema (REF_PATH_MISMATCH)', () => {
+  function outAction(slug: string, outputSchema: z.ZodType<unknown>): ActionDef {
+    return {
+      id: slug,
+      slug,
+      module: slug.split('.')[0] as string,
+      name: slug,
+      description: slug,
+      risk: 'read',
+      entities: [],
+      inputSchema: z.strictObject({ id: z.string().optional(), course_id: z.string().optional() }),
+      outputSchema,
+      searchCard: { synonyms: [], examplePhrasings: [] },
+      handler: async () => ({}),
+    };
+  }
+  const itemView = z.object({ id: z.string(), name: z.string() });
+  const refPathRegistry = buildRegistry(
+    [
+      [
+        outAction('courses.search_courses', listOutputSchema(itemView)), // list output
+        outAction('courses.get_course_details', itemView), // single-record output
+        outAction('enrollments.enroll', z.unknown()), // consumer; opaque output
+      ],
+    ],
+    coreOps,
+  );
+
+  function planWith(ref: string, producer = 'courses.search_courses', forEach?: string): PlanOutcome {
+    const consumer: Record<string, unknown> = { id: 's2', action: 'enrollments.enroll', params: { course_id: ref }, dependsOn: ['s1'] };
+    if (forEach !== undefined) {
+      consumer['params'] = {};
+      consumer['forEach'] = forEach;
+    }
+    return {
+      kind: 'plan',
+      plan: {
+        goal: 'g',
+        steps: [
+          { id: 's1', action: producer, params: {}, dependsOn: [] },
+          consumer as unknown as Plan['steps'][number],
+        ],
+      },
+    };
+  }
+
+  it('$s1.id on a LIST-output action is REF_PATH_MISMATCH (should be items[*].id)', () => {
+    const result = validate(planWith('$s1.id'), new Set(), noHandles(), refPathRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'REF_PATH_MISMATCH')).toBe(true);
+      const msg = result.errors.find((e) => e.code === 'REF_PATH_MISMATCH')?.message ?? '';
+      expect(msg).toContain('items[*].id');
+    }
+  });
+
+  it('$s1.items[*].id on a list output is VALID', () => {
+    const result = validate(planWith('$s1.items[*].id'), new Set(), noHandles(), refPathRegistry);
+    expect(result.ok).toBe(true);
+  });
+
+  it('$s1.total on a list output is VALID', () => {
+    const result = validate(planWith('$s1.total'), new Set(), noHandles(), refPathRegistry);
+    expect(result.ok).toBe(true);
+  });
+
+  it('$s1.items[*].bogus (field absent from the row schema) is REF_PATH_MISMATCH', () => {
+    const result = validate(planWith('$s1.items[*].bogus'), new Set(), noHandles(), refPathRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'REF_PATH_MISMATCH')).toBe(true);
+    }
+  });
+
+  it('$s1.id on a SINGLE-record output (the row has id) is VALID', () => {
+    const result = validate(planWith('$s1.id', 'courses.get_course_details'), new Set(), noHandles(), refPathRegistry);
+    expect(result.ok).toBe(true);
+  });
+
+  it('an opaque (z.unknown) producer output is SKIPPED, never a false positive', () => {
+    const result = validate(planWith('$s1.anything', 'enrollments.enroll'), new Set(), noHandles(), refPathRegistry);
+    expect(result.ok).toBe(true);
+  });
+
+  it('forEach over bare $s1 (list output) does NOT trigger REF_PATH_MISMATCH', () => {
+    const result = validate(planWith('unused', 'courses.search_courses', '$s1'), new Set(), noHandles(), refPathRegistry);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'REF_PATH_MISMATCH')).toBe(false);
+    }
+  });
+
+  it('forEach over $s1.items[*].bogus is REF_PATH_MISMATCH', () => {
+    const result = validate(planWith('unused', 'courses.search_courses', '$s1.items[*].bogus'), new Set(), noHandles(), refPathRegistry);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.code === 'REF_PATH_MISMATCH')).toBe(true);
+    }
   });
 });
 

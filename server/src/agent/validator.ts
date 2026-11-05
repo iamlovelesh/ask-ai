@@ -27,6 +27,7 @@ export type ValidationErrorCode =
   | 'UNKNOWN_PARAM'
   | 'PARAM_SCHEMA'
   | 'ID_NOT_RESOLVED'
+  | 'REF_PATH_MISMATCH'
   | 'REF_GRAMMAR'
   | 'ITEM_OUTSIDE_FOREACH'
   | 'FOREACH_NOT_REF'
@@ -203,6 +204,155 @@ function isPlainStringSchema(schema: unknown): boolean {
   return false;
 }
 
+// --- ref-path vs output-schema validation (REF_PATH_MISMATCH) --------------
+//
+// For an intra-plan ref `$sN.<path>`, the producing step's action has a
+// declared zod `outputSchema`. We STRUCTURALLY walk `<path>` over that
+// schema, mirroring the EXECUTOR's `traverse`/`resolveWholeRef` semantics
+// EXACTLY (`agent/executor.ts`): `$s1.id` on a list-shaped output ({items,
+// total}) is invalid (`.id` is a per-row field, reached via `items[*].id`);
+// `$s1.items[*].bad_field` where the item schema has no `bad_field` is
+// invalid; everything non-introspectable (opaque records, `z.unknown()`,
+// cross-turn/`$item` refs) is SKIPPED — never a false positive. A
+// validator/executor semantic mismatch would be worse than no check, so the
+// walker errs toward `skip` at every ambiguity.
+
+interface PathTok {
+  field: string;
+  spread: boolean;
+}
+
+/** Same tokenizer the executor uses (`agent/executor.ts#parsePathTokens`) —
+ * `.field` segments, each optionally suffixed `[*]` (array pluck). */
+function pathTokens(path: string): PathTok[] {
+  const toks: PathTok[] = [];
+  const re = /\.([A-Za-z_][A-Za-z0-9_]*)(\[\*\])?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(path)) !== null) {
+    toks.push({ field: m[1] as string, spread: m[2] !== undefined });
+  }
+  return toks;
+}
+
+/** Strip optional/nullable/default wrappers to the inner schema (bounded). */
+function unwrapSchema(schema: unknown): unknown {
+  let s = schema;
+  for (let i = 0; i < 6 && s != null; i += 1) {
+    if (
+      (s instanceof z.ZodOptional || s instanceof z.ZodNullable || s instanceof z.ZodDefault) &&
+      typeof (s as { unwrap?: () => unknown }).unwrap === 'function'
+    ) {
+      s = (s as { unwrap: () => unknown }).unwrap();
+      continue;
+    }
+    break;
+  }
+  return s;
+}
+
+type ObjClass =
+  | { kind: 'object'; keys: Set<string>; field: (k: string) => unknown | undefined }
+  | { kind: 'array' }
+  | { kind: 'opaque' };
+
+/** Detect the list-OR-spill union (`list-output.ts#listOutputSchema`) and
+ * present it as a single object facade whose keys are the ones the executor
+ * guarantees downstream (`items`/`total`, plus `sample` for spilled reads —
+ * the executor's `spillToRef` also re-exposes `items`). Returns the inline
+ * branch's item-array schema for `items`/`sample` so `items[*].field` can be
+ * checked against the real row schema. */
+function listUnionFacade(schema: unknown): ObjClass | undefined {
+  if (!(schema instanceof z.ZodUnion)) return undefined;
+  const u = schema as unknown as { def?: { options?: readonly unknown[] }; options?: readonly unknown[] };
+  const options = u.def?.options ?? u.options;
+  if (!Array.isArray(options)) return undefined;
+  let itemsArray: unknown;
+  for (const opt of options) {
+    const o = unwrapSchema(opt);
+    if (o instanceof z.ZodObject) {
+      const shape = (o as { shape: Record<string, unknown> }).shape;
+      if (shape['items'] instanceof z.ZodArray) itemsArray = shape['items'];
+    }
+  }
+  if (itemsArray === undefined) return undefined; // not a list-shaped union
+  const keys = new Set(['items', 'total', 'sample']);
+  return {
+    kind: 'object',
+    keys,
+    field: (k) => (k === 'items' || k === 'sample' ? itemsArray : k === 'total' ? z.number() : undefined),
+  };
+}
+
+/** Classify a schema as object-like / array / opaque for one path hop. */
+function classify(schema: unknown): ObjClass {
+  const s = unwrapSchema(schema);
+  if (s instanceof z.ZodArray) return { kind: 'array' };
+  if (s instanceof z.ZodObject) {
+    const shape = (s as { shape: Record<string, unknown> }).shape;
+    return { kind: 'object', keys: new Set(Object.keys(shape)), field: (k) => shape[k] };
+  }
+  const facade = listUnionFacade(s);
+  if (facade) return facade;
+  return { kind: 'opaque' }; // ZodRecord, unknown, scalars, other unions, …
+}
+
+/** Array-element schema, or null when `schema` is not an introspectable
+ * array (caller then SKIPs — never flags). */
+function arrayElement(schema: unknown): unknown | null {
+  const s = unwrapSchema(schema);
+  if (s instanceof z.ZodArray) {
+    return (s as { element?: unknown }).element ?? (s as { def?: { element?: unknown } }).def?.element ?? null;
+  }
+  const facade = listUnionFacade(s);
+  if (facade && facade.kind === 'object') {
+    const items = facade.field('items');
+    return items !== undefined ? arrayElement(items) : null;
+  }
+  return null;
+}
+
+type WalkResult =
+  | { kind: 'ok' }
+  | { kind: 'skip' }
+  | { kind: 'mismatch'; field: string; availableKeys: string[]; note?: string };
+
+/** Walk `tokens` over `schema`, mirroring the executor's `traverse`:
+ * `spread` tracks whether we are mapping over an array's elements (set once a
+ * token carries `[*]`). Any non-introspectable hop returns `skip`. */
+function walkPath(schema: unknown, tokens: readonly PathTok[], idx: number, spread: boolean): WalkResult {
+  if (idx >= tokens.length) return { kind: 'ok' };
+  const tok = tokens[idx] as PathTok;
+
+  // The value we read `tok.field` off of (executor: `field(cur, f)` when not
+  // spread; `cur.map(e => field(e, f))` when spread — in both cases `schema`
+  // here is the schema of the thing a field is read off: the container when
+  // !spread, the element when spread).
+  const container = classify(schema);
+  if (container.kind === 'opaque') return { kind: 'skip' };
+  if (container.kind === 'array') {
+    // Reading a plain field off an array value → `undefined` at run time.
+    // Only confident enough to flag when NOT already spreading (a prior
+    // `[*]` was expected); otherwise skip.
+    if (!spread) {
+      return { kind: 'mismatch', field: tok.field, availableKeys: [], note: 'array' };
+    }
+    return { kind: 'skip' };
+  }
+  // object-like
+  if (!container.keys.has(tok.field)) {
+    return { kind: 'mismatch', field: tok.field, availableKeys: [...container.keys] };
+  }
+  const child = container.field(tok.field);
+  if (child === undefined) return { kind: 'skip' };
+
+  if (tok.spread) {
+    const elem = arrayElement(child);
+    if (elem === null) return { kind: 'skip' }; // `[*]` on a non-introspectable/non-array → skip
+    return walkPath(elem, tokens, idx + 1, true);
+  }
+  return walkPath(child, tokens, idx + 1, spread);
+}
+
 // --- topological sort / cycle detection -------------------------------------
 
 function topoSort(steps: readonly Step[]): { ok: true; order: string[] } | { ok: false; cycleStepIds: string[] } {
@@ -348,6 +498,35 @@ export function validate(
   const stepIds = new Set(plan.steps.map((s) => s.id));
   const handleIds = new Set(handles.map((h) => h.ref));
   const dependsOnById = new Map<string, readonly string[]>(plan.steps.map((s) => [s.id, s.dependsOn]));
+  const slugByStepId = new Map<string, string>(plan.steps.map((s) => [s.id, s.action]));
+
+  /** Structural `$sN.<path>` vs producing-action-outputSchema check
+   * (REF_PATH_MISMATCH). Only intra-plan step refs with a non-empty path;
+   * everything else (bare `$sN`, cross-turn, `$item`, unknown producer,
+   * non-introspectable output) is a silent no-op — see `walkPath`. */
+  function checkRefPath(ref: string, step: Step, context: string): void {
+    const parsed = parseRefGrammar(ref);
+    if (!parsed || parsed.form !== 'step' || parsed.path === '') return;
+    const producerSlug = slugByStepId.get(parsed.stepId);
+    if (producerSlug === undefined) return; // dangling step ref — reported elsewhere
+    const producer = registry.get(producerSlug);
+    if (!producer) return; // unknown slug — reported elsewhere
+    const res = walkPath(producer.outputSchema, pathTokens(parsed.path), 0, false);
+    if (res.kind !== 'mismatch') return;
+    const avail =
+      res.availableKeys.length > 0
+        ? ` Valid top-level fields on step '${parsed.stepId}'s result: ${res.availableKeys.join(', ')}.`
+        : '';
+    const pluckHint =
+      res.note === 'array' || res.availableKeys.includes('items')
+        ? ` '${parsed.stepId}' returns a list — reference a per-row field with '$${parsed.stepId}.items[*].${res.field}', not '${ref}'.`
+        : '';
+    errors.push({
+      code: 'REF_PATH_MISMATCH',
+      stepId: step.id,
+      message: `${context}: '${ref}' does not match the output of action '${producerSlug}' — '${res.field}' is not reachable on that result.${avail}${pluckHint}`,
+    });
+  }
 
   /** Grammar + handle + dependency-closure checks for a single ref string,
    * shared by params and `when.ref`. `reachable` = every step id this
@@ -458,9 +637,11 @@ export function validate(
       }
     }
 
-    // 3. ref grammar + dependency-closure over params.
+    // 3. ref grammar + dependency-closure over params, plus structural
+    //    ref-path vs producing-action-outputSchema (REF_PATH_MISMATCH).
     for (const ref of collectRefStrings(step.params)) {
       checkRef(ref, step, `Step '${step.id}' params`, reachable);
+      checkRefPath(ref, step, `Step '${step.id}' params`);
     }
     // `when`: grammar/handle/dependency enforcement is scoped to
     // `when.ref` ONLY. `when.value` is an opaque literal comparison value
@@ -477,6 +658,7 @@ export function validate(
     //    subject to the same handle/dependency-closure rules as any other
     //    step ref.
     if (step.forEach !== undefined) {
+      checkRefPath(step.forEach, step, `Step '${step.id}' forEach`);
       const parsedForEach = parseRefGrammar(step.forEach);
       if (!parsedForEach || parsedForEach.form === 'item') {
         errors.push({
