@@ -8,6 +8,9 @@
 
 export function formatMs(ms: number): string | null {
   if (!Number.isFinite(ms) || ms <= 0) return null;
+  // A real but sub-millisecond duration rounds to 0 — show "<1ms" rather
+  // than a misleading "0ms" (which reads as "unmeasured/instant").
+  if (ms < 1) return '<1ms';
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
 }
 

@@ -60,6 +60,41 @@ export interface SpanBar {
 const MIN_WIDTH_PCT = 1.5;
 
 /**
+ * Detects a turn recorded BEFORE span-timing instrumentation was wired up
+ * (commit `dd85ddf`). Those turns wrote every span at the same wall-clock
+ * instant — step/llm/joiner/compose `ms` are all `0` and `startedAt ===
+ * endedAt` — so the whole turn spans well under a millisecond (only the
+ * `retrieval.done` event ever carried a real `ms`, a fraction of 1ms). A
+ * real, instrumented turn always spans at least several ms (LLM calls are
+ * network round-trips), so a sub-1ms total range is an unambiguous "no real
+ * timing was recorded" signal. In that case a proportional waterfall is
+ * meaningless (every bar collapses onto the left edge), and `layoutSpans`
+ * falls back to equal-width sequential bars in recorded order instead.
+ *
+ * Requires ≥2 spans: a single span is always drawn full-width regardless, so
+ * there is nothing to "collapse" and no note worth showing.
+ */
+export function isLegacyTrace(spans: readonly Span[]): boolean {
+  if (spans.length < 2) return false;
+  const rangeStart = Math.min(...spans.map((s) => s.startedAt));
+  const rangeEnd = Math.max(...spans.map((s) => s.endedAt ?? s.startedAt));
+  return rangeEnd - rangeStart < 1;
+}
+
+/** Equal-width sequential bars in recorded order — the honest rendering for
+ * a legacy (pre-instrumentation) trace whose real offsets/durations were
+ * never recorded. Order is the only real signal left, so each span gets an
+ * identical slice and `ms` labels are shown only where genuinely present. */
+function layoutLegacy(spans: readonly Span[]): SpanBar[] {
+  const width = 100 / spans.length;
+  return spans.map((span, i) => {
+    const status: SpanStatus =
+      span.meta?.['error'] !== undefined ? 'failed' : span.endedAt === undefined ? 'running' : 'done';
+    return { span, label: span.name ?? span.kind, status, leftPct: i * width, widthPct: width };
+  });
+}
+
+/**
  * Normalizes a turn's spans (already ordered by insertion, per
  * `Spans.forTurn`) into percentage-offset bars for a pure-CSS waterfall.
  * Spans with no `endedAt` (the call crashed before `Spans.end` ran, or is
@@ -68,6 +103,7 @@ const MIN_WIDTH_PCT = 1.5;
  */
 export function layoutSpans(spans: readonly Span[]): SpanBar[] {
   if (spans.length === 0) return [];
+  if (isLegacyTrace(spans)) return layoutLegacy(spans);
 
   const starts = spans.map((s) => s.startedAt);
   const ends = spans.map((s) => s.endedAt ?? s.startedAt);

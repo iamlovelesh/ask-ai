@@ -11,13 +11,17 @@
  */
 import { computed, onMounted, watch } from 'vue';
 import { useSessionStore } from '../stores/session.js';
-import { layoutSpans } from '../lib/trace.js';
+import { isLegacyTrace, layoutSpans } from '../lib/trace.js';
 
 const props = defineProps<{ turnId: string }>();
 const store = useSessionStore();
 
 const traceState = computed(() => store.traces[props.turnId] ?? null);
-const bars = computed(() => layoutSpans(traceState.value?.spans ?? []));
+const spans = computed(() => traceState.value?.spans ?? []);
+const bars = computed(() => layoutSpans(spans.value));
+/** A turn recorded before span-timing instrumentation — its bars are drawn
+ * equal-width in recorded order (no real offsets exist) with a quiet note. */
+const legacy = computed(() => isLegacyTrace(spans.value));
 
 onMounted(() => void store.loadTrace(props.turnId));
 watch(
@@ -26,7 +30,10 @@ watch(
 );
 
 function formatMs(ms: number | undefined): string {
-  if (ms === undefined || !Number.isFinite(ms)) return '—';
+  // No "0ms" / "—" clutter: an unknown or non-positive duration renders as
+  // nothing, and a real sub-millisecond duration as "<1ms" (not "0ms").
+  if (ms === undefined || !Number.isFinite(ms) || ms <= 0) return '';
+  if (ms < 1) return '<1ms';
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
 }
 
@@ -53,6 +60,9 @@ function formatTokens(tokensIn: number | undefined, tokensOut: number | undefine
         Spans cover the full pipeline (llm, retrieval, step, joiner, compose). No parent links are
         persisted, so this list is flat rather than nested.
       </div>
+      <div v-if="legacy" class="trace-note trace-note-legacy">
+        Recorded before timing instrumentation — durations approximate.
+      </div>
       <div v-for="bar in bars" :key="bar.span.id" class="trace-row">
         <div class="trace-row-label">
           <span :class="['trace-dot', `kind-${bar.span.kind}`]"></span>
@@ -71,7 +81,7 @@ function formatTokens(tokensIn: number | undefined, tokensOut: number | undefine
           <div
             :class="['trace-bar', `kind-${bar.span.kind}`, { 'trace-bar-failed': bar.status === 'failed' }]"
             :style="{ left: bar.leftPct + '%', width: bar.widthPct + '%' }"
-            :title="`${bar.label} — ${formatMs(bar.span.ms)}`"
+            :title="formatMs(bar.span.ms) ? `${bar.label} — ${formatMs(bar.span.ms)}` : bar.label"
           ></div>
         </div>
       </div>

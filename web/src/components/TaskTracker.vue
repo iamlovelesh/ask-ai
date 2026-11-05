@@ -29,6 +29,7 @@ function toggleStep(stepId: string): void {
  * never render a "0ms" placeholder for an unmeasured/zero value. */
 function formatMs(ms: number | undefined): string {
   if (ms === undefined || !Number.isFinite(ms) || ms <= 0) return '';
+  if (ms < 1) return '<1ms'; // real sub-ms duration — never a misleading "0ms"
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
 }
 

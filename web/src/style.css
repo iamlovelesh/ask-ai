@@ -968,6 +968,13 @@ button {
   line-height: 1.5;
 }
 
+.trace-note-legacy {
+  margin-top: -6px;
+  padding-left: 8px;
+  border-left: 2px solid var(--line, var(--slate-soft));
+  font-style: italic;
+}
+
 .trace-status {
   font-size: 12px;
   color: var(--slate);
