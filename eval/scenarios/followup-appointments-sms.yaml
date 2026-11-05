@@ -1,0 +1,40 @@
+# Task 17 Batch C — category: followup, modules: appointments (+sms,
+# lint gap: sms touched by only 1 scenario before this).
+#
+# Turn 1 establishes a result set (appointments.search_appointments).
+# Turn 2 resolves "their contacts" against that SAME filtered subset and
+# fires a bulk/external action (sms.send_sms) — risk:'external' always
+# gates, so turn 2 asserts confirmation:true.
+#
+# Derivation (template copy, VIRTUAL_NOW = 2026-11-04T10:00:00Z,
+# "tomorrow" = 2026-11-05T00:00:00Z..2026-11-06T00:00:00Z):
+#   SELECT COUNT(*) FROM appointments WHERE start_at>=1793872800000 AND
+#     start_at<1793959200000; -> 9 (turn-1 result set size)
+#   SELECT COUNT(*) FROM messages WHERE channel='sms'; -> 7479 (before
+#     turn 2) -> floor of 7480 asserted after (>= 1 new text sent into
+#     that filtered subset).
+
+id: followup-appointments-sms
+category: followup
+profile: standard
+turns:
+  - user: "Show me tomorrow's appointments."
+    expect:
+      planActions:
+        mustInclude: [appointments.search_appointments]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM appointments WHERE start_at>=1793872800000 AND start_at<1793959200000"
+          equals: 9
+      behavior:
+        confirmation: false
+  - user: "Text their contacts a reminder about it."
+    expect:
+      planActions:
+        mustInclude: [sms.send_sms]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM messages WHERE channel='sms'"
+          gte: 7480
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]

@@ -1,0 +1,40 @@
+# Task 17 Batch C — category: followup, modules: appointments (+notes,
+# lint gap: notes touched by only 1 scenario before this).
+#
+# Turn 1 establishes a result set (appointments.search_appointments).
+# Turn 2 resolves "the first one" — positional anaphora into that SAME
+# result set (brief's "actually cancel the first one" pattern) — and
+# attaches a note to the contact behind that specific appointment.
+#
+# Derivation (template copy, VIRTUAL_NOW = 2026-11-04T10:00:00Z, "today"
+# = 2026-11-04T00:00:00Z..2026-11-05T00:00:00Z):
+#   SELECT COUNT(*) FROM appointments WHERE start_at>=1793750400000 AND
+#     start_at<1793836800000; -> 6 (turn-1 result set size)
+#   SELECT COUNT(*) FROM notes; -> 1100 (before turn 2) -> floor of 1101
+#     asserted after (>= 1 new note, on whichever contact the planner
+#     resolves "the first one" to).
+
+id: followup-appointments-note
+category: followup
+profile: standard
+turns:
+  - user: "Show me today's appointments."
+    expect:
+      planActions:
+        mustInclude: [appointments.search_appointments]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM appointments WHERE start_at>=1793750400000 AND start_at<1793836800000"
+          equals: 6
+      behavior:
+        confirmation: false
+  - user: "Add a note on the contact from the first one saying thanks for stopping by."
+    expect:
+      planActions:
+        mustInclude: [notes.create_note]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM notes"
+          gte: 1101
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

@@ -1,0 +1,43 @@
+# Task 17 Batch C — category: followup, modules: contacts (+email, lint
+# gap: email touched by only 1 scenario before this).
+#
+# Turn 1 establishes a result set (contacts.search_contacts). Turn 2
+# resolves the anaphora ("all of them") against that SAME filtered
+# subset rather than re-stating it, and fires a bulk/external action
+# (email.send_email) against it — per the unified confirmation gate
+# (risk:'external' always gates), so turn 2 asserts confirmation:true.
+#
+# Derivation (template copy, VIRTUAL_NOW = 2026-11-04T10:00:00Z):
+#   SELECT COUNT(*) FROM contacts WHERE city='Manchester' AND
+#     lifecycle_stage='customer'; -> 97 (turn-1 result set size, unchanged
+#     by turn 1 itself — a read)
+#   SELECT COUNT(*) FROM messages WHERE channel='email'; -> 7560 (before
+#     turn 2) -> the state check below asserts a post-turn-2 floor of
+#     7561 (>= 1 new email sent into that filtered subset), matching the
+#     LLD's `gte`-over-absolute-count guidance for a plan-dependent bulk
+#     send.
+
+id: followup-contacts-email
+category: followup
+profile: standard
+turns:
+  - user: "Find customers in Manchester."
+    expect:
+      planActions:
+        mustInclude: [contacts.search_contacts]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM contacts WHERE city='Manchester' AND lifecycle_stage='customer'"
+          equals: 97
+      behavior:
+        confirmation: false
+  - user: "Email all of them about the upcoming product webinar."
+    expect:
+      planActions:
+        mustInclude: [email.send_email]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM messages WHERE channel='email'"
+          gte: 7561
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]

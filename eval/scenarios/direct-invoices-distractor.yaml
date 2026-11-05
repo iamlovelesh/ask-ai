@@ -1,0 +1,28 @@
+# Task 17 Batch C — category: direct, subtype: distractor, module:
+# invoices (+payments anti-match).
+#
+# "Cancel the invoice" is deliberately phrased near the WRONG action:
+# `payments.cancel_unpaid_payment_request` cancels a PAYMENT REQUEST (a
+# different entity/table — m29-payments.ts), which is the trap a
+# surface-level reading of "cancel" might reach for when a payments
+# module is also in context. The actual intent here is
+# `invoices.void_unpaid_invoice`, which operates on the invoice itself.
+#
+# Derivation (template copy):
+#   SELECT id,status,amount_paid_cents FROM invoices WHERE id='inv_10';
+#   -> status='issued', amount_paid_cents=0 (unpaid, so void is valid)
+
+id: direct-invoices-distractor
+category: direct
+subtype: distractor
+profile: standard
+turns:
+  - user: "Cancel invoice inv_10 — the deal fell through, they're not going to pay it."
+    expect:
+      planActions:
+        mustInclude: [invoices.void_unpaid_invoice]
+        mustNotInclude: [payments.cancel_unpaid_payment_request]
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]
