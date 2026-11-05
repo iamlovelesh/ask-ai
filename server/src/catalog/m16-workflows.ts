@@ -215,7 +215,9 @@ const listWorkflows: ActionDef<ListWorkflowsInput, ListWorkflowsOutput> = {
       `SELECT * FROM structures WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`,
       [...params, limit],
     );
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'structures', whereSql, params },
+    });
   },
 };
 

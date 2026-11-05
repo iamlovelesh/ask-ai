@@ -245,7 +245,9 @@ const searchCoupons: ActionDef<SearchCouponsInput, SearchCouponsOutput> = {
       `SELECT * FROM structures WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`,
       [...params, limit],
     );
-    return toListOrSpill(rows.map((r) => toView(ctx.db, r)), total);
+    return toListOrSpill(rows.map((r) => toView(ctx.db, r)), total, {
+      idCapture: { db: ctx.db, table: 'structures', whereSql, params },
+    });
   },
 };
 

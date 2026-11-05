@@ -255,7 +255,9 @@ const listMembershipPlans: ActionDef<ListMembershipPlansInput, ListMembershipPla
     const countRow = ctx.db.get(`SELECT COUNT(*) AS n FROM structures WHERE ${whereSql}`, params);
     const total = (countRow?.['n'] as number) ?? 0;
     const rows = ctx.db.all(`SELECT * FROM structures WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`, [...params, limit]);
-    return toListOrSpill(rows.map((r) => toPlanView(ctx.db, r)), total);
+    return toListOrSpill(rows.map((r) => toPlanView(ctx.db, r)), total, {
+      idCapture: { db: ctx.db, table: 'structures', whereSql, params },
+    });
   },
 };
 

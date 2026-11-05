@@ -233,7 +233,9 @@ const searchSubscriptions: ActionDef<SearchSubscriptionsInput, SearchSubscriptio
       `SELECT * FROM subscriptions WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`,
       [...params, limit],
     );
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'subscriptions', whereSql, params },
+    });
   },
 };
 

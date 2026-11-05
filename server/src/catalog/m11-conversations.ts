@@ -181,7 +181,9 @@ const searchConversations: ActionDef<SearchConversationsInput, SearchConversatio
       `${JOIN_SELECT} WHERE ${whereSql} ORDER BY c.created_at DESC LIMIT ?`,
       [...params, limit],
     );
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'conversations c', whereSql, params },
+    });
   },
 };
 
@@ -484,7 +486,9 @@ const listUnansweredConversations: ActionDef<
       `${JOIN_SELECT} WHERE ${whereSql} ORDER BY c.last_inbound_at DESC LIMIT ?`,
       [limit],
     );
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'conversations c', whereSql, params: [] },
+    });
   },
 };
 

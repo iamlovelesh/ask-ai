@@ -233,7 +233,9 @@ const searchEnrollments: ActionDef<SearchEnrollmentsInput, SearchEnrollmentsOutp
     const countRow = ctx.db.get(`SELECT COUNT(*) AS n FROM participations WHERE ${whereSql}`, params);
     const total = (countRow?.['n'] as number) ?? 0;
     const rows = ctx.db.all(`SELECT * FROM participations WHERE ${whereSql} ORDER BY joined_at DESC LIMIT ?`, [...params, limit]);
-    return toListOrSpill(rows.map((r) => toView(ctx.db, r)), total);
+    return toListOrSpill(rows.map((r) => toView(ctx.db, r)), total, {
+      idCapture: { db: ctx.db, table: 'participations', whereSql, params },
+    });
   },
 };
 

@@ -248,7 +248,9 @@ const searchAppointments: ActionDef<SearchAppointmentsInput, SearchAppointmentsO
       `SELECT * FROM appointments WHERE ${whereSql} ORDER BY start_at DESC LIMIT ?`,
       [...params, limit],
     );
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'appointments', whereSql, params },
+    });
   },
 };
 

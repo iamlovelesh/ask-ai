@@ -215,7 +215,9 @@ const listSmartLists: ActionDef<ListSmartListsInput, ListSmartListsOutput> = {
       `SELECT * FROM structures WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`,
       [...params, limit],
     );
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'structures', whereSql, params },
+    });
   },
 };
 
@@ -323,6 +325,7 @@ const previewMatchingRecords: ActionDef<
     return toListOrSpill(
       rows.map((r) => ({ id: r['id'] as string, name: r['name'] as string })),
       total,
+      { idCapture: { db: ctx.db, table: 'contacts', whereSql, params } },
     );
   },
 };

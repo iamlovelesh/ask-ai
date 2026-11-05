@@ -285,7 +285,9 @@ const listSavedReports: ActionDef<ListSavedReportsInput, ListSavedReportsOutput>
     const countRow = ctx.db.get(`SELECT COUNT(*) AS n FROM structures WHERE archived = 0 AND kind = ?`, [KIND]);
     const total = (countRow?.['n'] as number) ?? 0;
     const rows = ctx.db.all(`SELECT * FROM structures WHERE archived = 0 AND kind = ? ORDER BY created_at DESC LIMIT ?`, [KIND, limit]);
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'structures', whereSql: 'archived = 0 AND kind = ?', params: [KIND] },
+    });
   },
 };
 

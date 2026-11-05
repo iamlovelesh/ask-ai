@@ -294,7 +294,9 @@ const listReviewRequests: ActionDef<ListReviewRequestsInput, ListReviewRequestsO
     const countRow = ctx.db.get(`SELECT COUNT(*) AS n FROM reviews WHERE ${whereSql}`, params);
     const total = (countRow?.['n'] as number) ?? 0;
     const rows = ctx.db.all(`SELECT * FROM reviews WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`, [...params, limit]);
-    return toListOrSpill(rows.map(toRequestView), total);
+    return toListOrSpill(rows.map(toRequestView), total, {
+      idCapture: { db: ctx.db, table: 'reviews', whereSql, params },
+    });
   },
 };
 
@@ -384,7 +386,9 @@ const searchReviews: ActionDef<SearchReviewsInput, SearchReviewsOutput> = {
     const countRow = ctx.db.get(`SELECT COUNT(*) AS n FROM reviews WHERE ${whereSql}`, params);
     const total = (countRow?.['n'] as number) ?? 0;
     const rows = ctx.db.all(`SELECT * FROM reviews WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`, [...params, limit]);
-    return toListOrSpill(rows.map(toReviewView), total);
+    return toListOrSpill(rows.map(toReviewView), total, {
+      idCapture: { db: ctx.db, table: 'reviews', whereSql, params },
+    });
   },
 };
 

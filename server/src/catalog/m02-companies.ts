@@ -227,7 +227,9 @@ const searchCompanies: ActionDef<SearchCompaniesInput, SearchCompaniesOutput> = 
       `SELECT * FROM companies WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`,
       [...params, limit],
     );
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'companies', whereSql, params },
+    });
   },
 };
 
@@ -522,6 +524,7 @@ const listCompanyContacts: ActionDef<
     return toListOrSpill(
       rows.map((r) => ({ id: r['id'] as string, name: r['name'] as string })),
       total,
+      { idCapture: { db: ctx.db, table: 'contacts', whereSql: 'company_id = ? AND archived = 0', params: [input.id] } },
     );
   },
 };

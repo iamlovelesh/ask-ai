@@ -399,7 +399,9 @@ const searchPayments: ActionDef<SearchPaymentsInput, SearchPaymentsOutput> = {
       `SELECT * FROM payments WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`,
       [...params, limit],
     );
-    return toListOrSpill(rows.map(toPaymentView), total);
+    return toListOrSpill(rows.map(toPaymentView), total, {
+      idCapture: { db: ctx.db, table: 'payments', whereSql, params },
+    });
   },
 };
 

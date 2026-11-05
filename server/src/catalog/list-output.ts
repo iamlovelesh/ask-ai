@@ -18,9 +18,21 @@
  */
 
 import { z } from 'zod';
+import type { StoreTx } from '../store/db.js';
 
 export const SPILL_CAP = 50;
 export const SPILL_SAMPLE_SIZE = 20;
+
+/** Safety cap on a captured full idList (engine-wave E1 follow-up) —
+ * `forEachHardCap` (`agent/validator.ts#BUDGETS.forEachHardCap`, 500) × 2.
+ * NOT imported directly: `agent/validator.ts` depends (transitively, via
+ * `catalog/registry.ts`) on every catalog module including this file, so an
+ * import the other way would cycle. `test/list-output.test.ts` cross-checks
+ * this literal against `BUDGETS.forEachHardCap * 2` so the two can't drift
+ * silently. Beyond this many matching rows, `captureSpillIdList` abandons
+ * the capture (returns `undefined`) rather than storing a half-enumerated
+ * id set — the executor's existing TRUNCATED_INPUT fallback applies. */
+export const SPILL_IDLIST_CAP = 1000;
 
 export function listSchema<T extends z.ZodTypeAny>(item: T) {
   return z.object({ items: z.array(item), total: z.number() });
@@ -72,26 +84,81 @@ export interface SpillHydration {
   query?: Record<string, unknown>;
 }
 
+/** Everything needed to re-run a handler's OWN search WHERE clause as
+ * `SELECT id FROM <table> WHERE <whereSql>` (same bind params, no LIMIT) to
+ * capture the COMPLETE matching id set for a spilled result (engine-wave E1
+ * follow-up). `table` may include a SQL alias the handler's clause expects
+ * (e.g. `'conversations c'`). This is the SAME where-clause/params the
+ * handler already built for its `COUNT(*)` + page query — not a second,
+ * independently-derived query — so it is generic by construction: any
+ * handler whose spilled set is exactly "rows matching one table's WHERE
+ * clause" gets a correct full idList for free by passing this through
+ * `toListOrSpill`'s `idCapture` option, with no per-handler special-casing.
+ */
+export interface SpillIdCaptureSpec {
+  db: StoreTx;
+  table: string;
+  whereSql: string;
+  params: readonly unknown[];
+}
+
+/** Capture the complete matching id set for `spec` (engine-wave E1
+ * follow-up), bounded by `SPILL_IDLIST_CAP`. Fetches one row beyond the cap
+ * and, if present, abandons the capture (`undefined`) rather than storing a
+ * half-enumerated list — the caller then leaves `idList` unset and the
+ * executor's existing TRUNCATED_INPUT fallback applies. */
+export function captureSpillIdList(
+  spec: SpillIdCaptureSpec,
+  cap: number = SPILL_IDLIST_CAP,
+): string[] | undefined {
+  const rows = spec.db.all(`SELECT id FROM ${spec.table} WHERE ${spec.whereSql} LIMIT ?`, [
+    ...spec.params,
+    cap + 1,
+  ]);
+  if (rows.length > cap) return undefined;
+  return rows.map((r) => String(r['id']));
+}
+
+export interface ToListOrSpillOptions {
+  cap?: number;
+  sampleSize?: number;
+  /** Full-id-set capture spec (engine-wave E1 follow-up) — see
+   * `SpillIdCaptureSpec`. Used by the ~generic case: a handler whose
+   * spilled rows are exactly "one table, one WHERE clause". Ignored when
+   * `hydration` is also given. */
+  idCapture?: SpillIdCaptureSpec;
+  /** Pre-computed hydration channel for handlers whose match set is NOT a
+   * single-table WHERE clause (joins, multi-table unions, in-memory
+   * derived/aggregated lists) — supply an already-known `idList` or
+   * re-runnable `query` directly. See `SpillHydration`. */
+  hydration?: SpillHydration;
+}
+
 /**
  * Build the list-or-spill value. `rows` should already be capped to
  * `cap` rows by the caller's query (e.g. `LIMIT 50`); when `total` exceeds
  * `cap`, only the first `sampleSize` of `rows` are kept as the `sample`.
- * `hydration` (optional) carries the full-set hydration channel — see
- * `SpillHydration`.
+ * `opts.idCapture`/`opts.hydration` (both optional, see `ToListOrSpillOptions`)
+ * carry the full-set hydration channel — omitting both is always safe (the
+ * executor then fails a bulk consumer honestly with TRUNCATED_INPUT rather
+ * than computing on the sample page).
  */
 export function toListOrSpill<T>(
   rows: readonly T[],
   total: number,
-  cap: number = SPILL_CAP,
-  sampleSize: number = SPILL_SAMPLE_SIZE,
-  hydration?: SpillHydration,
+  opts: ToListOrSpillOptions = {},
 ): ListOrSpill<T> {
+  const cap = opts.cap ?? SPILL_CAP;
+  const sampleSize = opts.sampleSize ?? SPILL_SAMPLE_SIZE;
   if (total <= cap) return { items: [...rows], total };
   const spill: { __spill: true; total: number; sample: T[]; idList?: string[]; query?: Record<string, unknown> } = {
     __spill: true,
     total,
     sample: rows.slice(0, sampleSize),
   };
+  const capturedIdList = opts.idCapture ? captureSpillIdList(opts.idCapture) : undefined;
+  const hydration: SpillHydration | undefined =
+    opts.hydration ?? (capturedIdList !== undefined ? { idList: capturedIdList } : undefined);
   if (hydration?.idList !== undefined) spill.idList = hydration.idList;
   if (hydration?.query !== undefined) spill.query = hydration.query;
   return spill;

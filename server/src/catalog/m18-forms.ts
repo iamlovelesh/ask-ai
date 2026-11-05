@@ -211,7 +211,9 @@ const listForms: ActionDef<ListFormsInput, ListFormsOutput> = {
       `SELECT * FROM structures WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`,
       [...params, limit],
     );
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'structures', whereSql, params },
+    });
   },
 };
 
@@ -533,7 +535,14 @@ const listFormSubmissions: ActionDef<z.infer<typeof listFormSubmissionsInput>, L
       submitted_at: r['occurred_at'] as number,
       data: parseJsonObject(r['data']),
     }));
-    return toListOrSpill(items, total);
+    return toListOrSpill(items, total, {
+      idCapture: {
+        db: ctx.db,
+        table: 'records',
+        whereSql: 'kind = ? AND parent_id = ? AND archived = 0',
+        params: [SUBMISSION_KIND, input.id],
+      },
+    });
   },
 };
 

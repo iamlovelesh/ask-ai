@@ -231,7 +231,14 @@ const listTaxRules: ActionDef<ListTaxRulesInput, ListTaxRulesOutput> = {
       [...params, limit],
     );
     const views = rows.map(toView).filter((v) => !input.region || v.region === input.region);
-    return toListOrSpill(views, input.region ? views.length : total);
+    // `region` is filtered in JS (it lives inside the JSON config, not a SQL
+    // column) — when it's set, `whereSql`/`params` no longer describe the
+    // true match set, so idCapture is only safe in the unfiltered branch.
+    return toListOrSpill(
+      views,
+      input.region ? views.length : total,
+      input.region ? {} : { idCapture: { db: ctx.db, table: 'structures', whereSql, params } },
+    );
   },
 };
 

@@ -323,7 +323,9 @@ export function searchChannelMessages(
     `SELECT * FROM messages WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`,
     [...params, limit],
   );
-  return toListOrSpill(rows.map(toMessageView), total);
+  return toListOrSpill(rows.map(toMessageView), total, {
+    idCapture: { db, table: 'messages', whereSql, params },
+  });
 }
 
 /** M12.A09 / M13.A09 — simulated inbound: new message + conversation bookkeeping. */

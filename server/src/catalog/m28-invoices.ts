@@ -250,7 +250,9 @@ const searchInvoices: ActionDef<SearchInvoicesInput, SearchInvoicesOutput> = {
       `SELECT * FROM invoices WHERE ${whereSql} ORDER BY due_date ASC LIMIT ?`,
       [...params, limit],
     );
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'invoices', whereSql, params },
+    });
   },
 };
 
@@ -530,7 +532,9 @@ const listOverdueInvoices: ActionDef<ListOverdueInvoicesInput, ListOverdueInvoic
       `SELECT * FROM invoices WHERE ${whereSql} ORDER BY due_date ASC LIMIT ?`,
       [...params, limit],
     );
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'invoices', whereSql, params },
+    });
   },
 };
 

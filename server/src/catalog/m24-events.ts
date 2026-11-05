@@ -292,7 +292,9 @@ const searchEvents: ActionDef<SearchEventsInput, SearchEventsOutput> = {
       ...params,
       limit,
     ]);
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'events', whereSql, params },
+    });
   },
 };
 

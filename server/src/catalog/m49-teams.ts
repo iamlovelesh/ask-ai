@@ -199,7 +199,9 @@ const listTeams: ActionDef<ListTeamsInput, ListTeamsOutput> = {
     const countRow = ctx.db.get(`SELECT COUNT(*) AS n FROM teams WHERE archived = 0`);
     const total = (countRow?.['n'] as number) ?? 0;
     const rows = ctx.db.all(`SELECT * FROM teams WHERE archived = 0 ORDER BY created_at DESC LIMIT ?`, [limit]);
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'teams', whereSql: 'archived = 0', params: [] },
+    });
   },
 };
 

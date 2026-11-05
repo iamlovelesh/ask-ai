@@ -233,7 +233,9 @@ const searchNotes: ActionDef<SearchNotesInput, SearchNotesOutput> = {
       `SELECT * FROM notes WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`,
       [...params, limit],
     );
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'notes', whereSql, params },
+    });
   },
 };
 

@@ -244,7 +244,9 @@ const searchLandingPages: ActionDef<SearchLandingPagesInput, SearchLandingPagesO
     const countRow = ctx.db.get(`SELECT COUNT(*) AS n FROM content_items WHERE ${whereSql}`, params);
     const total = (countRow?.['n'] as number) ?? 0;
     const rows = ctx.db.all(`SELECT * FROM content_items WHERE ${whereSql} ORDER BY created_at DESC LIMIT ?`, [...params, limit]);
-    return toListOrSpill(rows.map(toView), total);
+    return toListOrSpill(rows.map(toView), total, {
+      idCapture: { db: ctx.db, table: 'content_items', whereSql, params },
+    });
   },
 };
 
