@@ -768,11 +768,18 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
     // Engine-wave E4: id-provenance context. `knownIds` = entity ids the
     // planner legitimately has in working memory; the "seen text" is every
     // string the planner is shown this turn (raw request + masked transcript
-    // + working-state block), so an id anywhere in its context counts as
-    // provenanced — only a truly fabricated id (seen nowhere) is flagged.
+    // + working-state block + the current_user line), so an id anywhere in
+    // its context counts as provenanced — only a truly fabricated id (seen
+    // nowhere) is flagged. P5: `current_user` (the acting user's id, resolved
+    // from "me"/"my"/"I") is a legitimately-known id the planner is shown in
+    // <context>; it MUST be provenanced or the P4 guard would reject a plan
+    // that correctly writes it into a `host_user_id`/`owner_id`/`assignee_id`
+    // param (marketing F10: "make me the host").
+    const knownIds = new Set(Object.values(priorState.entities).map((e) => e.id));
+    knownIds.add(demoUserId);
     const provenance: Provenance = {
-      knownIds: new Set(Object.values(priorState.entities).map((e) => e.id)),
-      userText: [userText, baseCtx.maskedTurns, baseCtx.workingStateBlock].join('\n'),
+      knownIds,
+      userText: [userText, baseCtx.maskedTurns, baseCtx.workingStateBlock, currentUser].join('\n'),
     };
 
     // --- 2. plan (+ search/repair loops) ------------------------------------
