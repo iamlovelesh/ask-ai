@@ -51,7 +51,7 @@ import {
 } from './memory.js';
 import { llmCall, BudgetExceededError } from '../llm/client.js';
 import { flatPlanOutcomeSchema, type FlatPlanOutcome, type Plan, type PlanOutcome, type Step } from './plan-schema.js';
-import { pickPlannerModel, escalate, fastModel, plannerModel, repairEscalationModel } from '../llm/router.js';
+import { routePlannerModel, escalate, fastModel, plannerModel, repairEscalationModel } from '../llm/router.js';
 import { getDefaultSpans } from '../events/trace.js';
 
 // --- public contract (Task 13) ----------------------------------------------
@@ -807,7 +807,11 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
     };
     if (matched) baseCtx.playbookBody = matched.body;
 
-    const model = pickPlannerModel({
+    // task-quickwins Fix 2: planning no longer routes to FAST_MODEL by
+    // default — `routePlannerModel` always returns `plannerModel()` unless
+    // `PLANNER_FAST_ROUTING=1` is set for a benchmark A/B (see
+    // `llm/router.ts`'s header for the live-session evidence).
+    const model = routePlannerModel({
       rewrittenQuery,
       topCardScore: retrieval.cards[0]?.score ?? 0,
       cardCount: retrieval.cards.length,

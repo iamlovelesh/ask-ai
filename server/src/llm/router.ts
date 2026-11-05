@@ -7,6 +7,21 @@
  * to the small model either plans badly (caught by `agent/validator.ts` and
  * repaired — LLD §5.5 "misroute escalates via validator failure") or simply
  * produces a worse plan, never a crash.
+ *
+ * task-quickwins Fix 2: the `FAST_MODEL` (flash-lite) fast-path below is
+ * RETIRED from planning by default. Live sessions found flash-lite
+ * producing a genuine misplan (round-3 marketing: "qualified" →
+ * `leads.create_lead` instead of a status update) on exactly the
+ * short/high-confidence turns `isSimpleQuery` routes to it, and separately,
+ * `PLANNER_MODEL` (haiku)'s stronger FIRST-pass plans cut repair-round LLM
+ * calls enough that routing every planning turn there is expected to be
+ * net cost/latency NEUTRAL-OR-BETTER despite haiku's higher per-call price —
+ * fewer repair round-trips outweighs the per-token premium. `fastModel()`
+ * itself is UNCHANGED and still used for `COMPOSER_POLISH` (non-planning).
+ * `pickPlannerModel`/`isSimpleQuery` below are kept, UNUSED by the default
+ * path, so `PLANNER_FAST_ROUTING=1` can restore the old fast-path for a
+ * benchmark A/B (`routePlannerModel` is the one new call site
+ * `agent/pipeline.ts` actually calls).
  */
 
 const FAST_MODEL_ENV = 'FAST_MODEL';
@@ -90,12 +105,31 @@ export function isSimpleQuery(input: RouteInput): boolean {
 }
 
 /**
- * Picks the planner model for this turn (LLD §5.5): `FAST_MODEL` for a
- * short, single-intent, high-confidence-retrieval query; `PLANNER_MODEL`
- * (the default) for everything else.
+ * The RETIRED fast-path (task-quickwins Fix 2 — see this file's header):
+ * `FAST_MODEL` for a short, single-intent, high-confidence-retrieval query;
+ * `PLANNER_MODEL` for everything else. No longer called by
+ * `agent/pipeline.ts`'s default path — kept only so `routePlannerModel`
+ * below can restore it behind `PLANNER_FAST_ROUTING=1` for a benchmark A/B,
+ * and so its own unit tests keep exercising `isSimpleQuery`'s classifier
+ * logic independent of the retirement.
  */
 export function pickPlannerModel(input: RouteInput): string {
   return isSimpleQuery(input) ? fastModel() : plannerModel();
+}
+
+const PLANNER_FAST_ROUTING_ENV = 'PLANNER_FAST_ROUTING';
+
+/**
+ * Resolves which model PLANS this turn (task-quickwins Fix 2) — the ONE
+ * call site `agent/pipeline.ts` uses. Defaults to ALWAYS `plannerModel()`
+ * (the `FAST_MODEL` fast-path is retired for planning — see this file's
+ * header for the live-session evidence). Set `PLANNER_FAST_ROUTING=1` to
+ * restore the old `pickPlannerModel` fast-path for a benchmark A/B without
+ * removing the classifier code.
+ */
+export function routePlannerModel(input: RouteInput): string {
+  if (process.env[PLANNER_FAST_ROUTING_ENV] === '1') return pickPlannerModel(input);
+  return plannerModel();
 }
 
 /**
