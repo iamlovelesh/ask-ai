@@ -62,18 +62,18 @@ describe('sumSessionMetrics', () => {
 });
 
 describe('formatSessionLedger', () => {
-  it('formats every non-zero field, two-space joined, mono-strip style', () => {
+  it('humanizes the session cost — "This session: $0.004"', () => {
     const str = formatSessionLedger({ totalMs: 1500, tokensIn: 900, tokensOut: 600, costUsd: 0.0169, llmCalls: 3 });
-    expect(str).toBe('1.5s  1.5k tok  $0.0169  3 llm calls');
+    expect(str).toBe('This session: $0.0169');
   });
 
-  it('omits every zero field rather than padding with 0ms/$0.0000', () => {
+  it('returns an empty string when the session has spent nothing genuine yet', () => {
     const str = formatSessionLedger({ totalMs: 0, tokensIn: 0, tokensOut: 0, costUsd: 0, llmCalls: 0 });
     expect(str).toBe('');
   });
 
-  it('omits llmCalls when there is exactly one call (same rule as CostBadge)', () => {
-    const str = formatSessionLedger({ totalMs: 200, tokensIn: 10, tokensOut: 5, costUsd: 0.001, llmCalls: 1 });
-    expect(str).not.toContain('llm calls');
+  it('hides the ledger for a zero-cost session even if time/tokens were spent', () => {
+    const str = formatSessionLedger({ totalMs: 200, tokensIn: 10, tokensOut: 5, costUsd: 0, llmCalls: 1 });
+    expect(str).toBe('');
   });
 });

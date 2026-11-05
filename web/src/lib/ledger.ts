@@ -7,7 +7,7 @@
  */
 
 import type { TurnView } from './fold.js';
-import { formatCost, formatMs, formatTokens } from './format.js';
+import { formatCost } from './format.js';
 
 export interface SessionLedgerTotals {
   totalMs: number;
@@ -33,17 +33,12 @@ export function sumSessionMetrics(turns: readonly TurnView[]): SessionLedgerTota
   return totals;
 }
 
-/** Formats session totals into the same slim mono strip style as
- * `CostBadge` — any zero/unknown field is omitted entirely, never padded
- * out as "0ms"/"$0.0000". Returns `''` when every field is zero (e.g. a
- * brand-new session with no completed turns yet) — callers should hide the
- * ledger entirely on an empty string. */
+/** Humanized session ledger for the transcript header — "This session:
+ * $0.004". Cost is the one session-level number worth surfacing plainly;
+ * token/time detail stays per-turn (CostBadge). Returns `''` when the
+ * session has spent nothing genuine yet (brand-new session, or only
+ * zero-cost turns) — callers hide the ledger entirely on an empty string. */
 export function formatSessionLedger(totals: SessionLedgerTotals): string {
-  const parts = [
-    formatMs(totals.totalMs),
-    formatTokens(totals.tokensIn + totals.tokensOut),
-    formatCost(totals.costUsd),
-  ].filter((p): p is string => p !== null);
-  if (totals.llmCalls > 1) parts.push(`${totals.llmCalls} llm calls`);
-  return parts.join('  ');
+  const cost = formatCost(totals.costUsd);
+  return cost ? `This session: ${cost}` : '';
 }

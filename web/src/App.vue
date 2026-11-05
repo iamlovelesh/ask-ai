@@ -2,11 +2,13 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useSessionStore } from './stores/session.js';
+import { useCatalogStore } from './stores/catalog.js';
 import Sidebar from './components/Sidebar.vue';
 import ChatView from './components/ChatView.vue';
 import NewChatView from './components/NewChatView.vue';
 
 const store = useSessionStore();
+const catalog = useCatalogStore();
 const route = useRoute();
 const router = useRouter();
 
@@ -38,6 +40,9 @@ watch(
 );
 
 onMounted(async () => {
+  // Load the human action-name catalog once, up front (best-effort) so step
+  // rows and gate cards read with human names from the first render.
+  void catalog.load();
   await store.loadSessions();
 });
 
