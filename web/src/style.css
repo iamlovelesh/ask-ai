@@ -273,6 +273,15 @@ button {
 .step-row.status-done .step-icon {
   color: var(--ok);
 }
+.step-row.status-failed {
+  /* LLD §6: "turn `failed` → red step card" — a tinted/bordered row so a
+     failed step reads as a distinct card, not just a recolored icon. */
+  background: var(--err-bg);
+  border-left: 3px solid var(--err);
+  border-radius: 4px;
+  padding-left: 6px;
+  margin: 2px 0;
+}
 .step-row.status-failed .step-icon {
   color: var(--err);
 }
@@ -366,6 +375,195 @@ button {
   color: var(--text-dim);
   font-family: var(--mono);
   margin-top: 4px;
+}
+
+/* --- trace view (per-turn span waterfall, Task 19) -------------------- */
+
+.trace-view {
+  margin-top: 4px;
+}
+
+.trace-toggle {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.trace-toggle:hover {
+  color: var(--text);
+}
+
+.trace-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  padding: 8px 12px;
+  margin-top: 4px;
+}
+
+.trace-status {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.trace-status-error {
+  color: var(--err);
+}
+
+.trace-note {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.trace-row {
+  margin-bottom: 6px;
+}
+
+.trace-row-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.trace-row-name {
+  font-family: var(--mono);
+}
+
+.trace-row-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.trace-row-failed {
+  color: var(--err);
+}
+
+.trace-row-running {
+  color: var(--accent);
+}
+
+.trace-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.trace-track {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.trace-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+}
+
+.trace-bar-failed {
+  outline: 1px solid var(--err);
+}
+
+.trace-dot.kind-llm,
+.trace-bar.kind-llm {
+  background: var(--accent);
+}
+.trace-dot.kind-retrieval,
+.trace-bar.kind-retrieval {
+  background: var(--ok);
+}
+.trace-dot.kind-step,
+.trace-bar.kind-step {
+  background: var(--warn);
+}
+.trace-dot.kind-joiner,
+.trace-bar.kind-joiner {
+  background: var(--err);
+}
+.trace-dot.kind-compose,
+.trace-bar.kind-compose {
+  background: var(--text-dim);
+}
+
+/* --- audit feed (session-level write/confirm panel, Task 19) --------- */
+
+.chat-toolbar {
+  padding: 6px 20px 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.audit-toggle {
+  font-size: 12px;
+}
+
+.audit-feed {
+  margin: 6px 20px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-sunken);
+  padding: 10px 14px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.audit-feed-note {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.audit-feed-empty {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.audit-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.audit-row:last-child {
+  border-bottom: none;
+}
+
+.audit-kind {
+  flex-shrink: 0;
+  width: 110px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.audit-label {
+  font-family: var(--mono);
+}
+
+.audit-detail {
+  color: var(--text-dim);
+}
+
+.audit-confirmation-required .audit-kind,
+.audit-confirmation-resolved .audit-kind {
+  color: var(--warn);
+}
+
+.audit-step-failed .audit-kind {
+  color: var(--err);
 }
 
 /* --- composer -------------------------------------------------------- */

@@ -5,6 +5,8 @@ import TaskTracker from './TaskTracker.vue';
 import ConfirmCard from './ConfirmCard.vue';
 import ClarifyCard from './ClarifyCard.vue';
 import CostBadge from './CostBadge.vue';
+import TraceView from './TraceView.vue';
+import AuditFeed from './AuditFeed.vue';
 
 const props = defineProps<{ sessionId: string }>();
 const store = useSessionStore();
@@ -12,6 +14,11 @@ const store = useSessionStore();
 const chat = computed(() => store.chats[props.sessionId] ?? null);
 const draft = ref('');
 const scrollEl = ref<HTMLElement | null>(null);
+/** Task 19: session-level audit panel toggle — starts closed, per-session
+ * (reset implicitly when `sessionId` changes since this is local state, not
+ * persisted in the store — reopening it per session is a deliberate,
+ * low-cost default rather than tracking an open-set in Pinia). */
+const auditOpen = ref(false);
 
 function statusLabel(status: string | undefined): string {
   if (!status) return '';
@@ -82,6 +89,13 @@ async function onRetrySend(): Promise<void> {
       <button class="btn" @click="onRetryConnection">Retry now</button>
     </div>
 
+    <div class="chat-toolbar">
+      <button class="btn audit-toggle" @click="auditOpen = !auditOpen">
+        {{ auditOpen ? 'Hide' : 'Show' }} audit log
+      </button>
+    </div>
+    <AuditFeed v-if="auditOpen" :turns="chat.turns" />
+
     <div class="chat-scroll" ref="scrollEl">
       <div v-if="chat.turns.length === 0" class="chat-empty">
         Say something to start — e.g. "Find leads created in the last week".
@@ -111,6 +125,7 @@ async function onRetrySend(): Promise<void> {
           </div>
 
           <CostBadge v-if="turn.metrics" :metrics="turn.metrics" />
+          <TraceView v-if="turn.status" :turn-id="turn.turnId" />
         </div>
       </div>
     </div>

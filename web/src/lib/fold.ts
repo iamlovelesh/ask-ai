@@ -25,6 +25,11 @@ export interface StepView {
   status: StepStatus;
   summary?: string;
   error?: { code: string; message: string };
+  /** `seq` of the `step.finished`/`step.failed` event that last updated this
+   * step — `undefined` while still `pending`/`running`. Only consumed by
+   * Task 19's AuditFeed (`lib/audit.ts`) to order entries chronologically;
+   * optional so hand-built fixtures/tests need not supply it. */
+  seq?: number;
 }
 
 export interface PendingConfirm {
@@ -33,6 +38,13 @@ export interface PendingConfirm {
   scope: ConfirmationScope;
   resolved: boolean;
   approved?: boolean;
+  /** `seq` of the `confirmation.required` event that created this entry —
+   * same purpose/optionality as `StepView.seq` above. */
+  requiredSeq?: number;
+  /** `seq` of the `confirmation.resolved` event, or of `turn.completed` when
+   * a pending confirm is auto-denied at turn end (no explicit `resolved`
+   * event fires for that case — see the `turn.completed` branch below). */
+  resolvedSeq?: number;
 }
 
 export interface TurnView {
@@ -174,6 +186,7 @@ export function applyEvent(chat: SessionChatState, ev: AppEvent): void {
       const step = findOrCreateStep(turn, ev.stepId, turn.steps[ev.stepId]?.action ?? '');
       step.status = 'done';
       step.summary = ev.summary;
+      step.seq = ev.seq;
       return;
     }
     case 'step.failed': {
@@ -181,11 +194,18 @@ export function applyEvent(chat: SessionChatState, ev: AppEvent): void {
       const step = findOrCreateStep(turn, ev.stepId, turn.steps[ev.stepId]?.action ?? '');
       step.status = 'failed';
       step.error = ev.error;
+      step.seq = ev.seq;
       return;
     }
     case 'confirmation.required': {
       const turn = findOrCreateTurn(chat, ev.turnId);
-      turn.pendingConfirm = { confirmId: ev.confirmId, stepId: ev.stepId, scope: ev.scope, resolved: false };
+      turn.pendingConfirm = {
+        confirmId: ev.confirmId,
+        stepId: ev.stepId,
+        scope: ev.scope,
+        resolved: false,
+        requiredSeq: ev.seq,
+      };
       return;
     }
     case 'confirmation.resolved': {
@@ -193,6 +213,7 @@ export function applyEvent(chat: SessionChatState, ev: AppEvent): void {
       if (turn.pendingConfirm?.confirmId === ev.confirmId) {
         turn.pendingConfirm.resolved = true;
         turn.pendingConfirm.approved = ev.approved;
+        turn.pendingConfirm.resolvedSeq = ev.seq;
       }
       return;
     }
@@ -220,6 +241,7 @@ export function applyEvent(chat: SessionChatState, ev: AppEvent): void {
       if (turn.pendingConfirm && !turn.pendingConfirm.resolved) {
         turn.pendingConfirm.resolved = true;
         turn.pendingConfirm.approved = false;
+        turn.pendingConfirm.resolvedSeq = ev.seq;
       }
       chat.running = false;
       return;

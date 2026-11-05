@@ -10,6 +10,7 @@ import { defineStore } from 'pinia';
 import { fetchSse, SseHttpError } from '../lib/sse.js';
 import { applyEvent, emptyChatState, type SessionChatState } from '../lib/fold.js';
 import type { AppEvent } from '../lib/events.js';
+import type { Span } from '../lib/trace.js';
 
 export interface SessionSummary {
   id: string;
@@ -44,11 +45,21 @@ function describeSendFailure(err: unknown): string {
   return 'Failed to send — could not reach the server.';
 }
 
+/** Task 19's `TraceView` per-turn span waterfall: on-demand fetch state for
+ * `GET /api/traces/:turnId`, keyed by `turnId` so switching between turns
+ * never re-fetches a trace already loaded. */
+export interface TraceState {
+  spans: Span[];
+  loading: boolean;
+  error: string | null;
+}
+
 export const useSessionStore = defineStore('session', {
   state: () => ({
     sessions: [] as SessionSummary[],
     activeId: null as string | null,
     chats: {} as Record<string, SessionChatState>,
+    traces: {} as Record<string, TraceState>,
     /** Set when the app can't even load the session list — drives the
      * app-level "server unreachable" retry screen (distinct from a
      * per-session SSE-drop banner, which uses `chat.error`). */
@@ -291,6 +302,25 @@ export const useSessionStore = defineStore('session', {
         if (!res.ok) this.pushToast(`Could not cancel the turn (HTTP ${res.status}).`);
       } catch {
         this.pushToast('Network error cancelling the turn.');
+      }
+    },
+
+    /** Task 19's `TraceView`: on-demand fetch of a completed turn's span
+     * waterfall (`GET /api/traces/:turnId` → `{spans}`). Cached per
+     * `turnId` — re-opening an already-loaded trace panel doesn't re-fetch.
+     * Best-effort like the other read-only GETs in this store: a failure
+     * sets `error` for the panel to render, never throws into the caller. */
+    async loadTrace(turnId: string): Promise<void> {
+      const existing = this.traces[turnId];
+      if (existing && (existing.loading || existing.spans.length > 0)) return;
+      this.traces[turnId] = { spans: existing?.spans ?? [], loading: true, error: null };
+      try {
+        const res = await fetch(`/api/traces/${turnId}`);
+        if (!res.ok) throw new Error(`GET /api/traces failed: ${res.status}`);
+        const body = (await res.json()) as { spans: Span[] };
+        this.traces[turnId] = { spans: body.spans, loading: false, error: null };
+      } catch {
+        this.traces[turnId] = { spans: [], loading: false, error: 'Could not load the span trace.' };
       }
     },
 
