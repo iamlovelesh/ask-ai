@@ -5,6 +5,19 @@
 # unique in this seed (calendars: 10 distinct/10 rows; users: 'Isla Reyes'
 # COUNT=1).
 #
+# CORRECTION (quick-run-1 triage): `appointments.create_appointment`'s
+# `inputSchema` (m21-appointments.ts) requires `start_at`/`end_at` as
+# plain required numbers with NO default — the original user line named
+# contact/calendar/host/notes but never gave a date or time, so this was
+# a genuinely missing required param, not an ambiguity-free direct
+# request. Per the planner's own SYSTEM prompt ("Choose clarify when...
+# missing a required parameter"), asking to clarify was the CORRECT
+# response to the original wording, which is why the live run's planner
+# returned an empty plan + clarify here. Fixed by adding an explicit
+# "tomorrow from 2pm to 2:30pm" so start_at/end_at are now resolvable
+# from the request text alone (VIRTUAL_NOW = 2026-11-04T10:00:00Z, so
+# "tomorrow" = 2026-11-05, unambiguous).
+#
 # Derivation (template copy):
 #   SELECT id FROM contacts WHERE email='maya.mehta6944@gmail.com';  -> con_4
 #   SELECT id FROM structures WHERE kind='calendar' AND name='calendar 2';  -> struct_177
@@ -15,7 +28,7 @@ id: direct-appointments-001
 category: direct
 profile: standard
 turns:
-  - user: "Book a discovery call with the contact at maya.mehta6944@gmail.com on calendar 2, hosted by Isla Reyes, with notes 'referred by partner program'"
+  - user: "Book a discovery call with the contact at maya.mehta6944@gmail.com on calendar 2, hosted by Isla Reyes, tomorrow from 2pm to 2:30pm, with notes 'referred by partner program'"
     expect:
       planActions:
         mustInclude: [appointments.create_appointment]

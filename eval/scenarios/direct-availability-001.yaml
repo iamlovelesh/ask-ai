@@ -4,6 +4,19 @@
 # `structures.config` JSON (no dedicated row/table), so the state check
 # greps `config` directly.
 #
+# CORRECTION (quick-run-1 triage): `availability.block_time_range`'s
+# `inputSchema` (m22-availability.ts) requires `start_at`/`end_at` as
+# plain required numbers with NO default — the original user line gave
+# a calendar and a reason but no date/time at all, so this was a
+# genuinely missing required param, not an unambiguous direct request.
+# Per the planner's own SYSTEM prompt ("Choose clarify when... missing a
+# required parameter"), asking to clarify was the CORRECT response to
+# the original wording, which is why the live run's planner returned an
+# empty plan + clarify here. Fixed by adding an explicit "tomorrow from
+# 2pm to 4pm" so start_at/end_at are now resolvable from the request
+# text alone (VIRTUAL_NOW = 2026-11-04T10:00:00Z, so "tomorrow" =
+# 2026-11-05, unambiguous).
+#
 # Derivation (template copy):
 #   SELECT id, name, config FROM structures WHERE kind='calendar' AND name='calendar 4';
 #   -> struct_179, 'calendar 4', {"seeded":true,"kind":"calendar"}  (no
@@ -15,7 +28,7 @@ id: direct-availability-001
 category: direct
 profile: standard
 turns:
-  - user: "Block out time on calendar 4 for a reason of 'team offsite'"
+  - user: "Block out time on calendar 4 from 2pm to 4pm tomorrow for a reason of 'team offsite'"
     expect:
       planActions:
         mustInclude: [availability.block_time_range]
