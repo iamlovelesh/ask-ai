@@ -1,0 +1,47 @@
+# Task 17 Batch B part 1 — category: conditional, module: opportunities.
+#
+# `move_opportunity_to_stage` is `risk: 'write'` (m04-opportunities.ts) —
+# per the unified confirmation gate (`shouldGate`, executor.ts) a plain
+# `write` action only gates when `affectedCount > 50`. This pipeline's
+# qualifying set is well under that bar, so confirmation is NOT expected
+# here (contrast with `conditional-contacts-001`'s destructive bulk
+# archive, which gates unconditionally regardless of count).
+#
+# Derivation (template copy):
+#   SELECT id,name FROM structures WHERE kind='pipeline'; -> struct_167
+#     is named "pipeline 2" (config is the seeded placeholder, no custom
+#     `stages` array, so `move_opportunity_to_stage` falls back to
+#     DEFAULT_STAGES, which includes 'negotiation').
+#   SELECT COUNT(*) FROM opportunities WHERE pipeline_id='struct_167' AND
+#     archived=0 AND value_cents > 4000000 AND stage != 'negotiation';
+#   -> 30 (value_cents > 4000000 = worth more than $40,000)
+#   30 <= 50 -> `shouldGate` does not fire on count; risk='write' is not
+#     destructive/bulk/external either -> no confirmation.
+#   SELECT COUNT(*) FROM opportunities WHERE pipeline_id='struct_167' AND
+#     stage='negotiation'; -> 6 already there before the turn, so the
+#     expected countDelta on that same query is +30.
+
+id: conditional-opportunities-001
+category: conditional
+profile: standard
+turns:
+  - user: >-
+      In pipeline "pipeline 2", move every opportunity worth more than
+      $40,000 into the negotiation stage.
+    expect:
+      planActions:
+        mustInclude:
+          - opportunities.search_opportunities
+          - opportunities.move_opportunity_to_stage
+        mustNotInclude: [opportunities.create_opportunity]
+      paramChecks:
+        - action: opportunities.move_opportunity_to_stage
+          param: stage
+          equals: negotiation
+      state:
+        - query: "SELECT COUNT(*) AS n FROM opportunities WHERE pipeline_id='struct_167' AND stage='negotiation'"
+          countDelta: 30
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

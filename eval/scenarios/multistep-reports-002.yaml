@@ -1,0 +1,41 @@
+# Task 17 Batch B part 1 — category: multistep, module: reports (+payments).
+#
+# `compare_report_periods` (m50-reports.ts A08) takes `period_a`/`period_b`
+# directly as input (NOT the report's own saved `date_range`) and re-runs
+# the SAME aggregation for each, diffing by group key — exactly the
+# "last month vs. this month" shape. `revenue_by_month` sums `amount_cents`
+# over `payments(kind='payment', status='succeeded')`, date-ranged on
+# `processed_at`, grouped by calendar month.
+#
+# Derivation (template copy, VIRTUAL_NOW = 2026-11-04T10:00:00Z per
+# `eval/runner-process.ts`'s default):
+#   last month (Oct 1 00:00 UTC through Oct 31 23:59:59.999 UTC):
+#     SELECT SUM(amount_cents) FROM payments WHERE kind='payment' AND
+#       status='succeeded' AND processed_at BETWEEN <Oct 1> AND <Oct 31
+#       end>; -> 8,176,852 cents = $81,768.52 across 81 payments
+#   this month (Nov 1 00:00 UTC through VIRTUAL_NOW): -> 765,899 cents =
+#     $7,658.99 across 8 payments (nothing exists beyond VIRTUAL_NOW in
+#     this simulated clock, so "this month" vs. "month to date" are the
+#     same query here).
+
+id: multistep-reports-002
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      Set up a monthly revenue report and compare how much we brought in
+      last month versus this month so far.
+    expect:
+      planActions:
+        mustInclude:
+          - reports.create_saved_report
+          - reports.compare_report_periods
+      paramChecks:
+        - action: reports.create_saved_report
+          param: type
+          equals: revenue_by_month
+      behavior:
+        confirmation: false
+      response:
+        mustMention: ["81,768", "7,658"]
+        mustNotClaim: [failed, error]

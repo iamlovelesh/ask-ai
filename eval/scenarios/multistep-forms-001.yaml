@@ -1,0 +1,40 @@
+# Task 17 Batch B part 1 — category: multistep, module: forms (+records).
+#
+# Data home (m18-forms.ts): `structures(kind='form')` for the definition,
+# PLUS `records(kind='form_submission', parent_id=<form's structures id>)`
+# — this module owns BOTH the write (`submit_simulated_form_response`)
+# and the read-back (`list_form_submissions`) end-to-end.
+#
+# Derivation (template copy):
+#   SELECT id,name,status FROM structures WHERE kind='form' AND
+#     status='published' LIMIT 1;
+#   -> struct_136, name "form 1", status='published'
+
+id: multistep-forms-001
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      Submit a test response to "form 1" for contact con_1 (just put
+      {"note":"test submission"} as the answers), then show me its
+      submissions.
+    expect:
+      planActions:
+        mustInclude:
+          - forms.submit_simulated_form_response
+          - forms.list_form_submissions
+      paramChecks:
+        - action: forms.submit_simulated_form_response
+          param: id
+          equals: struct_136
+        - action: forms.submit_simulated_form_response
+          param: contact_id
+          equals: con_1
+      state:
+        - query: "SELECT COUNT(*) AS n FROM records WHERE kind='form_submission' AND parent_id='struct_136'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustMention: ["form 1"]
+        mustNotClaim: [failed, error]
