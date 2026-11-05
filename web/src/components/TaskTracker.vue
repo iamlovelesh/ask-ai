@@ -1,19 +1,32 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import type { TurnView } from '../lib/fold.js';
+import { reactive, ref } from 'vue';
+import type { StepView, TurnView } from '../lib/fold.js';
 
 const props = defineProps<{ turn: TurnView }>();
 
 const activityOpen = ref(false);
+/** Which finished/failed step rows have their inline detail expanded —
+ * keyed by stepId, local to this tracker instance. */
+const openSteps = reactive(new Set<string>());
 
 function orderedSteps() {
   return props.turn.stepOrder.map((id) => props.turn.steps[id]).filter((s) => s !== undefined);
 }
 
-/** Renders nothing for an unknown OR genuinely-zero duration — the backend's
- * per-step clock is currently pinned (see the redesign report's polish
- * section), so `ms: 0` on every step is real upstream data, not a replay
- * fold bug. Never render a "0ms" placeholder either way. */
+/** Only a terminal, informative step (done or failed) has anything useful
+ * to expand into — pending/running/skipped rows stay plain. */
+function isExpandable(step: StepView): boolean {
+  return step.status === 'done' || step.status === 'failed';
+}
+
+function toggleStep(stepId: string): void {
+  if (openSteps.has(stepId)) openSteps.delete(stepId);
+  else openSteps.add(stepId);
+}
+
+/** Renders nothing for an unknown OR genuinely-zero duration — a step's
+ * `ms` comes straight off the server's `step.finished`/`step.failed` event;
+ * never render a "0ms" placeholder for an unmeasured/zero value. */
 function formatMs(ms: number | undefined): string {
   if (ms === undefined || !Number.isFinite(ms) || ms <= 0) return '';
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
@@ -31,11 +44,27 @@ function adjustmentsLabel(count: number): string {
       <li
         v-for="step in orderedSteps()"
         :key="step.stepId"
-        :class="['tracker-step', `status-${step.status}`]"
+        :class="['tracker-step', `status-${step.status}`, { 'is-expandable': isExpandable(step) }]"
       >
         <span class="tracker-node" aria-hidden="true"></span>
-        <span class="tracker-label">{{ step.action }}</span>
-        <span class="tracker-dur">{{ formatMs(step.ms) }}</span>
+
+        <button
+          v-if="isExpandable(step)"
+          type="button"
+          class="tracker-row-btn"
+          :aria-expanded="openSteps.has(step.stepId)"
+          :aria-controls="`step-detail-${step.stepId}`"
+          @click="toggleStep(step.stepId)"
+        >
+          <span class="tracker-chevron" :class="{ open: openSteps.has(step.stepId) }" aria-hidden="true">›</span>
+          <span class="tracker-label">{{ step.action }}</span>
+          <span class="tracker-dur">{{ formatMs(step.ms) }}</span>
+        </button>
+        <template v-else>
+          <span class="tracker-label">{{ step.action }}</span>
+          <span class="tracker-dur">{{ formatMs(step.ms) }}</span>
+        </template>
+
         <span
           v-if="step.itemCount !== undefined && step.status !== 'failed'"
           class="tracker-detail"
@@ -54,6 +83,29 @@ function adjustmentsLabel(count: number): string {
         <span v-if="step.status === 'failed' && step.error" class="tracker-detail is-fail">{{
           step.error.message
         }}</span>
+
+        <div
+          v-if="isExpandable(step) && openSteps.has(step.stepId)"
+          :id="`step-detail-${step.stepId}`"
+          class="tracker-step-detail"
+        >
+          <div v-if="step.summary" class="tracker-step-detail-row">
+            <span class="tracker-step-detail-key">Summary</span>
+            <span class="tracker-step-detail-val">{{ step.summary }}</span>
+          </div>
+          <div v-if="step.resultRef" class="tracker-step-detail-row">
+            <span class="tracker-step-detail-key">Result ref</span>
+            <span class="tracker-step-detail-val mono">{{ step.resultRef }}</span>
+          </div>
+          <div v-if="step.itemCount !== undefined" class="tracker-step-detail-row">
+            <span class="tracker-step-detail-key">Items</span>
+            <span class="tracker-step-detail-val">{{ step.itemCount }}</span>
+          </div>
+          <div v-if="step.status === 'failed' && step.error" class="tracker-step-detail-row">
+            <span class="tracker-step-detail-key">Error</span>
+            <span class="tracker-step-detail-val is-fail">{{ step.error.message }}</span>
+          </div>
+        </div>
       </li>
     </ol>
     <div v-if="turn.activity.length > 0" class="tracker-activity-disclosure">

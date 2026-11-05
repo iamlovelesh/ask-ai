@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useSessionStore } from '../stores/session.js';
+import { relativeTime } from '../lib/relative-time.js';
 
 const store = useSessionStore();
 
@@ -39,7 +40,7 @@ function titleOf(title: string | null): string {
 }
 
 function timeOf(updatedAt: number): string {
-  return new Date(updatedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return relativeTime(updatedAt);
 }
 
 async function onShowOlder(): Promise<void> {

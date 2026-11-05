@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useSessionStore } from '../stores/session.js';
 import TaskTracker from './TaskTracker.vue';
 import ConfirmCard from './ConfirmCard.vue';
@@ -7,6 +7,8 @@ import ClarifyCard from './ClarifyCard.vue';
 import CostBadge from './CostBadge.vue';
 import TraceView from './TraceView.vue';
 import AuditFeed from './AuditFeed.vue';
+import type { TurnView } from '../lib/fold.js';
+import { formatSessionLedger, sumSessionMetrics } from '../lib/ledger.js';
 
 const props = defineProps<{ sessionId: string }>();
 defineEmits<{ 'toggle-nav': [] }>();
@@ -15,6 +17,15 @@ const store = useSessionStore();
 const chat = computed(() => store.chats[props.sessionId] ?? null);
 const draft = ref('');
 const scrollEl = ref<HTMLElement | null>(null);
+const textareaEl = ref<HTMLTextAreaElement | null>(null);
+/** True once the user has scrolled up away from the bottom — pauses the
+ * auto-scroll-to-latest behavior and surfaces a "scroll to latest" button
+ * instead of yanking the view out from under someone reading back. */
+const isScrolledUp = ref(false);
+const SCROLL_BOTTOM_THRESHOLD_PX = 48;
+/** Max composer height — 4 lines — computed once from the textarea's own
+ * font metrics so it stays correct regardless of font-size/line-height. */
+const TEXTAREA_MAX_LINES = 4;
 
 const EXAMPLE_PROMPTS = [
   'Find leads created in the last week',
@@ -25,6 +36,36 @@ const EXAMPLE_PROMPTS = [
 const sessionTitle = computed(() => {
   const s = store.sessions.find((row) => row.id === props.sessionId);
   return s?.title && s.title.length > 0 ? s.title : 'New chat';
+});
+
+/** Cumulative session cost/token ledger — sums every completed turn's
+ * `turn.completed` metrics. `''` (hidden) for a session with no completed
+ * turns yet. */
+const sessionLedger = computed(() => formatSessionLedger(sumSessionMetrics(chat.value?.turns ?? [])));
+
+/** True between `turn.started` and `plan.ready` (or any other outcome that
+ * sets `turn.kind`) — the window where the agent is deciding what to do but
+ * has nothing to show yet. `turn.kind` is set for every PlanOutcome variant
+ * (see `lib/fold.ts`'s `plan.ready` branch), so `!turn.kind` is an accurate
+ * "still planning" signal for both live and historical turns. */
+function isPlanning(turn: TurnView): boolean {
+  return !turn.kind && !turn.status;
+}
+
+/** aria-live announcement of step progress for the most recent turn — "step
+ * 3 of 5 done". Counts any terminal step (done/failed/skipped) against the
+ * steps known so far (grows as the plan is revealed); empty until the first
+ * step settles so nothing is announced for a turn with no steps yet. */
+const stepAnnouncement = computed(() => {
+  const turn = chat.value?.turns.at(-1);
+  if (!turn || turn.stepOrder.length === 0) return '';
+  const total = turn.stepOrder.length;
+  const settled = turn.stepOrder.filter((id) => {
+    const s = turn.steps[id];
+    return s !== undefined && s.status !== 'pending' && s.status !== 'running';
+  }).length;
+  if (settled === 0) return '';
+  return `Step ${settled} of ${total} done`;
 });
 
 /** Inspector drawer: audit ledger (session-wide) or a selected turn's trace
@@ -65,15 +106,34 @@ function isFailStatus(status: string | undefined): boolean {
 async function scrollToBottom(): Promise<void> {
   await nextTick();
   if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight;
+  isScrolledUp.value = false;
+}
+
+/** Tracks whether the user has manually scrolled away from the bottom —
+ * read by the two watchers below (so an in-flight turn's new frames don't
+ * yank the view back down while someone's reading up-thread) and by the
+ * "scroll to latest" button's visibility. */
+function onTranscriptScroll(): void {
+  const el = scrollEl.value;
+  if (!el) return;
+  isScrolledUp.value = el.scrollHeight - el.scrollTop - el.clientHeight > SCROLL_BOTTOM_THRESHOLD_PX;
+}
+
+async function scrollToLatest(): Promise<void> {
+  await scrollToBottom();
 }
 
 watch(
   () => chat.value?.turns.length,
-  () => void scrollToBottom(),
+  () => {
+    if (!isScrolledUp.value) void scrollToBottom();
+  },
 );
 watch(
   () => chat.value?.turns.at(-1)?.deltaText,
-  () => void scrollToBottom(),
+  () => {
+    if (!isScrolledUp.value) void scrollToBottom();
+  },
 );
 
 async function onSend(): Promise<void> {
@@ -87,12 +147,55 @@ function useExample(text: string): void {
   draft.value = text;
 }
 
+/** A clarify chip's pick: fill the composer with the exact option text and
+ * send it immediately, same as a manual type+Enter. */
+function onClarifyReply(text: string): void {
+  draft.value = text;
+  void onSend();
+}
+
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     void onSend();
   }
 }
+
+/** Grows the composer up to `TEXTAREA_MAX_LINES` as the draft grows, then
+ * leaves it to scroll internally — never taller than that cap. Recomputed
+ * from the textarea's own font metrics (not a hardcoded px value) so it
+ * stays correct regardless of font-size/line-height. */
+function autosizeTextarea(): void {
+  const el = textareaEl.value;
+  if (!el) return;
+  const style = getComputedStyle(el);
+  const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.5;
+  const verticalBorderPadding =
+    parseFloat(style.borderTopWidth) +
+    parseFloat(style.borderBottomWidth) +
+    parseFloat(style.paddingTop) +
+    parseFloat(style.paddingBottom);
+  const maxPx = lineHeight * TEXTAREA_MAX_LINES + verticalBorderPadding;
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, maxPx)}px`;
+}
+
+watch(draft, () => void nextTick(autosizeTextarea));
+
+function onInspectorKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && inspector.value) {
+    e.preventDefault();
+    closeInspector();
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onInspectorKeydown);
+  autosizeTextarea();
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onInspectorKeydown);
+});
 
 async function onCancel(): Promise<void> {
   await store.cancel();
@@ -122,6 +225,7 @@ async function onRetrySend(): Promise<void> {
         ☰
       </button>
       <div class="transcript-title">{{ sessionTitle }}</div>
+      <span v-if="sessionLedger" class="cost-badge session-ledger">{{ sessionLedger }}</span>
       <button
         class="ghost-btn"
         :class="{ 'is-on': inspector?.tab === 'audit' }"
@@ -130,6 +234,10 @@ async function onRetrySend(): Promise<void> {
         Audit
       </button>
     </header>
+
+    <!-- Announces step progress for the active turn to assistive tech —
+         visually hidden, polite (never interrupts). -->
+    <div class="sr-only" aria-live="polite">{{ stepAnnouncement }}</div>
 
     <!-- The message never reached the server (no turn was ever started) —
          retrying means re-sending, not reconnecting to a stream. -->
@@ -144,7 +252,7 @@ async function onRetrySend(): Promise<void> {
       <button class="btn" @click="onRetryConnection">Retry now</button>
     </div>
 
-    <div class="transcript" ref="scrollEl">
+    <div class="transcript" ref="scrollEl" @scroll="onTranscriptScroll">
       <div class="transcript-inner">
         <div v-if="chat.turns.length === 0" class="start">
           <div class="start-name">Ask AI</div>
@@ -173,6 +281,12 @@ async function onRetrySend(): Promise<void> {
           <div class="speaker" style="margin-top: 16px">
             <span class="speaker-name">Ask AI</span>
             <span class="speaker-rule"></span>
+            <span v-if="isPlanning(turn)" class="planning-indicator">
+              Planning<span class="planning-dot">.</span><span class="planning-dot">.</span><span
+                class="planning-dot"
+                >.</span
+              >
+            </span>
             <span
               v-if="statusToken(turn.status)"
               :class="['turn-status', { 'is-fail': isFailStatus(turn.status) }]"
@@ -183,7 +297,7 @@ async function onRetrySend(): Promise<void> {
           <div class="agent-body">
             <TaskTracker v-if="turn.kind === 'plan'" :turn="turn" />
 
-            <ClarifyCard v-if="turn.clarifyQuestion" :question="turn.clarifyQuestion" />
+            <ClarifyCard v-if="turn.clarifyQuestion" :question="turn.clarifyQuestion" @reply="onClarifyReply" />
 
             <ConfirmCard
               v-if="turn.pendingConfirm"
@@ -207,15 +321,26 @@ async function onRetrySend(): Promise<void> {
           </div>
         </article>
       </div>
+
+      <button
+        v-if="chat.running && isScrolledUp"
+        type="button"
+        class="scroll-latest-btn"
+        @click="scrollToLatest"
+      >
+        ↓ New activity
+      </button>
     </div>
 
     <div class="composer">
       <div class="composer-inner">
         <textarea
+          ref="textareaEl"
           v-model="draft"
           :disabled="chat.running"
           placeholder="Message Ask AI…"
           @keydown="onKeydown"
+          @input="autosizeTextarea"
         ></textarea>
         <button v-if="chat.running" class="btn-cancel" @click="onCancel">Cancel</button>
         <button v-else class="btn-send" :disabled="!draft.trim()" @click="onSend">Send</button>

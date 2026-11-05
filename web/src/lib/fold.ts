@@ -34,6 +34,11 @@ export interface StepView {
    * Task 19's AuditFeed (`lib/audit.ts`) to order entries chronologically;
    * optional so hand-built fixtures/tests need not supply it. */
   seq?: number;
+  /** `resultRef` of the `step.finished` event, when the step's output spilled
+   * to a server-side ref handle (large result sets) rather than inlining.
+   * `undefined` for steps with no ref (small/no result) or not yet finished.
+   * Surfaced verbatim (mono) in the step row's expanded detail panel. */
+  resultRef?: string;
 }
 
 export interface PendingConfirm {
@@ -192,6 +197,7 @@ export function applyEvent(chat: SessionChatState, ev: AppEvent): void {
       step.summary = ev.summary;
       step.ms = ev.ms;
       step.seq = ev.seq;
+      step.resultRef = ev.resultRef;
       return;
     }
     case 'step.failed': {

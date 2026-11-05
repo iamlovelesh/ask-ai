@@ -1,8 +1,12 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import type { PendingConfirm } from '../lib/fold.js';
+import { deriveGateReason } from '../lib/gate-reason.js';
 
 const props = defineProps<{ confirm: PendingConfirm }>();
 const emit = defineEmits<{ resolve: [confirmId: string, approved: boolean] }>();
+
+const reason = computed(() => deriveGateReason(props.confirm.scope));
 
 function approve(): void {
   emit('resolve', props.confirm.confirmId, true);
@@ -15,6 +19,7 @@ function deny(): void {
 <template>
   <div class="confirm-card agent-section">
     <div class="confirm-desc">{{ confirm.scope.description }}</div>
+    <div class="confirm-reason">{{ reason }}</div>
     <div class="confirm-meta">
       Affects
       <span class="confirm-count">{{ confirm.scope.affectedCount }}</span>
