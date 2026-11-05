@@ -143,7 +143,7 @@ function oneStepRegistry(): Registry {
   );
 }
 /** The pure-template text this plan composes to — the fallback target. */
-const TEMPLATE_TEXT = 'Done: find leads.\n- leads.search_leads: 1 record(s)';
+const TEMPLATE_TEXT = 'I found 1 lead.';
 
 // --- polish OFF (default) ---------------------------------------------------
 
