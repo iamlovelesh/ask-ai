@@ -887,7 +887,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
       }
     }
 
-    onEvent({ t: 'step.started', turnId, stepId: step.id, action: step.action });
+    onEvent({ t: 'step.started', turnId, stepId: step.id, action: step.action, resolvedParams: [params] });
     const stepSpan = spans?.start({ turnId, kind: 'step', name: step.action, meta: { stepId: step.id } });
     const key = `${turnId}:${planRev}:${step.id}:0`;
     const res = await invoke(action, params, key, isCore);
@@ -1006,7 +1006,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
       }
     }
 
-    onEvent({ t: 'step.started', turnId, stepId: step.id, action: step.action, itemCount: fanOut });
+    onEvent({ t: 'step.started', turnId, stepId: step.id, action: step.action, itemCount: fanOut, resolvedParams });
     const stepSpan = spans?.start({
       turnId,
       kind: 'step',

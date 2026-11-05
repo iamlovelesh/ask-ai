@@ -94,7 +94,23 @@ export type Event =
       reason: string;
       llm: LlmUsage;
     }
-  | { t: 'step.started'; turnId: string; stepId: string; action: string; itemCount?: number }
+  | {
+      t: 'step.started';
+      turnId: string;
+      stepId: string;
+      action: string;
+      itemCount?: number;
+      /** task-harness-fairness: the step's FULLY RESOLVED params (refs like
+       * "$s1.items[0].id" already substituted with their runtime value) —
+       * one entry per dispatch (length 1 for a scalar step, length
+       * `itemCount` for a forEach fan-out). Additive/optional so every
+       * existing reader of `step.started` (which only ever destructured
+       * `action`/`itemCount`/`stepId`) keeps working unchanged; consumed by
+       * `eval/assert.ts`'s `paramChecks` so a scenario can assert against
+       * the RESOLVED runtime value instead of only the plan's literal
+       * (possibly ref-string) param text. */
+      resolvedParams?: Record<string, unknown>[];
+    }
   | {
       t: 'step.finished';
       turnId: string;
