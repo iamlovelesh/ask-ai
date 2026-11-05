@@ -9,14 +9,47 @@
 #
 # Derivation (template copy, VIRTUAL_NOW = 2026-11-04T10:00:00Z per
 # `eval/runner-process.ts`'s default):
-#   last month (Oct 1 00:00 UTC through Oct 31 23:59:59.999 UTC):
+#   last month (Oct 1 2026 00:00:00.000Z = epoch 1790812800000 through
+#     Oct 31 2026 23:59:59.999Z = epoch 1793491199999):
 #     SELECT SUM(amount_cents) FROM payments WHERE kind='payment' AND
-#       status='succeeded' AND processed_at BETWEEN <Oct 1> AND <Oct 31
-#       end>; -> 8,176,852 cents = $81,768.52 across 81 payments
-#   this month (Nov 1 00:00 UTC through VIRTUAL_NOW): -> 765,899 cents =
-#     $7,658.99 across 8 payments (nothing exists beyond VIRTUAL_NOW in
-#     this simulated clock, so "this month" vs. "month to date" are the
-#     same query here).
+#       status='succeeded' AND processed_at BETWEEN 1790812800000 AND
+#       1793491199999; -> 8,176,852 cents = $81,768.52 across 81 payments
+#   this month (Nov 1 2026 00:00:00.000Z = epoch 1793491200000 through
+#     VIRTUAL_NOW = epoch 1793786400000): -> 765,899 cents = $7,658.99
+#     across 8 payments (nothing exists beyond VIRTUAL_NOW in this
+#     simulated clock, so "this month" vs. "month to date" are the same
+#     query here).
+#
+# CORRECTION (hardening review, round 2): `response.mustMention:
+# ["81,768", "7,658"]` was unsatisfiable — checked `server/src/agent/
+# composer.ts` (PURE TEMPLATE, "no LLM call, ever", its own file header)
+# and confirmed it never inlines a step's structured result data into
+# the response text. `describeStepResult` only ever emits either
+# `<action>: <name>` (when the result has a string `name`/`title` field
+# and <=1 "record") or `<action>: <count> record(s)` — and
+# `compare_report_periods`'s output (`compareOutput` schema,
+# m50-reports.ts) IS `{id, name, type, rows}`: a string `name` (the
+# report's own, LLM-chosen label) with no `total`/`items` field, so
+# `countOf` falls through to `1` and the rendered line is
+# `reports.compare_report_periods: <report name>` — NEVER the dollar
+# figures, and not reliably a month name either (the report's name is a
+# free-text literal the planner chooses, not derived from month labels).
+# No `mustMention` text assertion can be made reliably true here, so it's
+# dropped entirely in favor of verifying what's actually checkable:
+#   - `paramChecks` on `compare_report_periods`'s `period_a`/`period_b`
+#     (each the WHOLE `{from,to}` object per `param`'s flat-key lookup,
+#     `eval/assert.ts`'s `checkOneParam`) pin the "last month" vs. "this
+#     month" BOUNDARY via `contains` (a JSON-stringify substring match,
+#     `valueContains`) on just the `from` epoch — not a full-object
+#     `equals`, since "this month SO FAR" legitimately admits either an
+#     explicit `to: 1793786400000` (VIRTUAL_NOW) or an open-ended
+#     `to: null`; only the boundary date itself is pinned.
+#   - `state` checks re-verify the underlying `payments` sums for both
+#     windows against the template — read-only sanity on the report's
+#     INPUT data (this turn has no write action in its plan, so an
+#     absolute `equals` matching the untouched baseline is the correct,
+#     non-vacuous form here, same as every other read-only-turn check in
+#     the corpus per `eval/scripts/floor-sweep.ts`).
 
 id: multistep-reports-002
 category: multistep
@@ -34,8 +67,18 @@ turns:
         - action: reports.create_saved_report
           param: type
           equals: revenue_by_month
+        - action: reports.compare_report_periods
+          param: period_a
+          contains: 1790812800000
+        - action: reports.compare_report_periods
+          param: period_b
+          contains: 1793491200000
+      state:
+        - query: "SELECT SUM(amount_cents) AS n FROM payments WHERE kind='payment' AND status='succeeded' AND processed_at BETWEEN 1790812800000 AND 1793491199999"
+          equals: 8176852
+        - query: "SELECT SUM(amount_cents) AS n FROM payments WHERE kind='payment' AND status='succeeded' AND processed_at BETWEEN 1793491200000 AND 1793786400000"
+          equals: 765899
       behavior:
         confirmation: false
       response:
-        mustMention: ["81,768", "7,658"]
         mustNotClaim: [failed, error]

@@ -123,7 +123,7 @@ describe('lintScenarios — empty-expect (I3, Task 16 review)', () => {
 });
 
 describe('lintScenarios — real seed corpus (allowPartialCoverage:true)', () => {
-  it('the 6 shipped seeds have no absolute-date hygiene issues', () => {
+  it('the full shipped corpus (117 scenarios as of Task 17 hardening, was 6 seeds at Task 16) has no absolute-date hygiene issues', () => {
     const scenarios = loadScenarios(new URL('../scenarios', import.meta.url).pathname);
     const issues = lintScenarios(scenarios, { allowPartialCoverage: true });
     expect(issues).toEqual([]);

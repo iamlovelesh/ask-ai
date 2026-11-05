@@ -18,6 +18,28 @@
 #   SELECT COUNT(*) FROM leads WHERE status='disqualified'; -> 1203
 #     (before turn 2) -> floor of 1204 asserted after (>= 1 newly
 #     disqualified lead from that filtered subset).
+#
+# TIGHTENING GUARD (hardening review, round 2): the `disqualified >=
+# 1204` floor alone can't tell a scattergun disqualify (picking leads
+# from ANY status bucket, e.g. 'qualified' or 'new') from a correct one
+# (picking only from the 'contacted' cohort turn 1 actually searched) —
+# both would satisfy it. `disqualify_lead_with_reason` is single-lead
+# (`id: string`, m03-leads.ts — no bulk/filter input), so the planner can
+# only ever name leads it can actually SEE; with 1252 candidates far
+# past `SPILL_CAP` (50), the exact number of leads it reaches in one
+# turn is plan-dependent — the SAME reason the existing check is a
+# `gte` floor and not an exact count/`countDelta`. That rules out the
+# literal `countDelta: -1252`/`equals: 0` forms floated during review:
+# neither is achievable by a CORRECT plan in one turn (every prior
+# >SPILL_CAP scenario in this corpus — multistep-leads-001/002,
+# followup-leads-assign, followup-tickets-assign — uses a floor for
+# exactly this reason, never a full-cohort exact delta). The derivable,
+# achievable guard is the mirror-image floor on the DECREASING side:
+# `contacted` must have dropped by AT LEAST 1 (`lte: 1251`), i.e. <=
+# 1252-1. Combined with the existing `disqualified >= 1204` floor, a
+# scattergun plan that disqualifies non-'contacted' leads bumps
+# `disqualified` (passing check 1) WITHOUT shrinking `contacted`
+# (failing check 2, still == 1252) — it cannot pass both.
 
 id: followup-leads-disqualify
 category: followup
@@ -39,6 +61,8 @@ turns:
       state:
         - query: "SELECT COUNT(*) AS n FROM leads WHERE status='disqualified'"
           gte: 1204
+        - query: "SELECT COUNT(*) AS n FROM leads WHERE status='contacted'"
+          lte: 1251
       behavior:
         confirmation: true
       response:

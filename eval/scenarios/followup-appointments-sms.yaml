@@ -9,10 +9,23 @@
 # Derivation (template copy, VIRTUAL_NOW = 2026-11-04T10:00:00Z,
 # "tomorrow" = 2026-11-05T00:00:00Z..2026-11-06T00:00:00Z):
 #   SELECT COUNT(*) FROM appointments WHERE start_at>=1793872800000 AND
-#     start_at<1793959200000; -> 9 (turn-1 result set size)
-#   SELECT COUNT(*) FROM messages WHERE channel='sms'; -> 7479 (before
-#     turn 2) -> floor of 7480 asserted after (>= 1 new text sent into
-#     that filtered subset).
+#     start_at<1793959200000; -> 9 (turn-1 result set size), contact_ids:
+#     con_4959, con_11577, con_3905, con_7479, con_4628, con_4430,
+#     con_10906, con_10749, con_1396.
+#
+# CORRECTION (hardening review, round 2): turn 2's state check was a
+# GLOBAL `messages WHERE channel='sms'` floor (>= 7480) — too loose, since
+# it would also pass if the planner texted 1 unrelated contact instead of
+# the 9 from turn 1's filtered subset. Scoped the query to exactly those
+# 9 contact_ids and switched to `countDelta` (the LLD-preferred
+# baseline-relative form) instead of a global `gte` floor:
+#   SELECT COUNT(*) FROM messages WHERE channel='sms' AND contact_id IN
+#     ('con_4959','con_11577','con_3905','con_7479','con_4628',
+#      'con_4430','con_10906','con_10749','con_1396'); -> 15 (baseline,
+#     before turn 2 — pre-existing sms history for these 9 contacts).
+#   countDelta: 9 asserts exactly one new sms per contact in the scoped
+#     set (15 -> 24), which a scattergun "text everyone" plan touching
+#     contacts outside this 9-contact cohort cannot satisfy.
 
 id: followup-appointments-sms
 category: followup
@@ -32,8 +45,8 @@ turns:
       planActions:
         mustInclude: [sms.send_sms]
       state:
-        - query: "SELECT COUNT(*) AS n FROM messages WHERE channel='sms'"
-          gte: 7480
+        - query: "SELECT COUNT(*) AS n FROM messages WHERE channel='sms' AND contact_id IN ('con_4959','con_11577','con_3905','con_7479','con_4628','con_4430','con_10906','con_10749','con_1396')"
+          countDelta: 9
       behavior:
         confirmation: true
       response:

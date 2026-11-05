@@ -35,12 +35,35 @@
  *       category scenario asserting the write never landed (state
  *       equals its pre-turn baseline, by design — see
  *       `failure-appointments-transient-exhausted.yaml`) is CORRECT, not
- *       vacuous, even though its plan names a non-read action, AND
- *   (c) the untouched pristine baseline already satisfies the
+ *       vacuous, even though its plan names a non-read action,
+ *   (c) the check's OWN query mentions at least one of those non-read
+ *       action(s)' catalog-declared `entities` (table names) — a
+ *       read-only sanity check on a table NONE of the turn's mutating
+ *       actions ever touches (e.g. `multistep-reports-002` verifying
+ *       `payments` totals that feed a report, in a turn whose only
+ *       mutating action is `reports.create_saved_report` touching
+ *       `structures`) is a correct, deliberate absolute assertion, not
+ *       a vacuous proxy for "did the mutation land" — round-2 hardening
+ *       review finding: without this, the sweep false-positived on
+ *       exactly that case, AND
+ *   (d) the untouched pristine baseline already satisfies the
  *       equals/gte/lte comparator on its own.
- * Turns with no non-read action, or an expected-no-effect status, are
- * reported as `read-only-turn` — an absolute check matching baseline
- * there is correct, not a bug, and is never auto-fixed.
+ * Turns/checks failing (a), (b), or (c) are reported as `read-only-turn`
+ * — an absolute check matching baseline there is correct, not a bug,
+ * and is never auto-fixed.
+ *
+ * KNOWN LIMITATION of (c): catalog `entities` names the action's PRIMARY
+ * table, not every table a write cascades into (e.g.
+ * `payments.record_simulated_payment` declares only `['payments']`, but
+ * its handler also recomputes the target invoice's `amount_paid_cents`/
+ * `status` — a real cascade, not reflected in `entities`). A check on a
+ * cascade-only table can therefore be mislabeled `read-only-turn` when
+ * it's actually eligible for the VACUOUS check. Not fixed here (would
+ * need real cascade metadata the catalog doesn't expose) — current
+ * corpus is unaffected because every such check's baseline already
+ * legitimately fails its comparator, so the mislabeling doesn't hide a
+ * real bug today; flag the limitation if you add a new scenario that
+ * relies on a cascade-only effect.
  *
  * Usage: `npx tsx eval/scripts/floor-sweep.ts [--scenarios <dir>] [--verbose]`
  * `--verbose` prints every check (not just flagged ones).
@@ -72,11 +95,42 @@ export interface SweepRow {
   flag: 'VACUOUS' | 'ok' | 'read-only-turn';
 }
 
+
+
 function isNonReadAction(slug: string): boolean {
   const def = registry.get(slug);
   // Unknown slug (shouldn't happen for a lint-clean corpus): treat
   // conservatively as "might mutate" rather than silently skip it.
   return def === undefined || def.risk !== 'read';
+}
+
+/** The union of `entities` (catalog table names) every NON-`read` action
+ * named in `turnActions` declares — the set of tables this turn is
+ * actually supposed to mutate. Unknown slugs contribute nothing (can't
+ * name a table for an action the registry doesn't know), consistent with
+ * `isNonReadAction`'s "unknown == might mutate" stance only gating
+ * membership, not inventing a table name out of nothing. */
+function mutatedEntities(turnActions: readonly string[]): Set<string> {
+  const entities = new Set<string>();
+  for (const slug of turnActions) {
+    const def = registry.get(slug);
+    if (def !== undefined && def.risk !== 'read') {
+      for (const entity of def.entities) entities.add(entity);
+    }
+  }
+  return entities;
+}
+
+/** `true` iff `query`'s text mentions at least one of `entities` (a
+ * simple case-insensitive substring match — catalog table names are
+ * distinct single lowercase words, e.g. `payments`/`structures`/`leads`,
+ * so a plain substring check is reliable here without a SQL parser). */
+function queryTouchesEntity(query: string, entities: ReadonlySet<string>): boolean {
+  const lower = query.toLowerCase();
+  for (const entity of entities) {
+    if (lower.includes(entity.toLowerCase())) return true;
+  }
+  return false;
 }
 
 /** `true` iff the turn's OWN `behavior.status` assertion says the
@@ -132,11 +186,20 @@ export function sweepScenario(scenario: Scenario, db: SqlDb): SweepRow[] {
   const rows: SweepRow[] = [];
   scenario.turns.forEach((turn, i) => {
     const turnActions = turn.expect.planActions?.mustInclude ?? [];
-    const hasNonReadAction = turnActions.some(isNonReadAction) && expectsMutationToLand(turn);
+    const turnExpectsMutation = turnActions.some(isNonReadAction) && expectsMutationToLand(turn);
+    const entities = turnExpectsMutation ? mutatedEntities(turnActions) : new Set<string>();
     for (const check of turn.expect.state ?? []) {
       if (check.countDelta !== undefined) continue; // already baseline-relative, can't be vacuous this way
       const evaluated = evaluateComparator(check, db.get(check.query));
       if (!evaluated) continue; // state check with neither equals/gte/lte/countDelta can't occur, but be defensive
+      // Only a check whose OWN query touches a table one of the turn's
+      // non-read actions actually mutates is even eligible to be
+      // "vacuous" — a sanity check on an unrelated table (e.g. a report
+      // turn's read-only verification of the `payments` totals it
+      // reports on) is a correct absolute assertion regardless of
+      // whether some OTHER action in the same turn also writes to a
+      // different table.
+      const hasNonReadAction = turnExpectsMutation && queryTouchesEntity(check.query, entities);
       const flag: SweepRow['flag'] = !hasNonReadAction ? 'read-only-turn' : evaluated.satisfies ? 'VACUOUS' : 'ok';
       rows.push({
         scenarioId: scenario.id,

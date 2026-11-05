@@ -12,6 +12,23 @@
 #     this scenario only asserts the plan/response shape, not a state
 #     delta (no reliable literal side-effect column to query for this
 #     action).
+#
+# CORRECTION (hardening review, round 2): `behavior.confirmation` was
+# `false`, but `invoices.send_invoice_reminder` is `risk: 'external'`
+# (m28-invoices.ts), which `shouldGate` (executor.ts) ALWAYS gates
+# regardless of affected count — same reasoning every sibling
+# `send_invoice_reminder` scenario already asserts
+# (`followup-invoices-reminders`, `conditional-invoices-001`,
+# `indirect-invoices-001`: all `confirmation: true`). With `false`, the
+# runner (`eval/runner.ts`) auto-DENIES the `confirmation.required`
+# event instead of approving it, so the action step would never
+# actually execute, the injected TRANSIENT failure would never get a
+# chance to be consumed on a real attempt, and the "retry-then-succeed,
+# final state/response identical to the no-failure case" narrative above
+# would be false. Fixed to `true` so the runner auto-approves
+# (`eval/runner.ts`'s `expectConfirmation` -> `approved: true`) and the
+# scenario's own derivation comment is actually what happens: attempt 1
+# consumes the injected TRANSIENT, attempt 2 runs clean post-approval.
 
 id: failure-invoices-transient-retry
 category: failure
@@ -26,6 +43,6 @@ turns:
       planActions:
         mustInclude: [invoices.send_invoice_reminder]
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustNotClaim: [failed, error]

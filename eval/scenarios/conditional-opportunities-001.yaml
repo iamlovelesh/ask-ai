@@ -18,8 +18,11 @@
 #   30 <= 50 -> `shouldGate` does not fire on count; risk='write' is not
 #     destructive/bulk/external either -> no confirmation.
 #   SELECT COUNT(*) FROM opportunities WHERE pipeline_id='struct_167' AND
-#     stage='negotiation'; -> 6 already there before the turn, so the
-#     expected countDelta on that same query is +30.
+#     stage='negotiation'; -> 17 already there before the turn (CORRECTED,
+#     hardening review round 2 — was stale at "6"), so the expected
+#     countDelta on that same query is +30 regardless of the absolute
+#     baseline (countDelta is relative; the assertion itself was already
+#     correct).
 
 id: conditional-opportunities-001
 category: conditional
