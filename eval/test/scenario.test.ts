@@ -45,7 +45,7 @@ describe('seed scenario corpus', () => {
     // (e.g. `conditional`) atop these 6 seed shapes, so this must not
     // assert the category set is CLOSED to exactly these 5.
     const byCategory = new Set(scenarios.map((s) => s.category));
-    for (const required of ['direct', 'multistep', 'followup', 'ambiguous', 'unsupported']) {
+    for (const required of ['direct', 'multistep', 'followup', 'ambiguous', 'unsupported'] as const) {
       expect(byCategory.has(required)).toBe(true);
     }
   });

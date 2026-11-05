@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import type { Registry } from '../catalog/registry.js';
 import {
   planOutcomeSchema,
+  toWirePlan,
   type PlanOutcome,
   type Plan,
   type Step,
@@ -482,7 +483,18 @@ export function validate(
 }
 
 /** Builds a targeted repair prompt: the previous plan JSON + a bullet list
- * of exactly what's wrong, nothing else (LLD §5.1 `maxRepairs`). */
+ * of exactly what's wrong, nothing else (LLD §5.1 `maxRepairs`).
+ *
+ * The echoed "Previous plan" MUST be in the WIRE shape (`toWirePlan` —
+ * string-encoded `params`, every `forEach`/`when`/`expects` field present
+ * with its sentinel/null default when unused), NOT the narrowed `Plan`
+ * shape this function receives as its `plan` argument — the repair call
+ * site (`pipeline.ts`) demands a wire-shaped `FlatPlanOutcome` response
+ * (`agent/plan-schema.ts`'s `flatPlanOutcomeSchema`), so echoing the
+ * ALREADY-NARROWED shape back (object `params`, omitted fields) mismatches
+ * what's being asked for and risks the model echoing the familiar-but-wrong
+ * shape, burning a repair round on a shape mismatch instead of the actual
+ * fix (code-review finding, docs/SPIKES.md §1c). */
 export function repairPrompt(plan: Plan, errors: readonly ValidationError[]): string {
   const errorLines = errors
     .map((e) => `- ${e.stepId ? `[step ${e.stepId}] ` : ''}${e.code}: ${e.message}`)
@@ -491,11 +503,13 @@ export function repairPrompt(plan: Plan, errors: readonly ValidationError[]): st
     'The previous plan failed validation. Fix ONLY the problems listed below and',
     'resend the COMPLETE corrected plan as the same PlanOutcome JSON shape',
     '(normally `{"kind":"plan","plan":{...}}` with the FULL `plan.steps` array —',
-    'not a diff. If the request can no longer be satisfied as a plan, you may',
-    'instead return a different `kind` (search/clarify/unsupported/respond).',
+    'not a diff — and the SAME wire shape shown below: `params` as a',
+    'JSON-encoded STRING, and `forEach`/`when`/`expects` always present). If',
+    'the request can no longer be satisfied as a plan, you may instead return',
+    'a different `kind` (search/clarify/unsupported/respond).',
     '',
     'Previous plan:',
-    JSON.stringify(plan),
+    JSON.stringify(toWirePlan(plan)),
     '',
     'Validation errors to fix:',
     errorLines,

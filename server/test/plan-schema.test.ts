@@ -7,9 +7,12 @@ import {
   wireStepSchema,
   toPlanOutcome,
   toStep,
+  toPlan,
+  toWirePlan,
   FlatOutcomeShapeError,
   type FlatPlanOutcome,
   type WireStep,
+  type Plan,
 } from '../src/agent/plan-schema';
 import { CONFORMANCE_PLAN_OUTCOME } from './fixtures/conformance-plan';
 
@@ -296,6 +299,55 @@ describe('plan-schema — FlatPlanOutcome (docs/SPIKES.md §1c)', () => {
   it('wireStepSchema rejects a step missing forEach/when/expects (they must be present, not omitted)', () => {
     const bare = { id: 's1', action: 'a.b', params: '{}', dependsOn: [] };
     expect(wireStepSchema.safeParse(bare).success).toBe(false);
+  });
+});
+
+describe('plan-schema — toWirePlan (code-review fix, docs/SPIKES.md §1c)', () => {
+  it('round-trips a plan with no forEach/when/expects through toWirePlan -> toPlan', () => {
+    const plan: Plan = { goal: 'g', steps: [{ id: 's1', action: 'a.b', params: { a: 1 }, dependsOn: [] }] };
+    const roundTripped = toPlan(toWirePlan(plan));
+    expect(roundTripped).toEqual(plan);
+  });
+
+  it('round-trips a plan WITH forEach/when/expects through toWirePlan -> toPlan', () => {
+    const plan: Plan = {
+      goal: 'g',
+      steps: [
+        {
+          id: 's1',
+          action: 'a.b',
+          params: { nested: { a: [1, '$item.id'] } },
+          dependsOn: ['s0'],
+          forEach: '$s0.items',
+          when: { ref: '$s0.items', op: 'nonempty', value: 'x' },
+          expects: { nonEmpty: true, minCount: 1 },
+        },
+      ],
+    };
+    const roundTripped = toPlan(toWirePlan(plan));
+    expect(roundTripped).toEqual(plan);
+  });
+
+  it("toWirePlan output has string-encoded params, not an object (wire shape, not narrowed shape)", () => {
+    const plan: Plan = { goal: 'g', steps: [{ id: 's1', action: 'a.b', params: { foo: 'bar' }, dependsOn: [] }] };
+    const wire = toWirePlan(plan);
+    expect(typeof wire.steps[0]?.params).toBe('string');
+    expect(wire.steps[0]?.params).toBe('{"foo":"bar"}');
+    // every step still carries forEach/when/expects, always present (wire shape)
+    expect(wire.steps[0]?.forEach).toBe('');
+    expect(wire.steps[0]?.when).toEqual({ ref: '', op: 'eq', value: null });
+    expect(wire.steps[0]?.expects).toEqual({ nonEmpty: null, maxCount: null, minCount: null });
+  });
+
+  it('wireStepSchema accepts toWirePlan\'s own output (it really is wire-shaped)', () => {
+    const plan: Plan = {
+      goal: 'g',
+      steps: [{ id: 's1', action: 'a.b', params: {}, dependsOn: [], forEach: '$s0.items' }],
+    };
+    const wire = toWirePlan(plan);
+    for (const step of wire.steps) {
+      expect(wireStepSchema.safeParse(step).success).toBe(true);
+    }
   });
 });
 

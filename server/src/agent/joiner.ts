@@ -17,7 +17,7 @@ import { NoObjectGeneratedError } from 'ai';
 import { llmCall, type LlmCallResult } from '../llm/client.js';
 import type { LlmUsage } from '../events/types.js';
 import { parseRefGrammar } from './validator.js';
-import { wireStepSchema, toStep, FlatOutcomeShapeError, type Plan, type Step } from './plan-schema.js';
+import { wireStepSchema, toStep, toWirePlan, FlatOutcomeShapeError, type Plan, type Step } from './plan-schema.js';
 
 // --- checkStratum -------------------------------------------------------------
 
@@ -286,9 +286,15 @@ don't apply (never omit a field):
 Respond with the JSON object only. No prose, no markdown fences.`;
 
 function buildJoinerPrompt(ctx: JoinerRepairCtx): string {
+  // `toWirePlan` (not a plain `JSON.stringify(ctx.plan)`) — `joinerRepair`
+  // demands a wire-shaped `WireJoinerDecision` response (string-encoded
+  // `params`, always-present `forEach`/`when`/`expects`), so the echoed
+  // "Original plan" must be in that same shape, not the narrowed `Plan`
+  // shape `ctx.plan` is in — same code-review finding as `validator.ts`'s
+  // `repairPrompt` (docs/SPIKES.md §1c).
   return [
     'Original plan:',
-    JSON.stringify(ctx.plan),
+    JSON.stringify(toWirePlan(ctx.plan)),
     '',
     'Violated expectation:',
     `Step '${ctx.violation.stepId}' expected ${ctx.violation.expect} but got ${ctx.violation.actual}.`,

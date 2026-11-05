@@ -140,6 +140,20 @@ describe('validator — unknown slug (Review Focus 3: repairable, never throws)'
     expect(prompt).toContain('bogus.does_not_exist');
     expect(prompt).toContain('UNKNOWN_SLUG');
   });
+
+  it('repairPrompt echoes the previous plan in WIRE shape (string-encoded params), not the narrowed shape (code-review fix, docs/SPIKES.md §1c)', () => {
+    const plan: Plan = {
+      goal: 'g',
+      steps: [{ id: 's1', action: 'leads.search_leads', params: { status: 'open' }, dependsOn: [] }],
+    };
+    const prompt = repairPrompt(plan, [{ code: 'UNKNOWN_SLUG', stepId: 's1', message: 'irrelevant for this test' }]);
+    // `params` must appear as a JSON-encoded STRING (escaped quotes around
+    // an object: `"params":"{\"status\":\"open\"}"`), never as a bare JSON
+    // object — this is the exact shape `flatPlanOutcomeSchema`'s wire
+    // schema demands back from the model.
+    expect(prompt).toContain('"params":"{\\"status\\":\\"open\\"}"');
+    expect(prompt).not.toContain('"params":{"status":"open"}');
+  });
 });
 
 describe('validator — $item outside forEach', () => {

@@ -268,5 +268,9 @@ describe('joinerRepair — one llmCall, returns a decision', () => {
     expect(result.decision).toBe('patch');
     expect(result.patchedSteps).toHaveLength(1);
     expect(result.patchedSteps?.[0]?.id).toBe('s1');
+    // The wire `params` STRING must round-trip back to the real object —
+    // `toStep`'s JSON.parse, not a leftover string (code-review follow-up,
+    // docs/SPIKES.md §1c).
+    expect(result.patchedSteps?.[0]?.params).toEqual({ created_after: '2026-10-01' });
   });
 });

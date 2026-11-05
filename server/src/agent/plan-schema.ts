@@ -315,13 +315,19 @@ function toExpects(wire: WireExpects): Expects | undefined {
 export function toStep(wire: WireStep): Step {
   const params = parseWireParams(wire);
   const expects = toExpects(wire.expects);
+  // `.trim()` before the absent-sentinel check (not just `!== ''`) — a
+  // model emitting whitespace instead of a true empty string (e.g. `" "`)
+  // for "no forEach"/"no when clause" should still be treated as absent,
+  // not as a bogus ref the executor would fail to resolve at run time.
   return {
     id: wire.id,
     action: wire.action,
     params,
     dependsOn: wire.dependsOn,
-    ...(wire.forEach !== '' ? { forEach: wire.forEach } : {}),
-    ...(wire.when.ref !== '' ? { when: { ref: wire.when.ref, op: wire.when.op, value: wire.when.value } } : {}),
+    ...(wire.forEach.trim() !== '' ? { forEach: wire.forEach } : {}),
+    ...(wire.when.ref.trim() !== ''
+      ? { when: { ref: wire.when.ref, op: wire.when.op, value: wire.when.value } }
+      : {}),
     ...(expects !== undefined ? { expects } : {}),
   };
 }
@@ -329,6 +335,71 @@ export function toStep(wire: WireStep): Step {
 /** Narrows a wire `WirePlan` to the existing `Plan` type. */
 export function toPlan(wire: WirePlan): Plan {
   return { goal: wire.goal, steps: wire.steps.map(toStep) };
+}
+
+// --- toWirePlan — the INVERSE serializer (code-review fix, docs/SPIKES.md
+// §1c review) --------------------------------------------------------------
+//
+// `agent/validator.ts`'s `repairPrompt` and `agent/joiner.ts`'s
+// `buildJoinerPrompt` both echo the PREVIOUS plan back to the model as part
+// of a repair prompt, while demanding the model's response conform to the
+// WIRE shape (string `params`, all-fields-present `forEach`/`when`/
+// `expects`) — echoing the already-narrowed `Plan`/`Step` shape (object
+// `params`, omitted fields) via a plain `JSON.stringify(plan)` mismatches
+// what the prompt demands and risks the model echoing the FAMILIAR (wrong)
+// shape back, burning a repair round. `toWirePlan` is the exact inverse of
+// `toPlan`/`toStep` above — re-serializes an already-narrowed `Plan` back
+// to the wire shape so both repair-prompt echo sites show the model
+// EXACTLY the shape it's being asked to reproduce.
+
+function toWireWhen(when: When | undefined): WireWhen {
+  if (when === undefined) return { ref: '', op: 'eq', value: null };
+  const value = when.value;
+  return {
+    ref: when.ref,
+    op: when.op,
+    // `When.value` is `unknown | undefined` (an opaque literal comparison
+    // value — see `whenSchema`'s header); the wire type narrows it to the
+    // 4 JSON-scalar types `wireWhenSchema.value` actually accepts. Real
+    // `When`s are always constructed from a wire `value` in the first
+    // place (via `toStep`), so this is a safe round-trip, not a new
+    // constraint.
+    value: (value === undefined ? null : (value as string | number | boolean | null)),
+  };
+}
+
+function toWireExpects(expects: Expects | undefined): WireExpects {
+  return {
+    nonEmpty: expects?.nonEmpty ?? null,
+    maxCount: expects?.maxCount ?? null,
+    minCount: expects?.minCount ?? null,
+  };
+}
+
+/** The inverse of `toStep` — re-serializes an already-narrowed `Step` back
+ * to the wire shape (`params` JSON-stringified; `forEach`/`when`/`expects`
+ * filled out to their sentinel/null wire defaults when absent). */
+export function toWireStep(step: Step): WireStep {
+  return {
+    id: step.id,
+    action: step.action,
+    params: JSON.stringify(step.params),
+    dependsOn: step.dependsOn,
+    forEach: step.forEach ?? '',
+    when: toWireWhen(step.when),
+    expects: toWireExpects(step.expects),
+  };
+}
+
+/** The inverse of `toPlan` — re-serializes an already-narrowed `Plan` back
+ * to the wire shape, for repair-prompt echo sites that need to show the
+ * model its own previous plan in the EXACT shape it's being asked to
+ * resend (`agent/validator.ts`'s `repairPrompt`, `agent/joiner.ts`'s
+ * `buildJoinerPrompt`). `JSON.stringify(toWirePlan(plan))` round-trips
+ * through `toPlan(JSON.parse(...))` back to (an equivalent) `plan` —
+ * covered by `plan-schema.test.ts`'s round-trip test. */
+export function toWirePlan(plan: Plan): WirePlan {
+  return { goal: plan.goal, steps: plan.steps.map(toWireStep) };
 }
 
 /** Narrows a structurally-valid `FlatPlanOutcome` to the existing
