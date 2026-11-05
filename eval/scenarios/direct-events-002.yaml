@@ -1,0 +1,23 @@
+# Task 17 Batch C — category: direct, module: events (corpus padding —
+# events already clears the lint module-coverage floor).
+#
+# get_event_details is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id,name FROM events WHERE id='evt_1'; -> 'Product Roadmap Webinar'
+
+id: direct-events-002
+category: direct
+profile: standard
+turns:
+  - user: "What are the details on event evt_1?"
+    expect:
+      planActions:
+        mustInclude: [events.get_event_details]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [events.get_event_details]
+        mustNotClaim: [failed, error]

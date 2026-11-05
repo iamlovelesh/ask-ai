@@ -1,0 +1,39 @@
+# Task 17 Batch C — category: followup, module: leads (3rd followup —
+# extra corpus coverage/variety for the leads module).
+#
+# Turn 1 establishes a result set (leads.search_leads). Turn 2 resolves
+# "only the ones with a score above 80" against that SAME filtered
+# subset — the brief's "only the ones from X" anaphora pattern, here
+# filtering by score rather than source — and marks it qualified.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM leads WHERE score>80; -> 1012 (turn-1 result
+#     set size)
+#   SELECT COUNT(*) FROM leads WHERE score>80 AND status='qualified';
+#     -> 234 (before turn 2, already-qualified baseline) -> floor of
+#     235 asserted after.
+
+id: followup-leads-qualify
+category: followup
+profile: standard
+turns:
+  - user: "Find leads with a score above 80."
+    expect:
+      planActions:
+        mustInclude: [leads.search_leads]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM leads WHERE score>80"
+          equals: 1012
+      behavior:
+        confirmation: false
+  - user: "Mark those as qualified."
+    expect:
+      planActions:
+        mustInclude: [leads.update_lead_details]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM leads WHERE score>80 AND status='qualified'"
+          gte: 235
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]

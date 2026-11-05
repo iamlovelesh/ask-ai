@@ -1,0 +1,23 @@
+# Task 17 Batch C — category: direct, module: users (corpus padding —
+# users already clears the lint module-coverage floor).
+#
+# get_user_profile is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id,name FROM users WHERE id='user_1'; -> 'Isla Reyes'
+
+id: direct-users-002
+category: direct
+profile: standard
+turns:
+  - user: "What's the profile look like for user_1?"
+    expect:
+      planActions:
+        mustInclude: [users.get_user_profile]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [users.get_user_profile]
+        mustNotClaim: [failed, error]

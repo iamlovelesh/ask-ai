@@ -1,0 +1,23 @@
+# Task 17 Batch C — category: direct, module: quotes (corpus padding —
+# quotes already clears the lint module-coverage floor).
+#
+# get_quote_details is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id FROM quotes WHERE id='quote_1'; -> exists
+
+id: direct-quotes-003
+category: direct
+profile: standard
+turns:
+  - user: "Show me the details on quote_1."
+    expect:
+      planActions:
+        mustInclude: [quotes.get_quote_details]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [quotes.get_quote_details]
+        mustNotClaim: [failed, error]
