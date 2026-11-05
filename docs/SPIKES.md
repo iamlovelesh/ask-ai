@@ -356,6 +356,53 @@ closes out the schema-shape blocker from docs/SPIKES.md §1/§1a/§1b — Task 9
 proceed with real (non-Mock) LLM traffic against the planner AND joiner schemas on all
 3 target models.
 
+### 1d. Code-review follow-up (2026-11-05, same day): wire-shape plan echo + Anthropic plan-path confirmation
+
+**Finding 1 (repair-prompt wire mismatch — fixed, zero live calls needed):**
+`agent/validator.ts`'s `repairPrompt` and `agent/joiner.ts`'s `buildJoinerPrompt` both
+echoed the previous plan via a plain `JSON.stringify(plan)` of the ALREADY-NARROWED
+`Plan`/`Step` shape (object `params`, omitted `forEach`/`when`/`expects`) while the
+repair call demands a response in the WIRE shape (string `params`, every field
+present) that `flatPlanOutcomeSchema`/`wireJoinerDecisionSchema` require. A real
+repair-quality risk: the model could echo the FAMILIAR (but now wrong) narrowed shape
+straight back, burning a repair round on a pure shape mismatch instead of the actual
+validation fix. Fixed with `toWirePlan`/`toWireStep` (`agent/plan-schema.ts`) — the
+exact inverse of `toPlan`/`toStep` — used at both echo sites. New tests cover the
+round-trip (`toPlan(toWirePlan(plan))` equals the original, with and without
+`forEach`/`when`/`expects`) and that `repairPrompt`'s output literally contains the
+string-encoded `"params":"{\"...\":...}"` form, not a bare object. Folded in two
+adjacent minor fixes while in the file: `toStep` now `.trim()`s `forEach`/`when.ref`
+before the absent-sentinel check (whitespace-only is treated as absent, not a bogus
+ref), and `joiner.test.ts`'s patch-decision test now asserts the patched step's
+`params` round-tripped to a real object, not a leftover JSON string.
+
+**Trivial fix (eval/ exception granted for this one file):**
+`eval/test/scenario.test.ts:49`'s `TS2345` (a `for...of` over an un-const-asserted
+string-literal array widened to `string`, failing `Set<Scenario['category']>.has()`'s
+narrower parameter type) — one-line `as const` added to the array literal. No logic
+change. `npm -w eval run typecheck` is now clean for the first time across all 3
+rounds of this investigation.
+
+**Finding 2 (Anthropic plan-path confirmation — 1 live call):** every prior live
+verification of `anthropic/claude-haiku-4.5` against the real wire schema (round 3's
+re-spike, §1c) happened to return `kind:"clarify"` rather than `kind:"plan"` — a
+structurally valid, clean parse (proving the schema itself works), but it meant the
+`plan`/`WireStep`/params-JSON-string machinery had never actually been EXERCISED
+end-to-end on Anthropic specifically (only on Gemini/OpenAI, both of which returned
+real plans in that same re-spike). One live call, with the conformance request
+prefixed by "All information needed is provided; produce the plan." to make `clarify`
+less attractive:
+
+| Call | Result |
+|---|---|
+| `anthropic/claude-haiku-4.5`, directive prompt | **Plan produced** — `kind:"plan"`, 7 steps, every step's `params` parsed cleanly back to a real object (`paramsParsedOk: true`), 3,238 in / 826 out tokens, $0.007368 |
+
+**Confirmed on attempt 1 — no second, more-directive attempt was needed.** The
+params-as-JSON-string wire mechanism is now verified end-to-end on all 3 providers
+(Anthropic here; Gemini/OpenAI already confirmed via real plans in §1c's re-spike),
+closing the one remaining gap in the GO ×3 verdict: Anthropic's GO was previously
+schema-conformance-only; it is now ALSO plan-path-confirmed.
+
 ## 2. Cache passthrough spike (`scripts/spike-cache.ts`)
 
 **Setup:** two consecutive calls to `anthropic/claude-haiku-4.5` with an **identical**
@@ -564,6 +611,17 @@ calls, and the mandated ordering (diagnose-first, cache-probe-before-anything-el
 was followed exactly as instructed. This round closes out BOTH the schema GO/NO-GO
 question (§1c, GO ×3 + joiner GO) and the cache-passthrough question (§2a, CONFIRMED
 ABSENT) in a single pass.
+
+### 3d. Total spend (2026-11-05 code-review follow-up: wire-shape echo fix + Anthropic plan-path)
+
+| Call batch | Calls | Measured cost |
+|---|---|---|
+| Anthropic plan-path confirmation, directive prompt (attempt 1, succeeded — no 2nd attempt needed) | 1 | $0.007368 |
+| **Total** | **1** | **≈ $0.007368** |
+
+1 of the 2-call budget used (the repair-prompt wire-mismatch fix, the `expects`/
+`joiner.test.ts` minors, and the `eval/test/scenario.test.ts` typecheck fix all needed
+zero live calls — pure local code + test changes). Well under the $0.05 cost cap.
 
 ## 4. Cross-reference: `docs/TARGETS.md`
 
