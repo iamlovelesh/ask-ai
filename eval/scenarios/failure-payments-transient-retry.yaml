@@ -1,0 +1,38 @@
+# Task 17 Batch C — category: failure, module: payments (lint gap:
+# payments touched by only 1 scenario before this).
+#
+# TRANSIENT x1 on the mid-plan write action — per executor.ts's `invoke`
+# (attempt loop: TRANSIENT on attempt 1 -> 250ms sleep -> attempt 2, same
+# idempotency key), the injected failure is consumed on attempt 1 and the
+# real handler runs clean on attempt 2. Net effect: the step succeeds and
+# the final state is IDENTICAL to the no-failure case — only
+# `metrics.retries` is nonzero internally, which this scenario doesn't
+# assert on (not exposed to `response`/`state`).
+#
+# Derivation (template copy):
+#   SELECT id,total_cents,amount_paid_cents,status FROM invoices WHERE
+#     id='inv_100'; -> total_cents=291213, amount_paid_cents=0,
+#     status='issued' (before) -> a full-balance payment flips status to
+#     'paid' (m29-payments.ts's recompute-from-allocations rule).
+
+id: failure-payments-transient-retry
+category: failure
+profile: standard
+injectFailures:
+  - action: payments.record_simulated_payment
+    code: TRANSIENT
+    times: 1
+turns:
+  - user: >-
+      Invoice inv_100 just got paid in full — record a payment of
+      $2,912.13 against it.
+    expect:
+      planActions:
+        mustInclude: [payments.record_simulated_payment]
+      state:
+        - query: "SELECT amount_paid_cents AS n FROM invoices WHERE id='inv_100'"
+          equals: 291213
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

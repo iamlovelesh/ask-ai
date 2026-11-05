@@ -1,0 +1,30 @@
+# Task 17 Batch C — category: failure, module: tasks.
+#
+# NOT_FOUND injection — honest failure surfacing. Unlike TRANSIENT,
+# `invoke`'s attempt loop only retries when `lastError.code === 'TRANSIENT'`
+# (executor.ts), so a NOT_FOUND is NOT retried: it fails on attempt 1 and
+# the step is recorded `failed` immediately, driving the whole turn to
+# `status: 'failed'` (same final-status reducer as the refunds scenario
+# in this batch). `times: 1` is exactly right here — one dispatch, one
+# consumption, no retry to burn a second unit.
+#
+# Derivation (template copy):
+#   SELECT id,title FROM tasks WHERE id='task_1'; -> exists ("Schedule
+#     demo call") — the injected NOT_FOUND fires regardless of the real
+#     row existing; that's the whole point of the hook (forcing a
+#     deterministic failure the real seed data wouldn't otherwise produce).
+
+id: failure-tasks-not-found
+category: failure
+profile: standard
+injectFailures:
+  - action: tasks.get_task_details
+    code: NOT_FOUND
+    times: 1
+turns:
+  - user: "What's the current status of task task_1?"
+    expect:
+      planActions:
+        mustInclude: [tasks.get_task_details]
+      behavior:
+        status: failed

@@ -1,0 +1,42 @@
+# Task 17 Batch C — category: failure, module: refunds (lint gap:
+# refunds touched by only 1 scenario before this).
+#
+# TRANSIENT x2 on the SECOND (mid-plan) write action —
+# `refunds.create_refund_request` succeeds normally, but
+# `refunds.approve_refund_request` is injected to fail TRANSIENT on BOTH
+# attempts executor.ts's `invoke` allows (attempt 1 fails -> retries once
+# -> attempt 2 also fails -> no further retry -> step recorded `failed`).
+# Any step in `failed` state makes the WHOLE turn `status: 'failed'`
+# (executor.ts's final-status reducer: `states.some(r => r.state ===
+# 'failed')` short-circuits straight to `'failed'`, same precedence tier
+# as `aborted`). The refund request itself is NOT lost — it was created
+# before the failing step ran — it just never gets approved.
+#
+# Derivation (template copy):
+#   SELECT id,amount_cents,status FROM payments WHERE id='pay_102';
+#   -> kind='payment', status='succeeded', not already refunded (picked
+#     deliberately, same care as multistep-refunds-001's `pay_1`).
+#   SELECT COUNT(*) FROM payments WHERE kind='refund' AND
+#     parent_payment_id='pay_102'; -> 0 (before turn)
+
+id: failure-refunds-transient-exhausted
+category: failure
+profile: standard
+injectFailures:
+  - action: refunds.approve_refund_request
+    code: TRANSIENT
+    times: 2
+turns:
+  - user: >-
+      The customer behind payment pay_102 wants their money back — start
+      a refund request for it and get it approved.
+    expect:
+      planActions:
+        mustInclude:
+          - refunds.create_refund_request
+          - refunds.approve_refund_request
+      state:
+        - query: "SELECT COUNT(*) AS n FROM payments WHERE kind='refund' AND parent_payment_id='pay_102' AND status='requested'"
+          equals: 1
+      behavior:
+        status: failed

@@ -1,0 +1,31 @@
+# Task 17 Batch C — category: failure, module: invoices.
+#
+# TRANSIENT x1 on a single-action turn — same retry-then-succeed shape as
+# this batch's `failure-payments-transient-retry` scenario: the injected
+# failure is consumed on attempt 1, the real handler runs clean on
+# attempt 2 (executor.ts's `invoke`), and the final state/response are
+# identical to the no-failure case.
+#
+# Derivation (template copy):
+#   SELECT id,status FROM invoices WHERE id='inv_100'; -> status='issued'
+#     (exists) — send_invoice_reminder doesn't change invoice status, so
+#     this scenario only asserts the plan/response shape, not a state
+#     delta (no reliable literal side-effect column to query for this
+#     action).
+
+id: failure-invoices-transient-retry
+category: failure
+profile: standard
+injectFailures:
+  - action: invoices.send_invoice_reminder
+    code: TRANSIENT
+    times: 1
+turns:
+  - user: "Send a payment reminder for invoice inv_100."
+    expect:
+      planActions:
+        mustInclude: [invoices.send_invoice_reminder]
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]
