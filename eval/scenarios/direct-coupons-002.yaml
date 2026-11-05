@@ -1,0 +1,25 @@
+# Task 17 Batch C — category: direct, module: coupons (2nd scenario; lint
+# gap: coupons touched by only 1 scenario before this).
+#
+# get_coupon_details is a plain read — same minimal-risk pattern as
+# typo-calendars-001/typo-teams-001 (mustInclude the slug + mustMention the
+# slug in the response), picked specifically so this scenario needs no
+# state derivation at all.
+#
+# Derivation (template copy):
+#   SELECT id,name FROM structures WHERE kind='coupon' AND name='coupon 3';
+#   -> struct_198, 'coupon 3' (exists, unique name)
+
+id: direct-coupons-002
+category: direct
+profile: standard
+turns:
+  - user: "What's the discount value and status on coupon 'coupon 3'?"
+    expect:
+      planActions:
+        mustInclude: [coupons.get_coupon_details]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [coupons.get_coupon_details]
+        mustNotClaim: [failed, error]

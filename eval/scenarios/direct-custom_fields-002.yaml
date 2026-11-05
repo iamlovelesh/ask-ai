@@ -1,0 +1,21 @@
+# Task 17 Batch C — category: direct, module: custom_fields (2nd scenario;
+# lint gap: custom_fields touched by only 1 scenario before this — the
+# existing direct-custom_fields-001 covers create_custom_field).
+#
+# list_fields_for_module is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+
+id: direct-custom_fields-002
+category: direct
+profile: standard
+turns:
+  - user: "What custom fields exist on the opportunities module?"
+    expect:
+      planActions:
+        mustInclude: [custom_fields.list_fields_for_module]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [custom_fields.list_fields_for_module]
+        mustNotClaim: [failed, error]

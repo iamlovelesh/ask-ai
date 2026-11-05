@@ -1,0 +1,26 @@
+# Task 17 Batch C — category: direct, module: campaigns (2nd scenario;
+# lint gap: campaigns touched by only 1 scenario before this — the
+# existing direct-campaigns-001 covers create_campaign).
+#
+# get_campaign_details is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id,name FROM structures WHERE kind='campaign' AND name='campaign 3';
+#   -> struct_73, 'campaign 3' (exists, unique name)
+
+id: direct-campaigns-002
+category: direct
+profile: standard
+turns:
+  - user: "Give me the details on the 'campaign 3' campaign."
+    expect:
+      planActions:
+        mustInclude: [campaigns.get_campaign_details]
+        mustNotInclude: [campaigns.launch_campaign]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [campaigns.get_campaign_details]
+        mustNotClaim: [failed, error]

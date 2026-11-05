@@ -1,0 +1,25 @@
+# Task 17 Batch C — category: direct, module: availability (2nd scenario;
+# lint gap: availability touched by only 1 scenario before this — the
+# existing direct-availability-001 covers block_time_range).
+#
+# find_available_slots is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id,name FROM structures WHERE kind='calendar' AND name='calendar 3';
+#   -> struct_178, 'calendar 3' (exists, unique name)
+
+id: direct-availability-002
+category: direct
+profile: standard
+turns:
+  - user: "What open slots are there on calendar 'calendar 3' this week?"
+    expect:
+      planActions:
+        mustInclude: [availability.find_available_slots]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [availability.find_available_slots]
+        mustNotClaim: [failed, error]
