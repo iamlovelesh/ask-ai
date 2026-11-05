@@ -44,6 +44,10 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/every part of the request|do not stop after/i);
   });
 
+  it('forbids asking permission mid-task (gates are automatic)', () => {
+    expect(system).toMatch(/never ask permission/i);
+  });
+
   it('names the catalog search escape hatch', () => {
     expect(system).toContain('catalog__search_actions');
   });

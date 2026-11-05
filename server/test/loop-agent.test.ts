@@ -414,6 +414,42 @@ describe('runLoopTurn — catalog search escape hatch', () => {
   });
 });
 
+describe('runLoopTurn — transient retry rail', () => {
+  it('retries a TRANSIENT handler failure once and succeeds', async () => {
+    let n = 0;
+    const registry = buildRegistry(
+      [[action('invoices.send_reminder', 'write', async () => {
+        n += 1;
+        if (n === 1) throw new ActionError('TRANSIENT', 'blip');
+        return { sent: 1 };
+      })]],
+      [],
+    );
+    const events = await drive(registry, 'send the reminder', [
+      toolCallResponse('invoices__send_reminder', { id: 'inv_1' }),
+      textResponse('Reminder sent.'),
+    ]);
+    expect(n).toBe(2);
+    expect(completedOf(events).status).toBe('done');
+    expect(typesOf(events)).toContain('step.finished');
+    expect(events.filter((e) => e.t === 'step.failed')).toHaveLength(0);
+  });
+
+  it('a TRANSIENT failure that persists after the retry surfaces as a failed step', async () => {
+    let n = 0;
+    const registry = buildRegistry(
+      [[action('invoices.send_reminder', 'write', async () => { n += 1; throw new ActionError('TRANSIENT', 'blip'); })]],
+      [],
+    );
+    const events = await drive(registry, 'send the reminder', [
+      toolCallResponse('invoices__send_reminder', { id: 'inv_1' }),
+      textResponse('Could not send it.'),
+    ]);
+    expect(n).toBe(2);
+    expect(events.filter((e) => e.t === 'step.failed')).toHaveLength(1);
+  });
+});
+
 describe('StuckTracker', () => {
   it('escalates ok -> ok -> hint -> stop for identical action+error', () => {
     const tracker = new StuckTracker();

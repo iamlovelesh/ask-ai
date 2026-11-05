@@ -225,9 +225,20 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         const key = `${turnId}:0:${stepId}:0`;
         const startedAt = performance.now();
         try {
-          const output: unknown = await crm.tx((db) =>
-            action.handler(params, { db, clock, idempotencyKey: key, format: 'concise' } satisfies ActionContext),
-          );
+          // TRANSIENT errors get ONE deterministic in-place retry (old
+          // executor parity, LLD §5.3) before the model ever sees them.
+          const dispatch = (): Promise<unknown> =>
+            crm.tx((db) => action.handler(params, { db, clock, idempotencyKey: key, format: 'concise' } satisfies ActionContext));
+          let output: unknown;
+          try {
+            output = await dispatch();
+          } catch (firstErr) {
+            if (firstErr instanceof ActionError && firstErr.code === 'TRANSIENT') {
+              output = await dispatch();
+            } else {
+              throw firstErr;
+            }
+          }
           const ms = performance.now() - startedAt;
 
           let finalResult: unknown = output;
