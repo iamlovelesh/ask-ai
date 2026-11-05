@@ -145,6 +145,7 @@ describe('plan() — happy path (MockLLM via __setTestFetch)', () => {
     // would actually return — `plan()` narrows it back to `narrowOutcome`
     // via `toPlanOutcome`.
     const wireOutcome = {
+      reasoning: 'no action needed, just reply',
       kind: 'respond',
       plan: { goal: '', steps: [] },
       queries: [],

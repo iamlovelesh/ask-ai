@@ -157,6 +157,7 @@ function wireStep(overrides: Partial<WireStep> = {}): WireStep {
 describe('plan-schema — FlatPlanOutcome (docs/SPIKES.md §1c)', () => {
   const emptyWirePlan = { goal: '', steps: [] };
   const base: FlatPlanOutcome = {
+    reasoning: 'thinking it through',
     kind: 'plan',
     plan: emptyWirePlan,
     queries: [],
@@ -299,6 +300,28 @@ describe('plan-schema — FlatPlanOutcome (docs/SPIKES.md §1c)', () => {
   it('wireStepSchema rejects a step missing forEach/when/expects (they must be present, not omitted)', () => {
     const bare = { id: 's1', action: 'a.b', params: '{}', dependsOn: [] };
     expect(wireStepSchema.safeParse(bare).success).toBe(false);
+  });
+
+  // --- Fix 1 (task-quickwins): in-band `reasoning` field ---------------------
+
+  it('flatPlanOutcomeSchema requires `reasoning` (rejects when omitted, even with every other field present)', () => {
+    const { reasoning, ...withoutReasoning } = base;
+    void reasoning;
+    const result = flatPlanOutcomeSchema.safeParse(withoutReasoning);
+    expect(result.success).toBe(false);
+  });
+
+  it('flatPlanOutcomeSchema accepts a non-empty `reasoning` string and `reasoning` is the FIRST key in property order', () => {
+    const result = flatPlanOutcomeSchema.safeParse({ ...base, reasoning: 'look at s1 then s2' });
+    expect(result.success).toBe(true);
+    expect(Object.keys(flatPlanOutcomeSchema.shape)[0]).toBe('reasoning');
+  });
+
+  it('toPlanOutcome strips `reasoning` — it never reaches the internal PlanOutcome for any kind', () => {
+    const withReasoning = { ...base, reasoning: 'verbose working-out', kind: 'respond' as const, text: 'hi' };
+    const outcome = toPlanOutcome(withReasoning);
+    expect(outcome).toEqual({ kind: 'respond', text: 'hi' });
+    expect(outcome).not.toHaveProperty('reasoning');
   });
 });
 

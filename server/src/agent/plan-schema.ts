@@ -251,8 +251,25 @@ export type WirePlan = z.infer<typeof wirePlanSchema>;
  * defaults (`{goal:"",steps:[]}` / `[]`) rather than `.nullable()` (round 2:
  * nullable object/array compiles to `anyOf`, which this file avoids
  * everywhere); `question`/`reason`/`text` stay `.nullable()` (safe for
- * plain strings — collapses to a `type` array, no `anyOf`). */
+ * plain strings — collapses to a `type` array, no `anyOf`).
+ *
+ * `reasoning` (in-band reasoning, task-quickwins Fix 1) is a REQUIRED plain
+ * `z.string()` — a trivially concrete `type`, so it's as provider-safe as
+ * every other scalar field this file already relies on — and is listed
+ * FIRST in property order, below, so `generateObject`'s JSON Schema
+ * `required`/`properties` ordering (which every target provider honors when
+ * deciding emission order) has the model write its reasoning out BEFORE
+ * committing to "kind"/"plan"/etc. It is intentionally NOT part of
+ * `PlanOutcome`/`Plan`/`Step` — `toPlanOutcome` below reads every OTHER
+ * field off `flat` but never copies `reasoning` across, so it never reaches
+ * the validator/executor/joiner/events, and `toWireStep`/`toWirePlan` (the
+ * repair-prompt echo serializers) have no `reasoning` field to re-emit
+ * either — a repair round asks for fresh reasoning on the NEW response, not
+ * a resend of the old one, keeping repair prompts lean. */
 export const flatPlanOutcomeSchema = z.strictObject({
+  reasoning: z
+    .string()
+    .describe('2-4 sentences working out which actions, what order, which refs — brief.'),
   kind: z.enum(['plan', 'search', 'clarify', 'unsupported', 'respond']),
   plan: wirePlanSchema,
   queries: z.array(z.string()),

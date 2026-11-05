@@ -350,7 +350,7 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
       const note =
         `\n\n[RETRY: your previous reply could not be parsed as the required JSON` +
         `${attempt.message ? ` (${attempt.message})` : ''}. Return ONLY the JSON object ` +
-        `with ALL SIX fields ("kind"/"plan"/"queries"/"question"/"reason"/"text") — ` +
+        `with ALL SEVEN fields ("reasoning"/"kind"/"plan"/"queries"/"question"/"reason"/"text") — ` +
         `no prose, no explanation, no markdown fences.]`;
       const retryCtx = { ...ctx, rewrittenRequest: `${ctx.rewrittenRequest}${note}` };
       attempt = await attemptPlannerCall(budget, retryCtx, turnId, plannerModel());

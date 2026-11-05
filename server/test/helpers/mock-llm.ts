@@ -97,7 +97,21 @@ function normalizeMockValue(value: unknown): unknown {
   const obj = value as Record<string, unknown>;
 
   if (typeof obj['kind'] === 'string' && PLAN_OUTCOME_KINDS.has(obj['kind'])) {
-    const merged = { plan: { goal: '', steps: [] }, queries: [], question: null, reason: null, text: null, ...obj };
+    // Fix 1 (task-quickwins): `flatPlanOutcomeSchema` now requires a
+    // leading `reasoning` string — default it here (like every other
+    // wire placeholder this function fills in) so the ~dozen
+    // `queueMockLlm([...])` call sites across pipeline/api/engine tests
+    // that script a terse `{kind:'plan', plan:{...}}`-style value don't
+    // all need to spell out a `reasoning` field by hand.
+    const merged = {
+      reasoning: 'test reasoning',
+      plan: { goal: '', steps: [] },
+      queries: [],
+      question: null,
+      reason: null,
+      text: null,
+      ...obj,
+    };
     const plan = merged['plan'] as Record<string, unknown>;
     return { ...merged, plan: { ...plan, steps: normalizeWireSteps(plan['steps']) } };
   }
