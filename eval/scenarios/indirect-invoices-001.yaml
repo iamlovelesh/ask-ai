@@ -1,0 +1,44 @@
+# Task 17 hardening (defect 2) — category: indirect, module: invoices
+# (+messages). "Our invoices keep getting paid late" states a recurring
+# PROBLEM, not an action — the planner must infer that the remedy is to
+# surface the overdue set (`invoices.list_overdue_invoices`) and nudge
+# the customers (`invoices.send_invoice_reminder`), mirroring
+# `followup-invoices-reminders.yaml`'s two actions but collapsed into a
+# single indirect turn instead of an explicit two-turn "find/then send"
+# sequence. `send_invoice_reminder` is `risk: 'external'`
+# (m28-invoices.ts) and ALWAYS gates per `shouldGate`
+# (server/src/agent/executor.ts: "fire iff risk ∈ {destructive, bulk,
+# external} OR affectedCount > 50") regardless of affected count, so
+# `behavior.confirmation: true` is certain here — same reasoning as
+# `conditional-invoices-001.yaml` and `multistep-refunds-001.yaml`.
+#
+# Derivation (template copy, VIRTUAL_NOW = 2026-11-04T10:00:00Z, epoch
+# 1793786400000, no explicit min_days_overdue named in the indirect
+# prompt so `list_overdue_invoices` uses its default/no-offset filter —
+# same base query as `followup-invoices-reminders.yaml`'s turn 1):
+#   SELECT COUNT(*) FROM invoices WHERE status='issued' AND
+#     due_date<1793786400000; -> 165 (candidate set, before the turn) —
+#     exceeds SPILL_CAP (50), so the exact number of reminders sent in
+#     one turn is plan-dependent.
+#   SELECT COUNT(*) FROM messages WHERE channel='email'; -> 7560 (before
+#     the turn) — the state check below asserts a post-turn floor of
+#     7561 (>= 1 new reminder sent).
+
+id: indirect-invoices-001
+category: indirect
+profile: standard
+turns:
+  - user: "Our invoices keep getting paid late. Can you do something about it?"
+    expect:
+      planActions:
+        mustInclude:
+          - invoices.list_overdue_invoices
+          - invoices.send_invoice_reminder
+        mustNotInclude: [invoices.void_unpaid_invoice]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM messages WHERE channel='email'"
+          gte: 7561
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]

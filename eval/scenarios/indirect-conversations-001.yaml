@@ -1,0 +1,38 @@
+# Task 17 hardening (defect 2) — category: indirect, module:
+# conversations (+tasks). "Customers keep complaining we never reply" is
+# a stated PROBLEM, not an action — the planner must recognize this maps
+# to `conversations.list_unanswered_conversations` (whose own searchCard
+# synonyms in m11-conversations.ts literally include "people we never
+# replied to") and then do something about the matches. There is no
+# "send a reply" action in the conversations module (m11-conversations.ts
+# only has read/assign/read-state/close/reopen/comment/summarize/list
+# actions) — the only catalog-realistic remedy is queuing follow-up work
+# via `tasks.create_task`, so that's what this scenario requires rather
+# than inventing a reply-send action that doesn't exist.
+#
+# Derivation (template copy, VIRTUAL_NOW = 2026-11-04T10:00:00Z, epoch
+# 1793786400000):
+#   SELECT COUNT(*) FROM conversations c WHERE c.archived=0 AND
+#     c.last_inbound_at IS NOT NULL AND (c.last_outbound_at IS NULL OR
+#     c.last_inbound_at > c.last_outbound_at); -> 404 (matches
+#     `list_unanswered_conversations`'s own WHERE clause,
+#     m11-conversations.ts) — exceeds SPILL_CAP (50), so the exact number
+#     of follow-up tasks created is plan-dependent.
+#   SELECT COUNT(*) FROM tasks; -> 1500 (before the turn) — the state
+#     check below asserts a post-turn floor of 1501 (>= 1 new task).
+
+id: indirect-conversations-001
+category: indirect
+profile: standard
+turns:
+  - user: "Customers keep complaining we never reply. Can you help with this?"
+    expect:
+      planActions:
+        mustInclude:
+          - conversations.list_unanswered_conversations
+          - tasks.create_task
+      state:
+        - query: "SELECT COUNT(*) AS n FROM tasks"
+          gte: 1501
+      response:
+        mustNotClaim: [failed, error]

@@ -1,0 +1,40 @@
+# Task 17 hardening (defect 2) — category: indirect, module: leads
+# (+tasks). This is the brief's OWN example of an indirect request ("I
+# keep forgetting to follow up with new leads. Help me stay on top of
+# them.") — no explicit action is named at all, just a recurring problem
+# and a vague goal. The planner must independently decide BOTH the
+# retrieval filter (new leads) and the remedy (a follow-up task per
+# lead, or an equivalent reminder strategy) — a genuinely indirect
+# request admits more than one reasonable plan, so `planActions` only
+# requires the two essential module touches and stays loose otherwise
+# (no `orderFree: false`, no param pins on exactly which leads query
+# shape was chosen).
+#
+# Derivation (template copy, VIRTUAL_NOW = 2026-11-04T10:00:00Z, epoch
+# 1793786400000):
+#   SELECT COUNT(*) FROM leads WHERE status='new'; -> 1362 (new leads,
+#     the natural reading of "new leads" here) — exceeds SPILL_CAP (50),
+#     so the exact number of follow-up tasks created in one turn is
+#     plan-dependent, same reasoning as `multistep-leads-002.yaml`.
+#   SELECT COUNT(*) FROM tasks; -> 1500 (before the turn) — the state
+#     check below asserts a post-turn floor of 1501 (>= 1 new task)
+#     rather than a brittle exact countDelta.
+
+id: indirect-leads-002
+category: indirect
+profile: standard
+turns:
+  - user: >-
+      I keep forgetting to follow up with new leads. Help me stay on top
+      of them.
+    expect:
+      planActions:
+        mustInclude:
+          - leads.search_leads
+          - tasks.create_task
+        mustNotInclude: [leads.create_lead]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM tasks"
+          gte: 1501
+      response:
+        mustNotClaim: [failed, error]

@@ -1,0 +1,49 @@
+# Task 17 hardening (defect 2) — category: indirect, module: leads (+tasks).
+#
+# RELABELED from `multistep-leads-001.yaml` (hardening task 17): this
+# scenario was already indirect in substance — the file's own original
+# comment said so ("Indirect phrasing on purpose") — but was mislabeled
+# `category: multistep` because the id/filename happened to encode that
+# word. The user states a PROBLEM ("leads who have gone quiet"), not an
+# explicit action chain; the planner must infer both the filter AND the
+# remedy. That is exactly the brief's "an indirect request interpreted
+# correctly" demo item, so it belongs in `category: indirect`, not
+# `multistep` (which the brief reserves for prompts that spell out an
+# explicit sequence of actions). Renamed to `indirect-leads-001` so the
+# filename/id no longer lies about the category; old
+# `multistep-leads-001.yaml` deleted (git mv), not kept alongside.
+#
+# The planner must translate "gone quiet" into a real `leads.search_leads`
+# filter (e.g. status='contacted' with no recent reply) and then create
+# follow-up tasks for the matches. Unlike `multistep-lead-sweep.yaml`'s
+# flagship 9-step DSL-conformance fixture, this scenario only needs the
+# ESSENTIAL two-module slug pair — the exact search filter the planner
+# picks is legitimately plan-dependent for an indirect prompt like this.
+#
+# Derivation (template copy): "quiet" leads are a `status='contacted'`
+# cohort — `SELECT COUNT(*) FROM leads WHERE status='contacted'` -> 1252
+# (template copy) — large and open-ended for an indirect ask, so the
+# exact count of follow-up tasks created is plan-dependent (how narrowly
+# the planner scopes "gone quiet"). `SELECT COUNT(*) FROM tasks` -> 1500
+# before the turn; the state check below asserts a post-turn floor of
+# 1501 (>= 1 new follow-up task), matching the LLD's `countDelta`-vs-`gte`
+# guidance for exactly this "derived floor, not an exact bulk count" case.
+
+id: indirect-leads-001
+category: indirect
+profile: standard
+turns:
+  - user: >-
+      Help me follow up with leads who have gone quiet lately — find them
+      and get a follow-up task queued for each one.
+    expect:
+      planActions:
+        mustInclude:
+          - leads.search_leads
+          - tasks.create_task
+        mustNotInclude: [leads.create_lead]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM tasks"
+          gte: 1501
+      response:
+        mustNotClaim: [failed, error]
