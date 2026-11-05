@@ -101,8 +101,15 @@ export const BUDGETS = {
 //   $r_t<T>_s<N>[.path] cross-turn handle from WorkingState
 //   $item[.path]        current element — legal ONLY under forEach
 //   path := field | field.path | items[*] (pluck over array)
+//                       | items[K] (engine-wave E5: 0-based element index;
+//                         resolves against the HYDRATED full list, so [0] is
+//                         the true first element. K≥0 by grammar; out-of-range
+//                         is a runtime failure, not a validation error.)
 
-const PATH = '(?:\\.[A-Za-z_][A-Za-z0-9_]*(?:\\[\\*\\])?)*';
+// Engine-wave E5: a path segment's bracket suffix may be `[*]` (pluck over an
+// array) OR `[K]` (select element K, K a NON-NEGATIVE integer). `[-1]` and the
+// like simply don't match the grammar → REF_GRAMMAR, by construction.
+const PATH = '(?:\\.[A-Za-z_][A-Za-z0-9_]*(?:\\[\\*\\]|\\[\\d+\\])?)*';
 const STEP_REF = new RegExp(`^\\$s(\\d+)(${PATH})$`);
 const CROSS_TURN_REF = new RegExp(`^\\$(r_t\\d+_s\\d+)(${PATH})$`);
 const ITEM_REF = new RegExp(`^\\$item(${PATH})$`);
@@ -251,16 +258,23 @@ function isPlainStringSchema(schema: unknown): boolean {
 interface PathTok {
   field: string;
   spread: boolean;
+  /** Engine-wave E5: a non-negative element index (`items[0]`), mutually
+   * exclusive with `spread`. */
+  index?: number;
 }
 
 /** Same tokenizer the executor uses (`agent/executor.ts#parsePathTokens`) —
- * `.field` segments, each optionally suffixed `[*]` (array pluck). */
+ * `.field` segments, each optionally suffixed `[*]` (array pluck) or `[K]`
+ * (element index, engine-wave E5). */
 function pathTokens(path: string): PathTok[] {
   const toks: PathTok[] = [];
-  const re = /\.([A-Za-z_][A-Za-z0-9_]*)(\[\*\])?/g;
+  const re = /\.([A-Za-z_][A-Za-z0-9_]*)(\[\*\]|\[\d+\])?/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(path)) !== null) {
-    toks.push({ field: m[1] as string, spread: m[2] !== undefined });
+    const suffix = m[2];
+    const tok: PathTok = { field: m[1] as string, spread: suffix === '[*]' };
+    if (suffix !== undefined && suffix !== '[*]') tok.index = Number(suffix.slice(1, -1));
+    toks.push(tok);
   }
   return toks;
 }
@@ -451,6 +465,15 @@ function walkPath(schema: unknown, tokens: readonly PathTok[], idx: number, spre
   const child = container.field(tok.field);
   if (child === undefined) return { kind: 'skip' };
 
+  if (tok.index !== undefined) {
+    // Engine-wave E5: `[K]` selects one element — walk the element schema,
+    // collapsing any spread back to a scalar. Out-of-range K is a RUNTIME
+    // failure (array length is unknown at validation time), never flagged
+    // here. Non-introspectable element → skip, like `[*]`.
+    const elem = arrayElement(child);
+    if (elem === null) return { kind: 'skip' };
+    return walkPath(elem, tokens, idx + 1, false);
+  }
   if (tok.spread) {
     const elem = arrayElement(child);
     if (elem === null) return { kind: 'skip' }; // `[*]` on a non-introspectable/non-array → skip
@@ -486,7 +509,9 @@ export interface RefAutofix {
 }
 
 function pathToString(tokens: readonly PathTok[]): string {
-  return tokens.map((t) => `.${t.field}${t.spread ? '[*]' : ''}`).join('');
+  return tokens
+    .map((t) => `.${t.field}${t.spread ? '[*]' : t.index !== undefined ? `[${t.index}]` : ''}`)
+    .join('');
 }
 
 interface PathCandidate {
@@ -676,7 +701,7 @@ function schemaAtPath(schema: unknown, tokens: readonly PathTok[]): unknown | un
     if (cls.kind !== 'object' || !cls.keys.has(tok.field)) return undefined;
     const child = cls.field(tok.field);
     if (child === undefined) return undefined;
-    if (tok.spread) {
+    if (tok.spread || tok.index !== undefined) {
       const elem = arrayElement(child);
       if (elem === null) return undefined;
       cur = elem;

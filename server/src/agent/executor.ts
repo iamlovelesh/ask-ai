@@ -214,14 +214,21 @@ function isCoreSlug(slug: string): boolean {
 interface PathToken {
   field: string;
   spread: boolean;
+  /** Engine-wave E5: a non-negative element index (`items[0]`). Mutually
+   * exclusive with `spread` — a segment is either `[*]` (pluck all) or
+   * `[K]` (select element K), never both. */
+  index?: number;
 }
 
 function parsePathTokens(path: string): PathToken[] {
   const tokens: PathToken[] = [];
-  const re = /\.([A-Za-z_][A-Za-z0-9_]*)(\[\*\])?/g;
+  const re = /\.([A-Za-z_][A-Za-z0-9_]*)(\[\*\]|\[\d+\])?/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(path)) !== null) {
-    tokens.push({ field: m[1] as string, spread: m[2] !== undefined });
+    const suffix = m[2];
+    const tok: PathToken = { field: m[1] as string, spread: suffix === '[*]' };
+    if (suffix !== undefined && suffix !== '[*]') tok.index = Number(suffix.slice(1, -1));
+    tokens.push(tok);
   }
   return tokens;
 }
@@ -230,8 +237,11 @@ function field(o: unknown, f: string): unknown {
   return o !== null && typeof o === 'object' ? (o as Record<string, unknown>)[f] : undefined;
 }
 
-/** Traverse a dotted `path` (possibly containing `[*]` pluck markers) over
- * `base`. `$s1.items[*].contact_id` → `base.items.map(r => r.contact_id)`. */
+/** Traverse a dotted `path` (possibly containing `[*]` pluck markers or
+ * `[K]` element indexes) over `base`. `$s1.items[*].contact_id` →
+ * `base.items.map(r => r.contact_id)`; `$s1.items[0].id` → `base.items[0].id`
+ * (engine-wave E5). An out-of-range `[K]` resolves to `undefined` (a clean
+ * RUNTIME ref-resolution failure, per E5 — never a silent wrong element). */
 function traverse(base: unknown, path: string): unknown {
   const tokens = parsePathTokens(path);
   let cur = base;
@@ -242,7 +252,13 @@ function traverse(base: unknown, path: string): unknown {
     } else {
       cur = Array.isArray(cur) ? cur.map((e) => field(e, tok.field)) : undefined;
     }
-    if (tok.spread) spread = true;
+    if (tok.index !== undefined) {
+      // Select a single element — collapses a spread back to a scalar.
+      cur = Array.isArray(cur) ? cur[tok.index] : undefined;
+      spread = false;
+    } else if (tok.spread) {
+      spread = true;
+    }
   }
   return cur;
 }
@@ -259,7 +275,32 @@ interface ResolveCtx {
   hasItem: boolean;
   refs: RefStore;
   resolveCrossTurn: (handleId: string) => ResolveResult;
+  /** Engine-wave E1: re-select the FULL set of live rows behind a spilled
+   * ref (via `crm.tx(db => refs.hydrate(ref, db))`). */
+  hydrateRef: (ref: string) => import('./refs.js').HydrateResult;
+  /** Engine-wave E1: when true, a bulk/full-list access of a spilled result
+   * hydrates the full set (or fails TRUNCATED_INPUT) rather than silently
+   * using the 20-row sample. False for `when`-condition/display resolution,
+   * where emptiness/counts don't need the full rows. */
+  hydrateSpills: boolean;
   meta: ResolveMeta;
+}
+
+/** Hydrate a spilled base to its FULL row set for a bulk/full-list access
+ * (engine-wave E1). Returns the base unchanged when hydration isn't needed;
+ * throws `TruncatedInputError` when the full set can't be recovered. */
+function hydrateSpilled(base: unknown, path: string, rctx: ResolveCtx): unknown {
+  if (!rctx.hydrateSpills) return base;
+  const info = spilledInfo(base);
+  if (info === undefined) return base;
+  if (!accessExceedsSample(path, info.present)) return base;
+  const hy = rctx.hydrateRef(info.ref);
+  if (!hy.complete) {
+    throw new TruncatedInputError(
+      `This step needs the full set of ${info.total} record(s) behind ${info.ref}, but only a ${info.present}-row sample is available (the search result was truncated and its full set can't be recovered here). Narrow the search (add filters) so the result fits inline, then retry.`,
+    );
+  }
+  return { ...(base as Record<string, unknown>), items: hy.rows, sample: hy.rows };
 }
 
 /** Whole-value ref (`$s1.path` | `$r_t3_s1.path` | `$item.path`) resolution.
@@ -268,7 +309,8 @@ function resolveWholeRef(ref: string, rctx: ResolveCtx): unknown {
   const parsed = parseRefGrammar(ref);
   if (!parsed) return ref;
   if (parsed.form === 'step') {
-    return traverse(rctx.stepResults.get(parsed.stepId), parsed.path);
+    const base = hydrateSpilled(rctx.stepResults.get(parsed.stepId), parsed.path, rctx);
+    return traverse(base, parsed.path);
   }
   if (parsed.form === 'item') {
     return traverse(rctx.item, parsed.path);
@@ -278,9 +320,24 @@ function resolveWholeRef(ref: string, rctx: ResolveCtx): unknown {
   if (result.missing > 0) {
     rctx.meta.drift = { ref: parsed.handleId, ...result };
   }
-  if (parsed.path === '') return result.ids;
   const handle = rctx.refs.get(parsed.handleId);
-  return traverse({ ids: result.ids, items: handle?.sample ?? [] }, parsed.path);
+  if (parsed.path === '') {
+    // Bare whole-handle ref (e.g. a forEach over `$r_t2_s1`): a bulk consumer
+    // over a truncated handle must fail honestly, not fan out over survivors
+    // of a 20-id sample (engine-wave E1).
+    if (rctx.hydrateSpills && handle !== undefined && handle.idList.length < handle.total) {
+      throw new TruncatedInputError(
+        `This step needs the full set of ${handle.total} record(s) behind ${parsed.handleId}, but only a ${handle.idList.length}-id sample was stored (the prior result was truncated). Narrow the search so the result fits inline, then retry.`,
+      );
+    }
+    return result.ids;
+  }
+  const base = hydrateSpilled(
+    { ref: parsed.handleId, total: handle?.total ?? result.ids.length, items: handle?.sample ?? [], ids: result.ids },
+    parsed.path,
+    rctx,
+  );
+  return traverse(base, parsed.path);
 }
 
 /** Thrown when a whole-value param ref parses as a legal ref but resolves to
@@ -295,6 +352,22 @@ export class RefResolutionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'RefResolutionError';
+  }
+}
+
+/** Engine-wave E1 (RC4): thrown when a bulk consumer (core op / forEach / an
+ * out-of-sample index ref) tries to operate on a result that SPILLED
+ * (`{__spill}` → a 20-row sample) and whose full matching set cannot be
+ * hydrated from the stored ref (the producer never enumerated the complete id
+ * set). Operating on the 20-row page would silently touch 20 of N records —
+ * the exact silent-truncation defect this guards. Surfaced as a step-level
+ * `TRUNCATED_INPUT` failure (repairable context, dependents skipped, NO
+ * partial execution — it fires during param resolution, before any write). */
+export class TruncatedInputError extends Error {
+  readonly code = 'TRUNCATED_INPUT' as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'TruncatedInputError';
   }
 }
 
@@ -325,7 +398,33 @@ function describeUnresolvedRef(ref: string, rctx: ResolveCtx): string {
   return `Ref '${ref}' did not resolve (${hint}). A search/list result exposes rows under '.items[*]' — reference a per-row field as '…items[*].<field>', and never type in or infer a literal id.`;
 }
 
-const EMBEDDED_REF_RE = /\$(?:item|s\d+|r_t\d+_s\d+)(?:\.[A-Za-z_][A-Za-z0-9_]*(?:\[\*\])?)*/g;
+const EMBEDDED_REF_RE = /\$(?:item|s\d+|r_t\d+_s\d+)(?:\.[A-Za-z_][A-Za-z0-9_]*(?:\[\*\]|\[\d+\])?)*/g;
+
+/** A spilled step/handle result as the executor stores it downstream
+ * (`spillToRef`'s `{ref,total,sample,items}`) — truncated when `total`
+ * exceeds the rows actually present. Engine-wave E1. */
+function spilledInfo(base: unknown): { ref: string; total: number; present: number } | undefined {
+  if (base === null || typeof base !== 'object') return undefined;
+  const o = base as Record<string, unknown>;
+  if (typeof o['ref'] !== 'string' || typeof o['total'] !== 'number') return undefined;
+  const rows = Array.isArray(o['items']) ? (o['items'] as unknown[]) : Array.isArray(o['sample']) ? (o['sample'] as unknown[]) : undefined;
+  if (rows === undefined) return undefined;
+  if (o['total'] <= rows.length) return undefined; // not truncated — full set already inline
+  return { ref: o['ref'] as string, total: o['total'] as number, present: rows.length };
+}
+
+/** Does traversing `path` over the row list of a spilled result need MORE
+ * rows than the `present` sample holds? True for a whole-list read
+ * (`.items`), a pluck (`.items[*]`), or an index `[K]` with `K >= present`.
+ * False for `.total`/`.ref` or an in-sample index (`.items[0]`). */
+function accessExceedsSample(path: string, present: number): boolean {
+  const tokens = parsePathTokens(path);
+  const first = tokens[0];
+  if (first === undefined) return false; // bare whole-object ref — handled separately
+  if (first.field !== 'items' && first.field !== 'sample') return false;
+  if (first.index !== undefined) return first.index >= present;
+  return true; // whole-list or `[*]` pluck over the row list
+}
 
 /** Interpolate `$ref` substrings inside a larger literal string (e.g. the
  * conformance plan's `"Follow up with $item.item.name"`). */
@@ -454,12 +553,16 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
   const resolveCrossTurn = (handleId: string): ResolveResult =>
     crm.tx((db: StoreTx) => refs.resolve(handleId, db));
 
-  const makeResolveCtx = (item: unknown, hasItem: boolean): ResolveCtx => ({
+  const hydrateRef = (ref: string) => crm.tx((db: StoreTx) => refs.hydrate(ref, db));
+
+  const makeResolveCtx = (item: unknown, hasItem: boolean, hydrateSpills = false): ResolveCtx => ({
     stepResults,
     item,
     hasItem,
     refs,
     resolveCrossTurn,
+    hydrateRef,
+    hydrateSpills,
     meta: { maxArrayLen: 0 },
   });
 
@@ -653,17 +756,24 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
   const spillToRef = (
     step: Step,
     action: ActionDef,
-    spill: { __spill: true; total: number; sample: unknown[] },
+    spill: { __spill: true; total: number; sample: unknown[]; idList?: string[]; query?: object },
   ): { result: unknown; ref: string } => {
-    const handle = refs.put({
+    // Engine-wave E1: when the producer enumerated its COMPLETE id set (or a
+    // re-runnable `query`), persist THAT so a later bulk consumer can hydrate
+    // the full set — not just the 20 sample ids. Absent, we fall back to the
+    // sample ids (a truncated set the hydrate path will honestly reject).
+    const sampleIds = spill.sample.map((row) => String(field(row, 'id'))).filter((id) => id !== 'undefined');
+    const put: Parameters<RefStore['put']>[0] = {
       action: step.action,
       turnId,
       stepId: step.id,
       entityType: action.entities[0] ?? action.module,
       total: spill.total,
-      idList: spill.sample.map((row) => String(field(row, 'id'))).filter((id) => id !== 'undefined'),
+      idList: spill.idList ?? sampleIds,
       sample: spill.sample,
-    });
+    };
+    if (spill.query !== undefined) put.query = spill.query;
+    const handle = refs.put(put);
     // Downstream intra-plan refs over a spilled read can only see the sample
     // (the full set lives behind the handle) — documented limitation.
     return {
@@ -672,7 +782,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     };
   };
 
-  function isSpill(x: unknown): x is { __spill: true; total: number; sample: unknown[] } {
+  function isSpill(x: unknown): x is { __spill: true; total: number; sample: unknown[]; idList?: string[]; query?: object } {
     return (
       x !== null &&
       typeof x === 'object' &&
@@ -713,12 +823,12 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     }
 
     // --- scalar (non-forEach) step ---
-    const rctx = makeResolveCtx(undefined, false);
+    const rctx = makeResolveCtx(undefined, false, true);
     let params: Record<string, unknown>;
     try {
       params = resolveValue(step.params, rctx) as Record<string, unknown>;
     } catch (err) {
-      if (err instanceof RefResolutionError) {
+      if (err instanceof RefResolutionError || err instanceof TruncatedInputError) {
         const ms = performance.now() - started;
         const error = { code: err.code, message: err.message };
         const { hint } = recordStuck(step.action, stableHash(step.params), err.code);
@@ -780,8 +890,22 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     isWrite: boolean,
     started: number,
   ): Promise<void> => {
-    const feCtx = makeResolveCtx(undefined, false);
-    const forEachResolved = resolveWholeRef(step.forEach as string, feCtx);
+    const feCtx = makeResolveCtx(undefined, false, true);
+    let forEachResolved: unknown;
+    try {
+      // Engine-wave E1: a forEach over a spilled list hydrates the FULL set
+      // here (fanOut/gate count = true total), or fails TRUNCATED_INPUT —
+      // never fans out over the 20-row sample.
+      forEachResolved = resolveWholeRef(step.forEach as string, feCtx);
+    } catch (err) {
+      if (err instanceof RefResolutionError || err instanceof TruncatedInputError) {
+        const error = { code: err.code, message: err.message };
+        const { hint } = recordStuck(step.action, stableHash(step.params), err.code);
+        emitFailed(step.id, hint ? { ...error, message: `${error.message} [${hint}]` } : error, performance.now() - started);
+        return;
+      }
+      throw err;
+    }
     const resolvedItems = Array.isArray(forEachResolved) ? forEachResolved : [];
     // Per-item `when` (`$item.*`) filters the fan-out BEFORE the cap/gate/loop,
     // so only qualifying items are counted and invoke the handler.
@@ -812,13 +936,13 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     const resolvedParams: Record<string, unknown>[] = [];
     const resolutionErrors: { index: number; message: string }[] = [];
     for (let i = 0; i < items.length; i += 1) {
-      const rctx = makeResolveCtx(items[i], true);
+      const rctx = makeResolveCtx(items[i], true, true);
       try {
         resolvedParams.push(
           coerceDateParams(resolveValue(step.params, rctx) as Record<string, unknown>, action.inputSchema),
         );
       } catch (err) {
-        if (err instanceof RefResolutionError) {
+        if (err instanceof RefResolutionError || err instanceof TruncatedInputError) {
           resolutionErrors.push({ index: i, message: err.message });
           continue;
         }

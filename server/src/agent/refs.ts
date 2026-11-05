@@ -54,10 +54,27 @@ export interface ResolveResult {
   total: number;
 }
 
+/** Full-set hydration result (engine-wave E1). `rows` are the COMPLETE set
+ * of live rows behind the handle (re-selected from the CRM store by id);
+ * `complete` is true only when the handle actually enumerated its full
+ * matching set (`idList.length === total`, or a re-runnable `query`) — when
+ * false the handle only ever held a truncated sample and `rows` must NOT be
+ * treated as the whole set (the executor then fails honestly with
+ * TRUNCATED_INPUT rather than operating on a page). */
+export interface HydrateResult {
+  rows: Record<string, unknown>[];
+  complete: boolean;
+  total: number;
+}
+
 export interface RefStore {
   put(h: NewRefHandle): RefHandle;
   get(ref: string): RefHandle | undefined;
   resolve(ref: string, tx: StoreTx): ResolveResult;
+  /** Re-select the FULL set of live rows behind a handle (engine-wave E1).
+   * `complete` tells the caller whether the handle truly held its whole
+   * matching set — see `HydrateResult`. */
+  hydrate(ref: string, tx: StoreTx): HydrateResult;
   /** Mark every ref for a session stale (the `/admin/reset` path — LLD §3.2).
    * Defaults to this store's own session when `sessionId` is omitted. */
   markAllStale(sessionId?: string): void;
@@ -199,6 +216,49 @@ class RefStoreImpl implements RefStore {
       missing: checkIds.length - survivors.length,
       total: handle.total,
     };
+  }
+
+  /** Full-set hydration (engine-wave E1): re-select every live row behind a
+   * handle. The handle's `idList` (the COMPLETE match set when the producer
+   * supplied it, LLD §2.5) is re-checked against the store; `complete`
+   * reports whether we actually have the whole set — `idList.length ===
+   * total` (full enumeration) or a re-runnable `query` descriptor. A handle
+   * that only ever held a 20-row sample is NOT complete, so a bulk consumer
+   * must fail honestly rather than treat `rows` as the whole set. */
+  hydrate(ref: string, tx: StoreTx): HydrateResult {
+    const handle = this.get(ref);
+    if (!handle) return { rows: [], complete: false, total: 0 };
+
+    const hasQuery = handle.query !== undefined && Object.keys(handle.query).length >= 0 && handle.idList.length === 0;
+    const checkIds =
+      handle.idList.length > 0 ? handle.idList : this.idsFromQuery(handle, tx);
+    // We have the WHOLE set iff the stored id list enumerates every match
+    // (`idList.length === total`) or the elided set was recovered from a
+    // re-runnable query (`idList` empty + a query present).
+    const complete =
+      (handle.idList.length > 0 && handle.idList.length >= handle.total) ||
+      (handle.idList.length === 0 && hasQuery && checkIds.length >= handle.total);
+
+    const table = tableForEntityType(handle.entityType);
+    if (table === undefined || checkIds.length === 0) {
+      return { rows: [], complete: complete && checkIds.length === 0 && handle.total === 0, total: handle.total };
+    }
+    const rows = this.selectRows(table, checkIds, tx);
+    return { rows, complete, total: handle.total };
+  }
+
+  /** `SELECT * ... WHERE id IN (...)`, chunked like `existingIds`. Returns
+   * live rows in the order the store yields them. */
+  private selectRows(table: string, ids: readonly string[], tx: StoreTx): Record<string, unknown>[] {
+    const out: Record<string, unknown>[] = [];
+    const CHUNK = 900;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = tx.all(`SELECT * FROM ${table} WHERE id IN (${placeholders})`, [...chunk]);
+      for (const row of rows) out.push(row as Record<string, unknown>);
+    }
+    return out;
   }
 
   /** Re-run the stored `query` descriptor to recover ids for an elided
