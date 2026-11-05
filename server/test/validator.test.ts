@@ -632,7 +632,9 @@ describe('validator — id-fabrication guard (ID_NOT_RESOLVED)', () => {
           {
             id: 's1',
             action: 'orders.apply_coupon_to_order',
-            params: { id: 'order_2', coupon_id: '$s0.items[*].id' },
+            // a scalar ref (no `[*]`) into the scalar coupon_id — the point
+            // here is only that a $ref is never flagged as ID_NOT_RESOLVED.
+            params: { id: 'order_2', coupon_id: '$s0.id' },
             dependsOn: ['s0'],
           },
         ],
@@ -665,7 +667,11 @@ describe('validator — ref-path vs output schema (REF_PATH_MISMATCH)', () => {
       description: slug,
       risk: 'read',
       entities: [],
-      inputSchema: z.strictObject({ id: z.string().optional(), course_id: z.string().optional() }),
+      inputSchema: z.strictObject({
+        id: z.string().optional(),
+        course_id: z.string().optional(), // scalar
+        course_ids: z.array(z.string()).optional(), // array (for pluck binds)
+      }),
       outputSchema,
       searchCard: { synonyms: [], examplePhrasings: [] },
       handler: async () => ({}),
@@ -684,7 +690,11 @@ describe('validator — ref-path vs output schema (REF_PATH_MISMATCH)', () => {
   );
 
   function planWith(ref: string, producer = 'courses.search_courses', forEach?: string): PlanOutcome {
-    const consumer: Record<string, unknown> = { id: 's2', action: 'enrollments.enroll', params: { course_id: ref }, dependsOn: ['s1'] };
+    // Bind array-valued `items[*]` plucks to the ARRAY param so these
+    // PATH-validity tests aren't also caught by the (separate) scalar-arity
+    // rule; scalar paths bind to the scalar param.
+    const paramKey = ref.includes('[*]') ? 'course_ids' : 'course_id';
+    const consumer: Record<string, unknown> = { id: 's2', action: 'enrollments.enroll', params: { [paramKey]: ref }, dependsOn: ['s1'] };
     if (forEach !== undefined) {
       consumer['params'] = {};
       consumer['forEach'] = forEach;

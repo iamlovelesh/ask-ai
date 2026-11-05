@@ -185,6 +185,8 @@ function looksLikeName(value: string): boolean {
   if (/\s/.test(value)) return true; // "coupon 5", "premium plan"
   if (/[A-Z]/.test(value)) return true; // "Summer Sale", "SPRING20"
   if (!/\d/.test(value)) return true; // "acme", "widget" — no digit at all
+  if (/^\d+$/.test(value)) return true; // "4" — a bare ordinal ("appointment 4"),
+  // never a real entity id (ids always carry a lowercase prefix, e.g. 'apt_4').
   return false;
 }
 
@@ -328,6 +330,22 @@ function arrayElement(schema: unknown): unknown | null {
     return items !== undefined ? arrayElement(items) : null;
   }
   return null;
+}
+
+/** True when a param field expects a SCALAR string/number (after unwrapping
+ * optional/nullable/default) — the only case where binding an array-valued
+ * `items[*]` pluck to it is a definite shape error. Arrays, unions, enums,
+ * objects, and anything non-introspectable return false (defensive skip). */
+function isScalarParamSchema(schema: unknown): boolean {
+  const s = unwrapSchema(schema);
+  return s instanceof z.ZodString || s instanceof z.ZodNumber;
+}
+
+/** True when a whole-value ref is array-valued by construction: its path
+ * carries an `[*]` pluck/spread, which the executor's `traverse` always
+ * resolves to an array (`cur.map(...)`). */
+function isArrayValuedPluck(ref: string): boolean {
+  return parseRefGrammar(ref) !== null && ref.includes('[*]');
 }
 
 type WalkResult =
@@ -619,6 +637,25 @@ export function validate(
       //    ref-bearing params are skipped (resolved at execution time).
       const shape = isObjectShape(action.inputSchema) ? action.inputSchema.shape : undefined;
       for (const [key, value] of Object.entries(step.params)) {
+        // Array-pluck bound to a scalar param: `items[*]` resolves to an
+        // ARRAY, but a plain-string/number field expects ONE value — this
+        // passes grammar/path checks yet fails downstream ("Unknown named
+        // parameter '0'"). Flag it. Defensive-skip when the target schema is
+        // opaque/array/union/enum (not an introspectable scalar).
+        if (
+          typeof value === 'string' &&
+          isArrayValuedPluck(value) &&
+          shape &&
+          key in shape &&
+          isScalarParamSchema(shape[key])
+        ) {
+          errors.push({
+            code: 'REF_PATH_MISMATCH',
+            stepId: step.id,
+            message: `Step '${step.id}': param '${key}' for '${step.action}' takes a single value, but '${value}' is an 'items[*]' pluck that resolves to a LIST. Narrow the list to one item first (filter to a single match) or reference a scalar field — do not bind an array to a scalar id/param.`,
+          });
+          continue;
+        }
         if (containsRef(value)) continue;
         if (!shape || !(key in shape)) {
           errors.push({
