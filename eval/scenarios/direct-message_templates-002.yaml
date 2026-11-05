@@ -1,0 +1,22 @@
+# Task 17 Batch C — category: direct, module: message_templates (2nd
+# scenario; lint gap: message_templates touched by only 1 scenario before
+# this — the existing direct-message_templates-001 covers
+# create_message_template).
+#
+# search_templates is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+
+id: direct-message_templates-002
+category: direct
+profile: standard
+turns:
+  - user: "Find our message templates that mention 'welcome'."
+    expect:
+      planActions:
+        mustInclude: [message_templates.search_templates]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [message_templates.search_templates]
+        mustNotClaim: [failed, error]

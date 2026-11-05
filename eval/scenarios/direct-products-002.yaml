@@ -1,0 +1,24 @@
+# Task 17 Batch C — category: direct, module: products (2nd scenario;
+# lint gap: products touched by only 1 scenario before this — the
+# existing direct-products-001 covers create_product).
+#
+# search_products is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT DISTINCT category FROM products; includes 'Analytics' (exists).
+
+id: direct-products-002
+category: direct
+profile: standard
+turns:
+  - user: "Search our products for anything in the 'Analytics' category."
+    expect:
+      planActions:
+        mustInclude: [products.search_products]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [products.search_products]
+        mustNotClaim: [failed, error]

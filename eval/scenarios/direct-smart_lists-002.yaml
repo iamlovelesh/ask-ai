@@ -1,0 +1,25 @@
+# Task 17 Batch C — category: direct, module: smart_lists (2nd scenario;
+# lint gap: smart_lists touched by only 1 scenario before this — the
+# existing direct-smart_lists-001 covers create_smart_list).
+#
+# get_smart_list_definition is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id,name FROM structures WHERE kind='smart_list' AND name='smart list 10';
+#   -> exists, unique name (20 distinct smart_list rows in this seed).
+
+id: direct-smart_lists-002
+category: direct
+profile: standard
+turns:
+  - user: "What's the definition behind the 'smart list 10' smart list?"
+    expect:
+      planActions:
+        mustInclude: [smart_lists.get_smart_list_definition]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [smart_lists.get_smart_list_definition]
+        mustNotClaim: [failed, error]
