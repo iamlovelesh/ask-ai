@@ -113,16 +113,37 @@ const MAX_BASELINE_STEPS = 12;
 // below *is* `call_action{slug,params}` — one discriminated union member
 // per the tool's single action plus the loop's natural "I'm done" exit.
 
-const baselineDecisionSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('call_action'),
-    slug: z.string(),
-    params: z.record(z.string(), z.unknown()),
-  }),
-  z.object({ kind: z.literal('final'), text: z.string() }),
-]);
+// WIRE schema: flat object with sentinel fields — the same provider-safe
+// construct the optimized planner uses (docs/SPIKES.md §1b/§1c: root
+// discriminated unions map to `oneOf` and free-form records map to
+// empty-schema `additionalProperties`, both rejected by Anthropic/OpenAI
+// structured-output endpoints). `paramsJson` is a JSON-encoded string the
+// adapter parses; '' sentinels mean "absent".
+const baselineWireSchema = z.object({
+  kind: z.enum(['call_action', 'final']),
+  slug: z.string(), // '' when kind='final'
+  paramsJson: z.string(), // '{}' or '' when kind='final'
+  text: z.string(), // '' when kind='call_action'
+});
 
-type BaselineDecision = z.infer<typeof baselineDecisionSchema>;
+type BaselineDecision =
+  | { kind: 'call_action'; slug: string; params: Record<string, unknown> }
+  | { kind: 'final'; text: string };
+
+function toBaselineDecision(wire: z.infer<typeof baselineWireSchema>): BaselineDecision {
+  if (wire.kind === 'final') return { kind: 'final', text: wire.text };
+  let params: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(wire.paramsJson === '' ? '{}' : wire.paramsJson);
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      params = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // leave {} — the registry validation downstream reports the bad params
+    // back into the observation history, same as any other invalid input.
+  }
+  return { kind: 'call_action', slug: wire.slug, params };
+}
 
 // --- system prompt (instructions + FULL catalog, resent every step) --------
 
@@ -131,15 +152,17 @@ const INSTRUCTIONS = `You are a CRM automation agent. You have access to EXACTLY
 JSON params object. On every turn you must respond with EXACTLY one JSON
 object, no prose, no markdown fences:
 
-  {"kind":"call_action","slug":"<module.action_name>","params":{...}}
-  {"kind":"final","text":"<your final answer to the user>"}
+  {"kind":"call_action","slug":"<module.action_name>","paramsJson":"{\\"status\\":\\"new\\"}","text":""}
+  {"kind":"final","slug":"","paramsJson":"","text":"<your final answer to the user>"}
 
 Rules:
+- ALWAYS include all four fields (kind, slug, paramsJson, text); use "" for
+  the ones your kind does not need.
 - "slug" MUST be copied EXACTLY as written in the catalog below (a
   "module.action_name" string) — never invent, abbreviate, or guess a slug.
-- "params" is a plain JSON object matching that action's expected inputs —
-  literals only; there is no ref syntax here. If you need an id you saw in
-  an earlier step's result, copy it as a literal string.
+- "paramsJson" is a JSON-ENCODED STRING containing the params object for
+  that action — literals only; there is no ref syntax here. If you need an
+  id you saw in an earlier step's result, copy it as a literal string.
 - After each call_action you will be shown the result (or error) as an
   observation, then asked to decide again. Use that observation to decide
   your next step.
@@ -365,16 +388,16 @@ export async function* runBaselineTurn(input: RunBaselineTurnInput): AsyncGenera
 
     for (let step = 1; step <= MAX_BASELINE_STEPS; step += 1) {
       const prompt = buildUserPrompt(userText, clock.iso(), history);
-      const result = await llmCall<BaselineDecision>({
+      const result = await llmCall<z.infer<typeof baselineWireSchema>>({
         stage: 'baseline',
         model,
-        schema: baselineDecisionSchema,
+        schema: baselineWireSchema,
         system,
         prompt,
         turnId,
       });
       recordUsage(result.usage);
-      const decision = result.value as BaselineDecision;
+      const decision = toBaselineDecision(result.value as z.infer<typeof baselineWireSchema>);
 
       if (decision.kind === 'final') {
         return yield* finalize('done', decision.text);
@@ -436,7 +459,13 @@ export async function* runBaselineTurn(input: RunBaselineTurnInput): AsyncGenera
       }
 
       markTtfur(); // tool-intent: dispatching for real.
-      record({ t: 'step.started', turnId, stepId, action: action.slug });
+      record({
+        t: 'step.started',
+        turnId,
+        stepId,
+        action: action.slug,
+        resolvedParams: [params as Record<string, unknown>],
+      });
       const stepSpan: SpanHandle = spans.start({ turnId, kind: 'step', name: action.slug, meta: { stepId } });
       const key = `${turnId}:0:${stepId}:0`;
       // Instrumentation timing, not domain time — use a real monotonic
