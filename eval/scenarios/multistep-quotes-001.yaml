@@ -1,0 +1,37 @@
+# Task 17 Batch B part 1 — category: multistep, module: quotes (+invoices).
+#
+# `convert_accepted_quote_to_invoice` (m27-quotes.ts) creates a REAL
+# `invoices` row carrying the quote's own total — a genuine cross-module
+# write, not a stub. Picking an accepted quote with NO existing linked
+# invoice avoids a possible CONFLICT on a quote that's already been
+# converted once (the template seed can link one before any scenario
+# turn runs).
+#
+# Derivation (template copy):
+#   SELECT id,status,total_cents,contact_id FROM quotes WHERE status='accepted';
+#   -> quote_3 is accepted, total_cents=175318, contact_id='con_4548'
+#   SELECT COUNT(*) FROM invoices WHERE quote_id='quote_3'; -> 0 (not yet
+#     converted — quote_2, the first accepted quote tried, already had an
+#     invoice linked and was rejected as a fixture for this reason)
+
+id: multistep-quotes-001
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      Quote quote_3 was accepted by the customer — convert it into an
+      invoice and confirm the invoice total lines up with the quote.
+    expect:
+      planActions:
+        mustInclude:
+          - quotes.get_quote_details
+          - quotes.convert_accepted_quote_to_invoice
+        mustNotInclude: [quotes.create_quote]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM invoices WHERE quote_id='quote_3' AND total_cents=175318"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustMention: ["1,753"]
+        mustNotClaim: [failed, error]

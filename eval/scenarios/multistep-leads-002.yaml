@@ -1,0 +1,40 @@
+# Task 17 Batch B part 1 — category: multistep, module: leads (+appointments,
+# core.anti_join, tasks).
+#
+# A smaller, two-table anti-join cousin of `multistep-lead-sweep.yaml`:
+# new leads minus anyone who already has a booked appointment, then a
+# follow-up task per survivor. `appointments.contact_id` is the join key
+# (leads carry their own `contact_id` column per `entities/model.ts`).
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM leads WHERE status='new'; -> 1362
+#   SELECT COUNT(*) FROM leads l WHERE l.status='new' AND NOT EXISTS
+#     (SELECT 1 FROM appointments a WHERE a.contact_id = l.contact_id);
+#   -> 1314 (new leads with no booked appointment)
+#   SELECT COUNT(*) FROM tasks; -> 1500 (before turn)
+# 1314 exceeds `SPILL_CAP` (50), so — same reasoning as
+# `conditional-invoices-001` — the exact number of follow-up tasks
+# created in one turn is plan-dependent; the state check uses a post-turn
+# floor (1501 = 1500 + >=1) rather than an exact bulk countDelta.
+
+id: multistep-leads-002
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      Find new leads that have not booked an appointment yet, and create a
+      follow-up task for each one so we don't lose them.
+    expect:
+      planActions:
+        mustInclude:
+          - leads.search_leads
+          - appointments.search_appointments
+          - core.anti_join
+          - tasks.create_task
+        mustNotInclude: [leads.create_lead]
+        orderFree: true
+      state:
+        - query: "SELECT COUNT(*) AS n FROM tasks"
+          gte: 1501
+      response:
+        mustNotClaim: [failed, error]

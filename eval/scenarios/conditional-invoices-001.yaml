@@ -1,0 +1,54 @@
+# Task 17 Batch B part 1 — category: conditional, module: invoices (+messages).
+#
+# "Skip customers who already got one this week" is the EVAL-CRITICAL dedup
+# marker documented in `server/src/catalog/m28-invoices.ts`: `send_invoice_
+# reminder` writes a `messages` row whose `subject` is prefixed
+# `[invoice_reminder:{invoice_id}]`; a caller dedupes by checking that
+# prefix within the last 7 days. `list_overdue_invoices`/`search_invoices`
+# filter `status='issued' AND due_date < (now - min_days_overdue*DAY_MS)` —
+# `min_days_overdue: 15` is exactly "overdue by more than 15 days."
+#
+# Derivation (template copy, VIRTUAL_NOW = runner-process.ts default
+# 2026-11-04T10:00:00Z, epoch 1793786400000; the task brief's quoted epoch
+# 1762250400000 is off by one year — confirmed against the actual default
+# in `eval/runner-process.ts` and `eval/lint.ts`'s ALLOWED_DATES set):
+#   cutoff15 = NOW - 15*DAY_MS (Oct 20 2026)
+#   SELECT COUNT(*) FROM invoices WHERE status='issued' AND due_date<cutoff15
+#     AND amount_paid_cents < total_cents;
+#   -> 109 unpaid overdue invoices (before turn)
+#   SELECT COUNT(*) FROM messages WHERE subject LIKE '[invoice_reminder:%'
+#     AND created_at >= (NOW - 7*DAY_MS);
+#   -> 0 (no reminders sent this week yet, so none should be skipped)
+# `risk: 'external'` on `send_invoice_reminder` (m28-invoices.ts) always
+# gates per `shouldGate` (executor.ts) regardless of affected count, so
+# `behavior.confirmation: true` is certain here independent of the exact
+# candidate count. Because the candidate set (109) exceeds `SPILL_CAP`
+# (50, list-output.ts), the exact number of reminders actually sent in one
+# turn is plan-dependent — the state check below uses a post-turn `gte`
+# floor (pre-turn count was 0) rather than a brittle exact `countDelta`.
+
+id: conditional-invoices-001
+category: conditional
+profile: standard
+turns:
+  - user: >-
+      For unpaid invoices that are overdue by more than 15 days, draft
+      reminders for the customers — but skip anyone who already got a
+      reminder from us this week.
+    expect:
+      planActions:
+        mustInclude:
+          - invoices.list_overdue_invoices
+          - invoices.send_invoice_reminder
+        mustNotInclude: [invoices.void_unpaid_invoice]
+      paramChecks:
+        - action: invoices.list_overdue_invoices
+          param: min_days_overdue
+          equals: 15
+      state:
+        - query: "SELECT COUNT(*) AS n FROM messages WHERE subject LIKE '[invoice_reminder:%'"
+          gte: 1
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]

@@ -40,8 +40,14 @@ describe('seed scenario corpus', () => {
   });
 
   it('covers one direct, one multistep, one followup, one ambiguous, one unsupported scenario', () => {
+    // Lower-bound / subset check (matches this file's own header note):
+    // later Task 17 batches add scenarios in OTHER `categorySchema` members
+    // (e.g. `conditional`) atop these 6 seed shapes, so this must not
+    // assert the category set is CLOSED to exactly these 5.
     const byCategory = new Set(scenarios.map((s) => s.category));
-    expect(byCategory).toEqual(new Set(['direct', 'multistep', 'followup', 'ambiguous', 'unsupported']));
+    for (const required of ['direct', 'multistep', 'followup', 'ambiguous', 'unsupported']) {
+      expect(byCategory.has(required)).toBe(true);
+    }
   });
 
   it('covers the typo subtype and the no_repeat subtype', () => {
