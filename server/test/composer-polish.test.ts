@@ -204,6 +204,30 @@ describe('composer polish — ON (COMPOSER_POLISH=1)', () => {
     expect(completed(events).status).toBe('done');
   });
 
+  it('P2: discards a polish that invents numbers (false "processed 2 requests") and keeps the template', async () => {
+    process.env['COMPOSER_POLISH'] = '1';
+    // A catastrophic polish that contradicts the grounded template with
+    // fabricated counts — the exact sales R7 failure ("successfully processed
+    // 2 requests. I failed to process 0 requests.").
+    const LIE = 'I have successfully processed 2 requests. I failed to process 0 requests.';
+    __setTestFetch(planThenPolishFetch(ONE_STEP_PLAN, () => rawTextResponse(LIE)));
+
+    const events = await drive(oneStepRegistry(), 'find my leads');
+
+    expect(finalText(events)).toBe(TEMPLATE_TEXT); // fabrication rejected
+    expect(completed(events).metrics.llmCalls).toBe(2); // call still counted
+  });
+
+  it('P2: accepts a faithful rephrase that only reformats existing numbers', async () => {
+    process.env['COMPOSER_POLISH'] = '1';
+    const FAITHFUL = 'I found 1 lead for you.'; // "1" is present in the template
+    __setTestFetch(planThenPolishFetch(ONE_STEP_PLAN, () => rawTextResponse(FAITHFUL)));
+
+    const events = await drive(oneStepRegistry(), 'find my leads');
+
+    expect(finalText(events)).toBe(FAITHFUL);
+  });
+
   it('does not polish a clarify outcome (only operations summaries)', async () => {
     process.env['COMPOSER_POLISH'] = '1';
     const queue = queueMockLlm([{ kind: 'clarify', question: 'Which lead did you mean?' }]);

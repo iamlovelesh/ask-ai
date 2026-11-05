@@ -251,6 +251,61 @@ describe('compose — genericity self-check: an UNTESTED, fictitious module', ()
   });
 });
 
+describe('compose — write-echo names the CHANGED fields (P2: narrative fabrication)', () => {
+  it('sales F13: "update lead score to 99" echoes the score, not an invented status/value/date', () => {
+    const plan: Plan = {
+      goal: 'update lead_88 score to 99',
+      steps: [{ id: 's1', action: 'leads.update_lead', params: { id: 'lead_88', score: 99 }, dependsOn: [] }],
+    };
+    // The full DB record carries unrelated fields (status, value_cents,
+    // created_at) that the OLD composer narrated as "new status, $361.06,
+    // 2026-11-01" — none of which the request touched.
+    const text = compose({
+      outcome: 'done',
+      plan,
+      stepStates: {
+        s1: { state: 'done', result: { id: 'lead_88', score: 99, status: 'new', value_cents: 36106, created_at: Date.parse('2026-11-01') } },
+      },
+    });
+    expect(text).toContain('lead_88');
+    expect(text).toContain('score'); // the field that actually changed, named
+    expect(text).toContain('99');
+    expect(text).not.toContain('$361.06'); // irrelevant monetary field not narrated
+    expect(text).not.toContain('2026-11-01'); // irrelevant created_at not narrated
+    expect(text).not.toContain('now new'); // status wasn't changed → not claimed
+  });
+
+  it('support NF1: reassignment names the new assignee (the changed param), from the result value', () => {
+    const plan: Plan = {
+      goal: 'reassign ticket to Hana',
+      steps: [{ id: 's1', action: 'support_tickets.reassign_ticket', params: { id: 'ticket_362', assignee_id: '$s0.id' }, dependsOn: [] }],
+    };
+    const text = compose({
+      outcome: 'done',
+      plan,
+      stepStates: { s1: { state: 'done', result: { id: 'ticket_362', assignee_id: 'user_25', status: 'open' } } },
+    });
+    expect(text).toContain('ticket_362');
+    expect(text).toContain('assignee');
+    expect(text).toContain('user_25');
+    expect(text).not.toContain('now open'); // status unchanged by this write
+  });
+
+  it('a param-less write (cancel) still conveys its effect via the result status', () => {
+    const plan: Plan = {
+      goal: 'cancel task',
+      steps: [{ id: 's1', action: 'tasks.cancel_task', params: {}, dependsOn: [] }],
+    };
+    const text = compose({
+      outcome: 'done',
+      plan,
+      stepStates: { s1: { state: 'done', result: { id: 'task_9', status: 'cancelled' } } },
+    });
+    expect(text).toContain('Cancelled');
+    expect(text).toContain('now cancelled');
+  });
+});
+
 describe('compose — cancelled (RC9: calm rejection tone)', () => {
   it('billing F6 / marketing F9: a rejected confirmation reads as a calm "no changes", not an error', () => {
     const plan: Plan = {

@@ -523,6 +523,48 @@ function describeReadLeaf(step: Step, result: unknown): string {
 
 // --- write-leaf rendering (echoes ACTUAL result values, never plan params) --
 
+/** P2 (narrative fabrication): the fields a write actually CHANGED are the
+ * step's param KEYS other than the target selector `id` — a generic,
+ * schema-free derivation. We read only the KEYS from `step.params` (which
+ * field was set), never the VALUES (grounding contract #3 — an invented
+ * planner-intended value must never leak); the value shown comes straight
+ * from the RESULT row. A target-selector param like `lead_id`/`contact_id`
+ * names the record acted on, not a change, and is naturally dropped because
+ * the result row keys the record under `id`, not under that param name — so
+ * `key in row` is false for it. Value params (`score`, `assignee_id`,
+ * `owner_id`, `effective_at`, …) ARE echoed back in the result under the same
+ * name, so they survive the `key in row` filter. */
+function changedFieldKeys(step: Step): string[] {
+  return Object.keys(step.params).filter((k) => k !== 'id');
+}
+
+/** Human label for a changed field: drop a trailing `_id` (so `owner_id`
+ * reads "owner", `assignee_id` reads "assignee"), then spaces for
+ * underscores. */
+function humanizeFieldLabel(key: string): string {
+  return key.replace(/_id$/, '').replace(/_/g, ' ');
+}
+
+/** Render a changed field's ACTUAL result value under its schema name, using
+ * the same structural money/date conventions the read pickers use (keyed off
+ * the literal field NAME, never a guess from English). `undefined` on a
+ * nullish value (skip it — never fabricate). */
+function renderFieldValue(key: string, value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (CENTS_SUFFIX_RE.test(key) && typeof value === 'number') return formatCents(value);
+  if (DATE_SUFFIX_RE.test(key)) {
+    const ms = parseTimestamp(value);
+    if (ms !== undefined) return formatDate(ms);
+  }
+  if (typeof value === 'object') return undefined; // nested object — nothing simple to show
+  return String(value);
+}
+
+function pickRecordId(row: Row): string | undefined {
+  const id = row['id'];
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
+}
+
 function describeWriteLeaf(step: Step, result: unknown): string {
   const { verb, objectPhrase } = humanizeSlugVerb(step.action);
   const past = pastTense(verb);
@@ -538,14 +580,26 @@ function describeWriteLeaf(step: Step, result: unknown): string {
       return `${past} ${norm.total} ${noun}${norm.total === 1 ? '' : 's'}.`;
     }
     case 'record': {
-      const name = pickName(norm.row);
-      const amount = pickAmount(norm.row);
-      const date = pickDisplayDate(norm.row);
-      const status = typeof norm.row['status'] === 'string' ? (norm.row['status'] as string) : undefined;
-      const extras = [amount, date, status !== undefined ? `now ${status}` : undefined].filter(
-        (p): p is string => p !== undefined,
-      );
-      const subject = name ?? subjectFallback;
+      const row = norm.row;
+      const subject = pickName(row) ?? pickRecordId(row) ?? subjectFallback;
+      // Prefer naming the fields the write actually changed (their result
+      // values), under their real schema names — never an arbitrary
+      // amount/date/status the request never touched (sales F13 / support
+      // NF1 / sales R8).
+      const changed = changedFieldKeys(step);
+      const extras: string[] = [];
+      for (const key of changed) {
+        if (!(key in row)) continue;
+        const rendered = renderFieldValue(key, row[key]);
+        if (rendered !== undefined) extras.push(`${humanizeFieldLabel(key)}: ${rendered}`);
+      }
+      // A param-less write (cancel/deactivate/pause/…) sets no explicit field
+      // — its effect is the resulting status, which IS the relevant signal
+      // here (support F6: "now cancelled").
+      if (extras.length === 0) {
+        const status = typeof row['status'] === 'string' ? (row['status'] as string) : undefined;
+        if (status !== undefined) extras.push(`now ${status}`);
+      }
       return extras.length > 0 ? `${past} ${subject} (${extras.join(', ')}).` : `${past} ${subject}.`;
     }
     case 'number':
@@ -820,9 +874,35 @@ export function shouldPolish(outcome: ComposeOutcome): boolean {
  * or changing a single fact/number/name/status. */
 export const POLISH_SYSTEM =
   'Rewrite the following operations summary as a brief, natural assistant reply. ' +
-  'STRICT RULES: do not add, infer, or change ANY fact, number, name, or status; ' +
-  'do not promise follow-ups; keep every number exactly; ' +
+  'STRICT RULES: do not add, infer, or change ANY fact, number, name, date, amount, or status; ' +
+  'do not introduce a noun, label, field name, or semantic the summary does not state ' +
+  '(e.g. never call a date a "maintenance"/"expiration" date, never relabel a field); ' +
+  'do not promise follow-ups; keep every number/date/amount exactly as written; ' +
+  'never claim success when the summary reports a failure, and vice versa; ' +
   '≤3 sentences unless listing failures. Output only the rewritten reply, nothing else.';
+
+/** P2 fact-preservation guard: a mechanical backstop for the polish pass that
+ * does NOT trust the model's goodwill. Every maximal run of digits in the
+ * POLISHED text (thousands separators stripped, so "$483,595.22" ≡
+ * "483595.22") must already appear as a digit-run in the TEMPLATE text. The
+ * template is composer-grounded (every number/date/amount came straight from
+ * a step result), so a polished reply that introduces ANY novel number — an
+ * invented count ("2 requests"), a fabricated dollar figure, a relabeled
+ * date — fails this check and the pipeline discards the polish, keeping the
+ * grounded template. Spelling a number out ("three") or dropping one is
+ * always allowed (that adds no novel digits). Returns true when the polish is
+ * safe to use. */
+export function polishPreservesFacts(templateText: string, polishedText: string): boolean {
+  const digitRuns = (s: string): Set<string> => {
+    const runs = s.replace(/(?<=\d)[,_](?=\d)/g, '').match(/\d+/g);
+    return new Set(runs ?? []);
+  };
+  const allowed = digitRuns(templateText);
+  for (const run of digitRuns(polishedText)) {
+    if (!allowed.has(run)) return false;
+  }
+  return true;
+}
 
 /** The polish call's user prompt — the template text, verbatim, as the input
  * to rewrite. */

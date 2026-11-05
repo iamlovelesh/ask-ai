@@ -40,7 +40,7 @@ import { matchPlaybook } from '../playbooks/loader.js';
 import { buildPlannerPrompt, plan as plannerPlan, narrowFlatOutcome, type PlannerPromptCtx, type PlanResult } from './planner.js';
 import { validate, repairPrompt, BUDGETS, type HandleRef, type Provenance, type ValidationError } from './validator.js';
 import { checkStratum, joinerRepair, type JoinerViolation } from './joiner.js';
-import { compose, shouldPolish, POLISH_SYSTEM, polishPrompt, type ComposeInput, type ComposeStepState } from './composer.js';
+import { compose, shouldPolish, POLISH_SYSTEM, polishPrompt, polishPreservesFacts, type ComposeInput, type ComposeStepState } from './composer.js';
 import {
   foldMemory,
   renderWorkingState,
@@ -641,7 +641,11 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
       // template text — see `polishReply`.
       if (shouldPolish(input.outcome)) {
         const polished = await polishReply(templateText);
-        if (polished !== null) text = polished;
+        // P2 fact-preservation backstop: discard a polish that introduces any
+        // number/date/amount absent from the grounded template (an invented
+        // count, a fabricated figure, a false success claim) and keep the
+        // template text instead.
+        if (polished !== null && polishPreservesFacts(templateText, polished)) text = polished;
       }
     }
     for (const chunk of chunkText(text)) {
