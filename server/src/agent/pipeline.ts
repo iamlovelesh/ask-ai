@@ -30,6 +30,7 @@ import {
   type ConfirmBroker,
   type ExecuteInput,
   type ExecutionResult,
+  type StepFailureCtx,
   type WriteStratumCtx,
   type WriteStratumDecision,
 } from './executor.js';
@@ -834,6 +835,27 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
       return decision;
     };
 
+    /** TRIAGE C1 residual: a runtime NOT_FOUND on a step with downstream
+     * dependents routes the fabricated/unresolved id through ONE replan round
+     * (reusing the joiner repair machinery + replan budget). The synthesized
+     * violation carries the targeted hint: resolve the entity by name via the
+     * module's list/search action and reference its result, never the
+     * non-existent id. */
+    const onStepFailure = async (ctx: StepFailureCtx): Promise<WriteStratumDecision> => {
+      const violation: JoinerViolation = {
+        stepId: ctx.failedStep.id,
+        expect: 'resolvedEntityId',
+        actual: `NOT_FOUND: ${ctx.error.message}`,
+        summary:
+          `Step '${ctx.failedStep.id}' (${ctx.failedStep.action}) failed at runtime with NOT_FOUND — ` +
+          `the id "${ctx.error.message}" does not exist (it was likely typed in or inferred from a name ` +
+          `rather than resolved). Resolve the entity by name/email via the module's list/search action and ` +
+          `reference its result with a $ref, then retry '${ctx.failedStep.action}' and its dependents. ` +
+          `Do not reuse the non-existent id.`,
+      };
+      return resolveJoinerViolation({ plan: ctx.plan, completed: ctx.completed, upcoming: [] }, violation);
+    };
+
     const executeInput: ExecuteInput = {
       plan,
       planHash,
@@ -848,6 +870,7 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
       onEvent: record,
       confirm,
       onWriteStratum,
+      onStepFailure,
       deadlineAtMs: budget.deadlineAtMs,
       spans,
     };

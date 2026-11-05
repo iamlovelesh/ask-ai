@@ -108,6 +108,18 @@ export type WriteStratumDecision =
   | { decision: 'clarify'; question: string }
   | { decision: 'abort'; reason: string };
 
+/** Context for `onStepFailure` (LLD §5.4 extension / TRIAGE C1 residual): a
+ * step that failed at runtime with a NOT_FOUND on an id-typed param, whose
+ * downstream dependents would otherwise be skipped. The hook may route the
+ * fabricated/unresolved id to a resolve step via one replan round. `plan` is
+ * the CURRENT plan; `completed` carries every result recorded so far. */
+export interface StepFailureCtx {
+  plan: Plan;
+  completed: Record<string, { result: unknown }>;
+  failedStep: Step;
+  error: { code: string; message: string };
+}
+
 export interface ExecuteInput {
   plan: Plan;
   planHash: string;
@@ -137,6 +149,15 @@ export interface ExecuteInput {
    * (`checkStratum` + `joinerRepair`, both LLM/budget-aware) lives in
    * `agent/pipeline.ts` — this module stays LLM-free. */
   onWriteStratum?: (ctx: WriteStratumCtx) => Promise<WriteStratumDecision>;
+  /** TRIAGE C1 residual — fabricated-id routing at the REPAIR boundary. Fired
+   * at most ONCE per turn, when a step fails at runtime with NOT_FOUND and has
+   * downstream dependents: a shape-valid fabricated id (`calendar_6`) passes
+   * validation and only fails here, so this routes it to a resolve step via
+   * one replan round (reusing the same `WriteStratumDecision` contract as
+   * `onWriteStratum`). Optional: omitted → no-op pass-through (behavior
+   * byte-identical). The LLM/budget machinery lives in the caller
+   * (`agent/pipeline.ts`), same as `onWriteStratum`. */
+  onStepFailure?: (ctx: StepFailureCtx) => Promise<WriteStratumDecision>;
   /** LLD §5.1/§5.3 `turnTimeoutMs` — real wall-clock (`performance.now()`)
    * deadline, checked BETWEEN strata (never mid-handler: a slow handler
    * call itself always runs to completion, the NEXT stratum just never
@@ -423,6 +444,9 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
   let aborted = false;
   let abortReason: string | undefined;
   let timedOut = false;
+  // TRIAGE C1 residual: a NOT_FOUND replan fires at most once per turn.
+  let notFoundReplanUsed = false;
+  const notFoundConsidered = new Set<string>();
 
   const terminal = (s: StepLifecycle): boolean =>
     s === 'done' || s === 'failed' || s === 'skipped' || s === 'cancelled';
@@ -880,10 +904,80 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     if (spanHandle) spans?.end(spanHandle, { meta: { stepId, status: 'done' } });
   };
 
+  /**
+   * TRIAGE C1 residual — route a runtime NOT_FOUND on a step with downstream
+   * dependents to ONE replan round (via the `onStepFailure` hook) BEFORE its
+   * dependents are skipped. Runs at the top of the scheduling loop so the
+   * just-failed step's dependents are still `pending`. Returns how the loop
+   * should proceed; mutates `plan`/`states`/`planRev` in place on a patch.
+   */
+  const handleNotFoundFailure = async (): Promise<'patched' | 'abort' | 'clarify' | 'none'> => {
+    if (notFoundReplanUsed || input.onStepFailure === undefined) return 'none';
+    for (const step of plan.steps) {
+      if (notFoundConsidered.has(step.id)) continue;
+      const rec = states.get(step.id);
+      if (!rec || rec.state !== 'failed' || rec.error?.code !== 'NOT_FOUND') continue;
+      notFoundConsidered.add(step.id);
+      // Only worth a replan when something downstream depends on this step —
+      // a single-step fabrication has no cascade to repair here (it is the
+      // retrieval fix's job to stop it being fabricated in the first place).
+      const hasDependents = plan.steps.some((s) => s.dependsOn.includes(step.id));
+      if (!hasDependents) continue;
+
+      const completed: Record<string, { result: unknown }> = {};
+      for (const [id, result] of stepResults) completed[id] = { result };
+      const decision = await input.onStepFailure({ plan, completed, failedStep: step, error: rec.error });
+      notFoundReplanUsed = true;
+
+      if (decision.decision === 'clarify') {
+        clarifyQuestion = decision.question;
+        return 'clarify';
+      }
+      if (decision.decision === 'abort') {
+        aborted = true;
+        abortReason = decision.reason;
+        return 'abort';
+      }
+      if (decision.decision === 'patch') {
+        // Discard the NOT_FOUND step and every step that (transitively)
+        // depended on it — those were going to be skipped anyway — keep every
+        // other step's record, and splice in the corrected steps (which
+        // resolve the entity by name and redo the downstream work).
+        const dropped = new Set<string>([step.id]);
+        for (let changed = true; changed; ) {
+          changed = false;
+          for (const s of plan.steps) {
+            if (!dropped.has(s.id) && s.dependsOn.some((d) => dropped.has(d))) {
+              dropped.add(s.id);
+              changed = true;
+            }
+          }
+        }
+        const keptSteps = plan.steps.filter((s) => !dropped.has(s.id));
+        plan = { ...plan, steps: [...keptSteps, ...decision.patchedSteps] };
+        for (const id of dropped) {
+          states.delete(id);
+          stepResults.delete(id);
+        }
+        for (const s of plan.steps) if (!states.has(s.id)) states.set(s.id, { state: 'pending' });
+        planRev = decision.planRev;
+        return 'patched';
+      }
+      return 'none'; // 'proceed' — leave the failure as-is
+    }
+    return 'none';
+  };
+
   // --- scheduling loop ------------------------------------------------------
 
   for (;;) {
     if (halted || aborted || clarifyQuestion !== undefined) break;
+
+    // TRIAGE C1 residual: attempt a NOT_FOUND replan before the next frontier
+    // skips the failed step's dependents.
+    const nf = await handleNotFoundFailure();
+    if (nf === 'abort' || nf === 'clarify') break;
+    if (nf === 'patched') continue;
 
     // LLD §5.3 "loop until all terminal or TIMEOUT" — checked BETWEEN
     // strata (i.e. at the top of every loop iteration, before computing

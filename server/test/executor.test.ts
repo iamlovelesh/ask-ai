@@ -887,3 +887,136 @@ describe('executor — foldExecutor resume', () => {
     expect(state.planRev).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe('executor — NOT_FOUND replan (TRIAGE C1 residual)', () => {
+  it('routes a NOT_FOUND on a step with dependents through onStepFailure patch', async () => {
+    let listed = 0;
+    let updated = 0;
+    const registry = buildRegistry(
+      [
+        [
+          action('calendars.get_calendar_settings', 'read', async (input) => {
+            if (input['id'] === 'calendar_6') {
+              throw new ActionError('NOT_FOUND', "Calendar 'calendar_6' does not exist");
+            }
+            return { id: input['id'], timezone: 'UTC' };
+          }),
+          action('calendars.list_calendars', 'read', async () => {
+            listed += 1;
+            return { items: [{ id: 'cal_42', name: 'Calendar 6' }], total: 1 };
+          }),
+          action('calendars.set_calendar_timezone', 'write', async () => {
+            updated += 1;
+            return { ok: true };
+          }),
+        ],
+      ],
+      coreOps,
+    );
+
+    const plan: Plan = {
+      goal: 'update calendar 6 timezone',
+      steps: [
+        { id: 's1', action: 'calendars.get_calendar_settings', params: { id: 'calendar_6' }, dependsOn: [] },
+        { id: 's2', action: 'calendars.set_calendar_timezone', params: { id: '$s1.id', timezone: 'America/New_York' }, dependsOn: ['s1'] },
+      ],
+    };
+
+    let hookCalls = 0;
+    const onStepFailure: NonNullable<ExecuteInput['onStepFailure']> = async (ctx) => {
+      hookCalls += 1;
+      expect(ctx.error.code).toBe('NOT_FOUND');
+      expect(ctx.failedStep.id).toBe('s1');
+      return {
+        decision: 'patch',
+        planRev: 1,
+        patchedSteps: [
+          { id: 's3', action: 'calendars.list_calendars', params: {}, dependsOn: [] },
+          {
+            id: 's4',
+            action: 'calendars.set_calendar_timezone',
+            params: { id: '$s3.items[*].id', timezone: 'America/New_York' },
+            dependsOn: ['s3'],
+          },
+        ],
+      };
+    };
+
+    const input = baseInput(plan, registry, { onStepFailure });
+    const result = await execute(input);
+
+    expect(hookCalls).toBe(1);
+    expect(listed).toBe(1);
+    expect(updated).toBe(1);
+    expect(result.status).toBe('done');
+    // the fabricated-id step (and its skipped dependent) were dropped.
+    expect(result.stepStates['s1']).toBeUndefined();
+    expect(result.stepStates['s3']?.state).toBe('done');
+    expect(result.stepStates['s4']?.state).toBe('done');
+  });
+
+  it('does NOT fire onStepFailure for a NOT_FOUND on a step with no dependents', async () => {
+    let hookCalls = 0;
+    const registry = buildRegistry(
+      [[action('calendars.set_calendar_timezone', 'write', async () => {
+        throw new ActionError('NOT_FOUND', "Calendar 'calendar_6' does not exist");
+      })]],
+      coreOps,
+    );
+    const plan: Plan = {
+      goal: 'g',
+      steps: [{ id: 's1', action: 'calendars.set_calendar_timezone', params: { id: 'calendar_6' }, dependsOn: [] }],
+    };
+    const input = baseInput(plan, registry, {
+      onStepFailure: async () => {
+        hookCalls += 1;
+        return { decision: 'proceed' };
+      },
+    });
+    const result = await execute(input);
+    expect(hookCalls).toBe(0);
+    expect(result.status).toBe('failed');
+  });
+
+  it('fires onStepFailure at most once per turn', async () => {
+    let hookCalls = 0;
+    const registry = buildRegistry(
+      [
+        [
+          action('m.get', 'read', async () => {
+            throw new ActionError('NOT_FOUND', 'x_1 does not exist');
+          }),
+          action('m.use', 'write', async () => ({ ok: true })),
+        ],
+      ],
+      coreOps,
+    );
+    const plan: Plan = {
+      goal: 'g',
+      steps: [
+        { id: 's1', action: 'm.get', params: { id: 'x_1' }, dependsOn: [] },
+        { id: 's2', action: 'm.use', params: { id: '$s1.id' }, dependsOn: ['s1'] },
+      ],
+    };
+    // Patch re-introduces another NOT_FOUND-with-dependent pair; the second
+    // failure must NOT trigger a second hook call.
+    const input = baseInput(plan, registry, {
+      onStepFailure: async () => {
+        hookCalls += 1;
+        return {
+          decision: 'patch',
+          planRev: 1,
+          patchedSteps: [
+            { id: 's3', action: 'm.get', params: { id: 'x_2' }, dependsOn: [] },
+            { id: 's4', action: 'm.use', params: { id: '$s3.id' }, dependsOn: ['s3'] },
+          ],
+        };
+      },
+    });
+    const result = await execute(input);
+    expect(hookCalls).toBe(1);
+    expect(result.status).toBe('failed'); // s3 fails again, no further replan
+  });
+});
