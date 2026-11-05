@@ -66,6 +66,9 @@ export interface StepRecord {
 export interface ExecutionMetrics {
   handlerCalls: number;
   retries: number;
+  /** Engine-wave E7: total wall-clock ms spent awaiting confirmation
+   * decisions — excluded from the turn deadline. */
+  gateWaitMs: number;
 }
 
 export interface ExecutionResult {
@@ -142,6 +145,11 @@ export interface ExecuteInput {
   spans?: Spans;
   /** TRANSIENT retry backoff (LLD §5.3: 250ms). Overridable for tests. */
   retryDelayMs?: number;
+  /** Engine-wave E7: reports ms spent awaiting a confirmation decision, so
+   * the caller (`pipeline.ts`) can exclude it from the turn deadline for its
+   * OWN in-execution LLM calls (joiner replans). Optional — omitted is a
+   * no-op; the executor's own deadline check already excludes gate wait. */
+  onGateWait?: (ms: number) => void;
   /** LLD §5.4 joiner checkpoint hook — called once per write-bearing
    * stratum, before its writes run. Optional: omitted entirely (as every
    * Task 11 test does), this is a no-op pass-through — behavior is
@@ -538,7 +546,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
   const stepById = new Map<string, Step>(plan.steps.map((s) => [s.id, s]));
 
   const completedReads: string[] = [];
-  const metrics: ExecutionMetrics = { handlerCalls: 0, retries: 0 };
+  const metrics: ExecutionMetrics = { handlerCalls: 0, retries: 0, gateWaitMs: 0 };
   const stuckCounts = new Map<string, number>();
 
   let denied = false;
@@ -705,6 +713,11 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
       stepId: step.id,
       scope,
     });
+    // Engine-wave E7 (RC8): the wall-clock a human spends deciding is NOT
+    // the agent's compute budget — measure it and exclude it from the turn
+    // deadline (both the executor's own check below and, via `onGateWait`,
+    // the caller's in-execution LLM-call budget).
+    const waitStart = performance.now();
     const approved = await confirm.request({
       turnId,
       confirmId,
@@ -713,6 +726,9 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
       stepId: step.id,
       scope,
     });
+    const waited = performance.now() - waitStart;
+    metrics.gateWaitMs += waited;
+    input.onGateWait?.(waited);
     onEvent({ t: 'confirmation.resolved', turnId, confirmId, approved });
     return approved;
   };
@@ -1126,8 +1142,13 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
 
     // LLD §5.3 "loop until all terminal or TIMEOUT" — checked BETWEEN
     // strata (i.e. at the top of every loop iteration, before computing
-    // the next stratum's frontier), never mid-handler.
-    if (input.deadlineAtMs !== undefined && performance.now() >= input.deadlineAtMs) {
+    // the next stratum's frontier), never mid-handler. Engine-wave E7: the
+    // deadline is measured in ACTIVE ms (elapsed − time spent awaiting
+    // confirmation decisions), so a slow human approver never trips it.
+    if (
+      input.deadlineAtMs !== undefined &&
+      performance.now() - metrics.gateWaitMs >= input.deadlineAtMs
+    ) {
       timedOut = true;
       break;
     }

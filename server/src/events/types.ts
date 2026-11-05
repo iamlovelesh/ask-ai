@@ -54,6 +54,11 @@ export interface TurnMetrics {
   costUsd: number;
   stepsOk: number;
   stepsFailed: number;
+  /** Engine-wave E7 (RC8): wall-clock ms spent waiting on human confirmation
+   * decisions this turn. Recorded separately and SUBTRACTED from the turn
+   * deadline, so a slow approver never turns an approved+executed turn into a
+   * spurious 'failed'. Omitted (undefined) when no gate waited. */
+  gateWaitMs?: number;
 }
 
 // --- events/types.ts (LLD §2.3) ---------------------------------------------

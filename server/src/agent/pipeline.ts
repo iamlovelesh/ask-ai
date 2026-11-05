@@ -174,6 +174,10 @@ class TurnBudget {
   tokensIn = 0;
   tokensOut = 0;
   costUsd = 0;
+  /** Engine-wave E7: ms spent awaiting confirmation decisions — excluded
+   * from the turn deadline (both the executor's own check and this budget's
+   * `timedOut`, which guards in-execution LLM calls like joiner replans). */
+  gateWaitMs = 0;
 
   readonly deadlineAtMs: number;
 
@@ -191,7 +195,7 @@ class TurnBudget {
   /** LLD §5.3 "loop until all terminal or TIMEOUT" / §5.1 `turnTimeoutMs` —
    * real wall-clock (`performance.now()`), never the pinned `VirtualClock`. */
   timedOut(): boolean {
-    return performance.now() >= this.deadlineAtMs;
+    return performance.now() - this.gateWaitMs >= this.deadlineAtMs;
   }
 
   record(usage: LlmUsage): void {
@@ -652,6 +656,7 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
       costUsd: budget.costUsd,
       stepsOk,
       stepsFailed,
+      ...(budget.gateWaitMs > 0 ? { gateWaitMs: budget.gateWaitMs } : {}),
     };
     const completedEv: Event = { t: 'turn.completed', turnId, status, metrics };
     emit(completedEv);
@@ -902,6 +907,9 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
       onWriteStratum,
       onStepFailure,
       deadlineAtMs: budget.deadlineAtMs,
+      onGateWait: (ms) => {
+        budget.gateWaitMs += ms;
+      },
       spans,
     };
 
