@@ -595,13 +595,18 @@ function tryAutofixRefPath(path: string, schema: unknown): { path: string; rule:
   return null; // unreachable (size === 1 guarantees one iteration) — keeps TS happy
 }
 
-// Rule 5: `$s1[0].field` / `$s1.0.field` — an INDEX selector, which is not
-// legal ref grammar at all (STEP_REF's path only admits `.field[*]` hops),
-// so it surfaces as REF_GRAMMAR, not REF_PATH_MISMATCH. Rewritten to
-// `$s1.items[*].field` ONLY when the binding context expects an array
-// (brief: "if the param expects a scalar, leave for LLM repair — index
-// intent is ambiguous").
-const INDEX_GRAMMAR_RE = /^\$s(\d+)(?:\[\d+\]|\.\d+)((?:\.[A-Za-z_][A-Za-z0-9_]*(?:\[\*\])?)*)$/;
+// Rule 5: `$s1[0].field` / `$s1.0.field` (and the SAME shape on a
+// cross-turn handle, `$r_t3_s1[0].field` / `$r_t3_s1.0.field`) — an INDEX
+// selector, which is not legal ref grammar at all (STEP_REF/CROSS_TURN_REF's
+// path only admits `.field[*]` hops), so it surfaces as REF_GRAMMAR, not
+// REF_PATH_MISMATCH. Rewritten to `.items[*].field` ONLY when the binding
+// context expects an array (brief: "if the param expects a scalar, leave
+// for LLM repair — index intent is ambiguous"). Cross-turn coverage added
+// per task-refconverge diagnostic iteration: a handle produced by a SPILLED
+// (>50-row) search is the live-test scenario ("add a note to the first
+// one") most likely to trigger this exact invented-index shape, since the
+// planner has no "take element N" ref form to reach for instead.
+const INDEX_GRAMMAR_RE = /^\$(s\d+|r_t\d+_s\d+)(?:\[\d+\]|\.\d+)((?:\.[A-Za-z_][A-Za-z0-9_]*(?:\[\*\])?)*)$/;
 
 function tryAutofixIndexGrammar(
   ref: string,
@@ -611,13 +616,25 @@ function tryAutofixIndexGrammar(
   if (!expectsArray) return null;
   const m = INDEX_GRAMMAR_RE.exec(ref);
   if (!m) return null;
-  const stepId = `s${m[1]}`;
-  const schema = schemaForStep(stepId);
-  if (schema === undefined) return null; // unknown producer — never guess
+  const refId = m[1] as string; // "s1" or "r_t3_s1"
   const rest = m[2] ?? '';
   const candidatePath = `.items[*]${rest}`;
-  if (walkPath(schema, pathTokens(candidatePath), 0, false).kind !== 'ok') return null;
-  return { after: `$${stepId}${candidatePath}`, rule: 'index-to-pluck' };
+  if (refId.startsWith('s')) {
+    // Intra-plan step ref — schema-validate against the producer's
+    // outputSchema, exactly like every other rule.
+    const schema = schemaForStep(refId);
+    if (schema === undefined) return null; // unknown producer — never guess
+    if (walkPath(schema, pathTokens(candidatePath), 0, false).kind !== 'ok') return null;
+  }
+  // Cross-turn handle ref (`r_t<T>_s<N>`): no introspectable schema exists
+  // (`RefHandle` carries no zod type) — but its RESOLVED base shape is
+  // ALWAYS exactly `{ids, items}` by construction (`executor.ts`'s
+  // `resolveWholeRef` crossTurn branch), so `.items[*]<rest>` is
+  // structurally safe for ANY handle; the walkPath schema check above is
+  // simply skipped for this form (nothing to check it against), matching
+  // the validator's existing documented policy of never structurally
+  // checking cross-turn/`$item` paths.
+  return { after: `$${refId}${candidatePath}`, rule: 'index-to-pluck' };
 }
 
 /** Rewrites a `$sN.path` ref against the producing step's output schema.

@@ -1073,6 +1073,32 @@ describe('validator — deterministic ref auto-correction (Fix A, task-refconver
     expect(autofixes).toEqual([]);
   });
 
+  it('Rule 5 also covers a CROSS-TURN handle ref ($r_t3_s1[0].id → $r_t3_s1.items[*].id) — diagnostic iteration, live-test REF_GRAMMAR on a spilled >50-row handle', () => {
+    // Cross-turn handles carry no introspectable zod schema (unlike a
+    // same-plan step producer) — the rewrite is still applied, schema-
+    // validation-free, because a handle's resolved shape is ALWAYS exactly
+    // {ids, items} by construction (executor.ts's resolveWholeRef).
+    const bulkRegistry = buildRegistry(
+      [[outAction2('enrollments.bulk_enroll', z.unknown(), z.strictObject({ course_ids: z.array(z.string()) }))]],
+      coreOps,
+    );
+    const plan: Plan = {
+      goal: 'g',
+      steps: [{ id: 's1', action: 'enrollments.bulk_enroll', params: { course_ids: '$r_t3_s1[0].id' }, dependsOn: [] }],
+    };
+    const { plan: fixed, autofixes } = autoFixRefs(plan, bulkRegistry);
+    expect(fixed.steps[0]?.params['course_ids']).toBe('$r_t3_s1.items[*].id');
+    expect(autofixes).toEqual([
+      {
+        stepId: 's1',
+        context: "Step 's1' params.course_ids",
+        before: '$r_t3_s1[0].id',
+        after: '$r_t3_s1.items[*].id',
+        rule: 'index-to-pluck',
+      },
+    ]);
+  });
+
   it('applies the same rewrite inside a forEach $item path, checked against the iterated ELEMENT schema', () => {
     // Correct $item path is untouched (sanity).
     const okPlan: Plan = {
