@@ -1,0 +1,29 @@
+# Task 17 Batch C — category: direct, subtype: distractor, module: tags.
+#
+# "Remove the tag" is deliberately phrased near the WRONG action:
+# `tags.remove_tag_from_record` (unapplying a tag from ONE record) is the
+# trap a surface-level reading of "remove"/"tag" might reach for — the
+# actual intent ("nobody's using it anymore", "get rid of it entirely")
+# is `tags.delete_unused_tag` (m08-tags.ts, risk: 'destructive' -> always
+# gates), which deletes the TAG DEFINITION itself.
+#
+# Derivation (template copy):
+#   SELECT id,name FROM structures WHERE kind='tag' AND name='tag 9';
+#   -> struct_374, 'tag 9' (exists)
+#   SELECT COUNT(*) FROM contacts WHERE tags LIKE '%tag 9%'; -> 0 (unused,
+#     so delete_unused_tag is a valid, non-conflicting call)
+
+id: direct-tags-distractor
+category: direct
+subtype: distractor
+profile: standard
+turns:
+  - user: "Nobody's using the 'tag 9' tag anymore — get rid of it for good."
+    expect:
+      planActions:
+        mustInclude: [tags.delete_unused_tag]
+        mustNotInclude: [tags.remove_tag_from_record]
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]

@@ -1,0 +1,25 @@
+# Task 17 Batch C — category: direct, module: calendars (2nd scenario;
+# lint gap: calendars touched by only 1 scenario before this — the
+# existing typo-calendars-001 covers update_calendar_details).
+#
+# get_calendar_settings is a plain read — same minimal-risk pattern as
+# typo-calendars-001 itself (mustInclude the slug + mustMention the slug
+# in the response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id,name FROM structures WHERE kind='calendar' AND name='calendar 6';
+#   -> exists, unique name (10 distinct calendar rows in this seed).
+
+id: direct-calendars-002
+category: direct
+profile: standard
+turns:
+  - user: "What are the settings on calendar 'calendar 6'?"
+    expect:
+      planActions:
+        mustInclude: [calendars.get_calendar_settings]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [calendars.get_calendar_settings]
+        mustNotClaim: [failed, error]

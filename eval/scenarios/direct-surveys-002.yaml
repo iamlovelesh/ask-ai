@@ -1,0 +1,26 @@
+# Task 17 Batch C — category: direct, module: surveys (2nd scenario;
+# lint gap: surveys touched by only 1 scenario before this — the
+# existing multistep-surveys-001 is a 2-action multistep flow; this one
+# is a plain single-action direct read).
+#
+# get_survey_definition is a plain read — same minimal-risk pattern as
+# typo-calendars-001 (mustInclude the slug + mustMention the slug in the
+# response), so no state derivation is needed.
+#
+# Derivation (template copy):
+#   SELECT id,name FROM structures WHERE kind='survey' AND name='survey 2';
+#   -> struct_152, 'survey 2' (exists, unique name)
+
+id: direct-surveys-002
+category: direct
+profile: standard
+turns:
+  - user: "What questions are on 'survey 2'?"
+    expect:
+      planActions:
+        mustInclude: [surveys.get_survey_definition]
+      behavior:
+        confirmation: false
+      response:
+        mustMention: [surveys.get_survey_definition]
+        mustNotClaim: [failed, error]

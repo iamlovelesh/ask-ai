@@ -1,0 +1,26 @@
+# Task 17 Batch C — category: direct, subtype: distractor, module: teams.
+#
+# "Delete the team" is deliberately phrased near the WRONG action:
+# `teams.remove_team_member` (removing one person FROM a team) is the trap
+# a surface-level reading of "delete"/"team" might reach for — the actual
+# intent (per m49-teams.ts) is `teams.archive_team`, the only action that
+# removes the TEAM ITSELF (risk: 'destructive' -> always gates).
+#
+# Derivation (template copy):
+#   SELECT id,name,archived FROM teams WHERE name='Enterprise Sales';
+#   -> team_1, archived=0 (exists, not already archived)
+
+id: direct-teams-distractor
+category: direct
+subtype: distractor
+profile: standard
+turns:
+  - user: "Delete the Enterprise Sales team entirely — we're disbanding it."
+    expect:
+      planActions:
+        mustInclude: [teams.archive_team]
+        mustNotInclude: [teams.remove_team_member]
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]
