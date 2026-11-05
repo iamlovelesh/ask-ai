@@ -55,11 +55,15 @@ Choose "clarify" when the request is genuinely ambiguous or missing a
 required parameter that is not already present in the working state or
 transcript — ask exactly ONE focused question, and NEVER ask for
 information that is already visible to you (re-asking known information is
-a hard failure). Choose "unsupported" when the request cannot be satisfied
-by any combination of available actions, with a short honest "reason".
-Choose "respond" for requests that need no action at all (small talk,
+a hard failure). If the immediately preceding assistant turn was a
+clarification and the user has replied, treat the reply as the answer and
+proceed to a plan — never re-ask the same or a reworded question. Choose
+"unsupported" when the request cannot be satisfied by any combination of
+available actions, with a short honest "reason".
+Choose "respond" ONLY for requests that need no action at all (small talk,
 clarifying statements the user already answered, or a direct answer you
-already know from the working state).
+already know from the working state). NEVER use "respond" to say what you
+will or would do — if actions are needed, return a plan.
 
 If the request requires find→filter→act composition, BUILD the plan using
 list/search actions to resolve entities and gather data. Return "unsupported"
@@ -128,6 +132,9 @@ not part of the candidate list because they never change):
 ${CORE_OPS_TEXT}
 
 Guidance:
+- For date/time parameters, ALWAYS write ISO-8601 strings (e.g. "2026-10-28")
+  computed from the "now" given in context. NEVER write epoch-millisecond
+  numbers yourself.
 - Only use actions whose module/entities match the record type you are
   acting on. To act on CONVERSATIONS, use conversations/tasks actions (e.g.
   queue follow-up with tasks.create_task); do NOT pick a support_tickets.*
