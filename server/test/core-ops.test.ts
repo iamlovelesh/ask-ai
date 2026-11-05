@@ -91,3 +91,67 @@ describe('core.filter — ISO/epoch date coercion (TRIAGE C5)', () => {
     expect(await filter(rows, 's', 'neq', 'x')).toHaveLength(1);
   });
 });
+
+// --- core.sort (P1: ordinal/superlative resolution) ------------------------
+
+const coreSort = coreOps.find((a) => a.slug === 'core.sort') as ActionDef;
+
+async function sortBy(
+  rows: Array<Record<string, unknown>>,
+  field: string,
+  direction: 'asc' | 'desc',
+): Promise<Array<Record<string, unknown>>> {
+  const out = (await coreSort.handler({ in: rows, field, direction }, ctx)) as {
+    items: Array<Record<string, unknown>>;
+  };
+  return out.items;
+}
+
+describe('core.sort — ordinal/superlative resolution (P1)', () => {
+  it('"oldest" = ascending by date resolves the true minimum at items[0], not list order', async () => {
+    // Arrival order deliberately puts the NEWEST first (the NF1 trap).
+    const rows = [
+      { id: 'ticket_113', created_at: epoch('2026-09-17T00:00:00Z') }, // newest, arrives first
+      { id: 'ticket_280', created_at: epoch('2026-08-01T00:00:00Z') },
+      { id: 'ticket_362', created_at: epoch('2026-06-13T00:00:00Z') }, // oldest
+    ];
+    const asc = await sortBy(rows, 'created_at', 'asc');
+    expect(asc[0]?.['id']).toBe('ticket_362');
+    const desc = await sortBy(rows, 'created_at', 'desc');
+    expect(desc[0]?.['id']).toBe('ticket_113');
+  });
+
+  it('sorts ISO-8601 date strings chronologically (not lexically same as numbers)', async () => {
+    const rows = [
+      { id: 'b', updated_at: '2026-07-23T09:47:18Z' },
+      { id: 'a', updated_at: '2026-05-09T00:11:48Z' },
+      { id: 'c', updated_at: '2026-10-25T00:00:00Z' },
+    ];
+    expect((await sortBy(rows, 'updated_at', 'asc')).map((r) => r['id'])).toEqual(['a', 'b', 'c']);
+  });
+
+  it('"biggest" = descending by amount resolves the real max', async () => {
+    const rows = [
+      { id: 'inv_6', owed_cents: 402311 },
+      { id: 'inv_688', owed_cents: 1051142 }, // true biggest
+      { id: 'inv_25', owed_cents: 283462 },
+    ];
+    expect((await sortBy(rows, 'owed_cents', 'desc'))[0]?.['id']).toBe('inv_688');
+  });
+
+  it('rows missing the field sort LAST in both directions (never masquerade as extremum)', async () => {
+    const rows = [
+      { id: 'has1', score: 10 },
+      { id: 'missing', other: 1 },
+      { id: 'has2', score: 50 },
+    ];
+    expect((await sortBy(rows, 'score', 'asc')).map((r) => r['id'])).toEqual(['has1', 'has2', 'missing']);
+    expect((await sortBy(rows, 'score', 'desc')).map((r) => r['id'])).toEqual(['has2', 'has1', 'missing']);
+  });
+
+  it('does not mutate the input array', async () => {
+    const rows = [{ id: 'a', n: 2 }, { id: 'b', n: 1 }];
+    await sortBy(rows, 'n', 'asc');
+    expect(rows.map((r) => r['id'])).toEqual(['a', 'b']);
+  });
+});

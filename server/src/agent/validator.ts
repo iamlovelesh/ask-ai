@@ -801,6 +801,7 @@ const CORE_OP_FIELD_PARAMS: Readonly<Record<string, Readonly<Record<string, stri
   'core.filter': { field: 'in' },
   'core.exclude_by': { field: 'in' },
   'core.pluck': { field: 'in' },
+  'core.sort': { field: 'in' },
   'core.anti_join': { key: 'in', excludeKey: 'exclude' },
   'core.join': { key: 'in', withKey: 'with' },
   'core.distribute': {},

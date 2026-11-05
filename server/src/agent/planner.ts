@@ -24,6 +24,7 @@ const CORE_OPS_TEXT = [
   'core.anti_join  {in: Ref, key, exclude: Ref, excludeKey}  // set difference -> {items}',
   'core.join       {in: Ref, key, with: Ref, withKey, as}    // enrich        -> {items}',
   'core.pluck      {in: Ref, field}                                          -> {items}',
+  'core.sort       {in: Ref, field, direction: asc|desc}  // asc=oldest/smallest first -> {items}',
   'core.distribute {items: Ref, across: Ref, strategy: "round_robin"}',
   '                -> {items: Array<{item, assignee}>}        // shape is normative',
 ].join('\n');
@@ -157,6 +158,18 @@ Guidance:
   entity, and a conversation id cannot be passed to one. When no action in
   the acting-on module does what's asked, prefer core.* composition or
   tasks.create_task over a plausible-looking action from an unrelated module.
+- Any ordinal or superlative ("the oldest/newest/latest/earliest one", "the
+  biggest/largest/smallest", "the first/last one by <field>", "the highest
+  score") MUST be resolved by an explicit core.sort over the FULL result set
+  on the DEFINING field, THEN indexing items[0] — NEVER by taking items[0] of
+  an unsorted search result (search order is arbitrary and is NOT the ordering
+  the user means). Choose the defining field from the schema: "oldest"/
+  "earliest" = the creation/occurrence date ascending; "newest"/"latest" =
+  that date descending; "biggest"/"largest"/"highest" = the amount/score/value
+  field descending; "smallest"/"lowest" = ascending.
+    WRONG: s2 tickets.reassign {"id":"$s1.items[0].id", ...}   // "oldest" but unsorted
+    RIGHT: s2 core.sort {"in":"$s1.items[*]","field":"created_at","direction":"asc"}
+           s3 tickets.reassign {"id":"$s2.items[0].id", ...}  dependsOn:["s2"]
 - Address EVERY sub-question asked; if you can't do one, say so ("I'll get to
   X after Y") — never silently drop a part.
 - "me"/"my"/"I" refer to current_user (shown in <context>) — resolve to that

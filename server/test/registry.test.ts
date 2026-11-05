@@ -79,7 +79,7 @@ describe('Registry', () => {
     expect(registry.get('nope.does_not_exist')).toBeUndefined();
   });
 
-  it('all() includes module actions and the 6 core ops', () => {
+  it('all() includes module actions and the 7 core ops', () => {
     const all = registry.all();
     const coreSlugs = all.filter((a) => a.module === 'core').map((a) => a.slug);
     expect(coreSlugs.sort()).toEqual(
@@ -90,9 +90,10 @@ describe('Registry', () => {
         'core.filter',
         'core.join',
         'core.pluck',
+        'core.sort',
       ].sort(),
     );
-    expect(all.length).toBeGreaterThanOrEqual(10 + 6);
+    expect(all.length).toBeGreaterThanOrEqual(10 + 7);
   });
 
   it('byModule() for an unknown module returns an empty array', () => {

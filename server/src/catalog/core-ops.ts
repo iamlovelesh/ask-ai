@@ -217,6 +217,81 @@ const corePluck: ActionDef<PluckInput, PluckOutput> = {
   handler: async (input) => ({ items: input.in.map((row) => row[input.field]) }),
 };
 
+// --- core.sort --------------------------------------------------------------
+//
+// P1 (round-2 triage): "the oldest/newest/biggest/first one" MUST be an
+// explicit sort over the FULL result set by a defining field, then index [0]
+// — NEVER a reliance on the list's arbitrary arrival order. Before this op,
+// the planner had no way to express "biggest" other than `items[0]`, which is
+// list-position, not an extremum (support NF1 silently reassigned the WRONG
+// ticket; billing R-F2 named the wrong "biggest" invoice). `field` is
+// schema-validated against the producing step's row schema exactly like the
+// other core ops (validator E2 / CORE_OP_FIELD_PARAMS). Comparison is generic
+// and type-aware: numbers numerically, ISO-8601 date strings chronologically,
+// everything else lexicographically; nullish values always sort last so a
+// missing field never masquerades as the extremum.
+
+const sortDirection = z.enum(['asc', 'desc']);
+type SortDirection = z.infer<typeof sortDirection>;
+
+/** Generic order comparator shared by `core.sort`. Returns <0 / 0 / >0.
+ * Numbers compare numerically; two ISO-8601 date strings (or an ISO string
+ * vs an epoch-ms number) compare chronologically (reusing `coerceDatePair`);
+ * everything else falls back to string comparison. Nullish/undefined always
+ * sorts AFTER any real value (so "oldest"/"biggest" never resolves to a row
+ * that simply lacks the field). */
+function compareValues(a: unknown, b: unknown): number {
+  const aNil = a === null || a === undefined;
+  const bNil = b === null || b === undefined;
+  if (aNil && bNil) return 0;
+  if (aNil) return 1;
+  if (bNil) return -1;
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  const pair = coerceDatePair(a, b);
+  if (pair !== null) return pair[0] - pair[1];
+  const as = String(a);
+  const bs = String(b);
+  return as < bs ? -1 : as > bs ? 1 : 0;
+}
+
+const sortInput = z.strictObject({
+  in: rowsSchema,
+  field: z.string(),
+  direction: sortDirection,
+});
+type SortInput = z.infer<typeof sortInput>;
+
+const coreSort: ActionDef<SortInput, ItemsOutput> = {
+  id: 'core.sort',
+  slug: 'core.sort',
+  module: 'core',
+  name: 'Sort items',
+  description:
+    'Order the rows in `in` by `field` (`direction`: "asc" smallest/oldest first, "desc" largest/newest first). Use this before taking items[0] for any ordinal/superlative ("oldest"/"newest"/"biggest"/"latest"/"first").',
+  risk: 'read',
+  entities: [],
+  inputSchema: sortInput,
+  outputSchema: itemsOutput,
+  searchCard: { synonyms: ['sort', 'order by', 'rank', 'oldest', 'newest', 'biggest', 'largest'], examplePhrasings: [] },
+  handler: async (input) => {
+    const dir = input.direction === 'desc' ? -1 : 1;
+    const sorted = [...input.in].sort((x, y) => {
+      const xv = x[input.field];
+      const yv = y[input.field];
+      // Nullish always sorts last, independent of direction, so a missing
+      // field never surfaces as the "oldest"/"biggest" extremum.
+      const xNil = xv === null || xv === undefined;
+      const yNil = yv === null || yv === undefined;
+      if (xNil || yNil) {
+        if (xNil && yNil) return 0;
+        return xNil ? 1 : -1;
+      }
+      return dir * compareValues(xv, yv);
+    });
+    return { items: sorted };
+  },
+};
+
 // --- core.distribute --------------------------------------------------------------
 
 // `items`/`across` are typed `unknown[]` (not `rowsSchema`) because `across`
@@ -265,5 +340,6 @@ export const coreOps: ActionDef[] = [
   coreAntiJoin as ActionDef,
   coreJoin as ActionDef,
   corePluck as ActionDef,
+  coreSort as ActionDef,
   coreDistribute as ActionDef,
 ];
