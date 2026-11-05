@@ -38,7 +38,7 @@ import { retrieve, renderCards, type Card, type SessionCtx } from './retrieval.j
 import type { Playbook } from '../playbooks/loader.js';
 import { matchPlaybook } from '../playbooks/loader.js';
 import { buildPlannerPrompt, plan as plannerPlan, narrowFlatOutcome, type PlannerPromptCtx, type PlanResult } from './planner.js';
-import { validate, repairPrompt, BUDGETS, type HandleRef, type ValidationError } from './validator.js';
+import { validate, repairPrompt, BUDGETS, type HandleRef, type Provenance, type ValidationError } from './validator.js';
 import { checkStratum, joinerRepair, type JoinerViolation } from './joiner.js';
 import { compose, shouldPolish, POLISH_SYSTEM, polishPrompt, type ComposeInput, type ComposeStepState } from './composer.js';
 import {
@@ -306,6 +306,9 @@ interface PlanningPhaseArgs {
   registry: Registry;
   handleRefs: readonly HandleRef[];
   budget: TurnBudget;
+  /** Engine-wave E4: id-provenance context (known ids + text the planner
+   * saw) so a fabricated literal id is caught. */
+  provenance: Provenance;
   emit: (e: Event) => void;
   /** Called exactly once, at the moment a VALID plan's `plan.ready` is
    * emitted — never for search/clarify/unsupported/respond (LLD metrics:
@@ -390,7 +393,7 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
     // grammar issue that round 1's repair didn't clear.
     let refRepairEscalated = false;
     for (;;) {
-      const verdict = validate(candidateOutcome, shortlist, handleRefs, registry);
+      const verdict = validate(candidateOutcome, shortlist, handleRefs, registry, args.provenance);
       if (verdict.ok) {
         const planHash = verdict.planHash as string;
         const ev: Event = {
@@ -730,6 +733,16 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
       cardCount: retrieval.cards.length,
     });
 
+    // Engine-wave E4: id-provenance context. `knownIds` = entity ids the
+    // planner legitimately has in working memory; the "seen text" is every
+    // string the planner is shown this turn (raw request + masked transcript
+    // + working-state block), so an id anywhere in its context counts as
+    // provenanced — only a truly fabricated id (seen nowhere) is flagged.
+    const provenance: Provenance = {
+      knownIds: new Set(Object.values(priorState.entities).map((e) => e.id)),
+      userText: [userText, baseCtx.maskedTurns, baseCtx.workingStateBlock].join('\n'),
+    };
+
     // --- 2. plan (+ search/repair loops) ------------------------------------
 
     const planning = await runPlanningPhase({
@@ -741,6 +754,7 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
       registry,
       handleRefs,
       budget,
+      provenance,
       emit: record,
       markPlanReady: () => {
         if (ttfurAtMs === undefined) ttfurAtMs = performance.now();
@@ -821,7 +835,7 @@ export async function* runTurn(input: RunTurnInput): AsyncGenerator<Event, TurnR
       // the patch.
       const keptSteps = ctx.plan.steps.filter((s) => Object.prototype.hasOwnProperty.call(ctx.completed, s.id));
       const candidatePlan: Plan = { goal: ctx.plan.goal, steps: [...keptSteps, ...(repairResult.patchedSteps as Step[])] };
-      const revalidated = validate({ kind: 'plan', plan: candidatePlan }, shortlist, handleRefs, registry);
+      const revalidated = validate({ kind: 'plan', plan: candidatePlan }, shortlist, handleRefs, registry, provenance);
       if (!revalidated.ok) {
         return {
           decision: 'abort',

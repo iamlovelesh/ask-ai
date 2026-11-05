@@ -11,6 +11,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { Registry } from '../catalog/registry.js';
+import { ENTITY_MODEL } from '../entities/model.js';
 import {
   planOutcomeSchema,
   toWirePlan,
@@ -27,6 +28,7 @@ export type ValidationErrorCode =
   | 'UNKNOWN_PARAM'
   | 'PARAM_SCHEMA'
   | 'ID_NOT_RESOLVED'
+  | 'ID_NOT_PROVENANCED'
   | 'FIELD_NOT_IN_SCHEMA'
   | 'REF_PATH_MISMATCH'
   | 'REF_GRAMMAR'
@@ -219,6 +221,48 @@ function looksLikeName(value: string): boolean {
  * handled via refs, not a single fabricated literal. */
 function isIdParamName(key: string): boolean {
   return key === 'id' || (key.endsWith('_id') && key !== '_id');
+}
+
+// --- id-provenance guard (engine-wave E4, RC6a) ----------------------------
+//
+// Every entity id in this CRM is minted `<prefix>_<n>` (entities/model.ts's
+// per-table `prefix`, the SAME spaces `catalog/next-id.ts` mints into),
+// INCLUDING composites (`course_2_lsn_1`, `struct_5_p1`). The prefixes are
+// enumerated PROGRAMMATICALLY from the entity model — never a hand list — so
+// this stays correct as modules change. A literal that IS id-shaped (so the
+// `looksLikeName` guard passes it) but was never seen — not in working
+// memory, not in the user's turn text, not produced by a prior step (those
+// arrive as $refs, not literals) — is a FABRICATED id (support F7:
+// get_contact_details(con_1) invented for "liam volkov"). Repairable:
+// "resolve it via a lookup step".
+
+const ENTITY_ID_PREFIXES: ReadonlySet<string> = new Set(ENTITY_MODEL.map((t) => t.prefix));
+
+/** True when `value` is shaped like a real entity id — `<prefix>_<n>…` whose
+ * prefix is one the entity model actually mints. Composites (`course_2_lsn_1`)
+ * match on their leading `<prefix>_<n>`. */
+export function looksLikeEntityId(value: string): boolean {
+  const m = /^([a-z]+)_\d/.exec(value);
+  return m !== null && ENTITY_ID_PREFIXES.has(m[1] as string);
+}
+
+/** Provenance context for the E4 guard (optional — when omitted the guard is
+ * skipped entirely, preserving every pre-E4 caller/test). `knownIds` = ids
+ * already in working memory (entities/handles the planner legitimately saw);
+ * `userText` = the raw turn text the user typed. */
+export interface Provenance {
+  knownIds?: ReadonlySet<string>;
+  userText?: string;
+}
+
+/** A literal id is provenanced iff it appears verbatim in working memory or
+ * the user's own words. (A prior step's output is referenced as a $ref, not
+ * a literal, so it never reaches this check.) */
+function isProvenanced(value: string, prov: Provenance | undefined): boolean {
+  if (prov === undefined) return true; // no context → cannot judge → don't flag
+  if (prov.knownIds?.has(value)) return true;
+  if (prov.userText !== undefined && prov.userText.includes(value)) return true;
+  return false;
 }
 
 /** Unwrap optional/nullable/default wrappers to the inner schema, then test
@@ -962,6 +1006,7 @@ export function validate(
   shortlist: Set<string>,
   handles: readonly HandleRef[],
   registry: Registry,
+  provenance?: Provenance,
 ): Valid | Invalid {
   void shortlist; // see doc comment above
 
@@ -1179,6 +1224,23 @@ export function validate(
             code: 'ID_NOT_RESOLVED',
             stepId: step.id,
             message: `Step '${step.id}': param '${key}' for '${step.action}' is the literal '${value}', which looks like a name, not an entity id (ids are lowercase with a numeric segment, e.g. 'con_123' or 'course_2_lsn_1'). Resolve it via a search action first (e.g. a '*.search_*' action) and reference its result with a $ref, never a typed-in id.`,
+          });
+        } else if (
+          // id-provenance guard (E4): an id-SHAPED literal (so `looksLikeName`
+          // passed it) that the planner never actually saw — not in working
+          // memory, not in the user's words — is fabricated. A prior step's
+          // output always arrives as a $ref, never a literal, so it never
+          // reaches here.
+          typeof value === 'string' &&
+          isIdParamName(key) &&
+          isPlainStringSchema(shape[key]) &&
+          looksLikeEntityId(value) &&
+          !isProvenanced(value, provenance)
+        ) {
+          errors.push({
+            code: 'ID_NOT_PROVENANCED',
+            stepId: step.id,
+            message: `Step '${step.id}': param '${key}' for '${step.action}' is the literal id '${value}', but that id was never produced by a lookup or seen in the request/working state — it appears to be guessed. An id must come from a lookup step: add a '*.search_*'/'*.list_*' action that finds the record, then reference its result with a $ref (e.g. "$s1.items[0].id"). Never type in an id you did not retrieve.`,
           });
         }
       }

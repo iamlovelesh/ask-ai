@@ -403,7 +403,7 @@ describe('SSE drop + reconnect (Review Focus 1)', () => {
     const res1 = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'Archive this contact' },
+      payload: { text: 'Archive contact con_1' },
       payloadAsStream: true,
     });
     expect(res1.statusCode).toBe(200);
@@ -477,7 +477,7 @@ describe('POST /api/sessions/:id/confirm/:confirmId — wrong/stale ids', () => 
     const res = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'Archive this contact' },
+      payload: { text: 'Archive contact con_1' },
       payloadAsStream: true,
     });
     const reader = new FrameReader(res.stream());
@@ -531,7 +531,7 @@ describe('POST /api/sessions/:id/messages — one turn at a time', () => {
     const res1 = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'Archive this contact' },
+      payload: { text: 'Archive contact con_1' },
       payloadAsStream: true,
     });
     expect(res1.statusCode).toBe(200);
@@ -586,7 +586,7 @@ describe('POST /api/sessions/:id/cancel', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'Archive this contact' },
+      payload: { text: 'Archive contact con_1' },
       payloadAsStream: true,
     });
     expect(res.statusCode).toBe(200);
@@ -609,7 +609,7 @@ describe('POST /api/sessions/:id/cancel', () => {
     const res2 = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'Archive this contact' },
+      payload: { text: 'Archive contact con_1' },
       payloadAsStream: true,
     });
     expect(res2.statusCode).toBe(200);
@@ -649,7 +649,7 @@ describe('POST /api/sessions/:id/cancel', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/sessions/${sessionId}/messages`,
-      payload: { text: 'Archive this contact' },
+      payload: { text: 'Archive contact con_1' },
       payloadAsStream: true,
     });
     const reader = new FrameReader(res.stream());
