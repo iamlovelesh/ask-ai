@@ -88,5 +88,10 @@ correct rule per outcome:
 - **Trials:** optimized agent ×3 trials per scenario (pass^1 and pass^3 are both
   reported); baseline agent ×1 trial per scenario (LLD §8: "baseline runs 1 trial — pass^k
   is measured on the optimized agent only, disclosed").
-- **Budget:** `EVAL_BUDGET_USD=25` per run as a hard ceiling; a run that aborts on budget
+- **Budget:** `EVAL_BUDGET_USD=8.50` as a hard process-wide ceiling (revised 2026-11-05,
+  pre-benchmark: total available API credit is $10; ceiling leaves headroom). Consequences,
+  decided before any run: optimized = full 110 scenarios ×3 trials; baseline = stratified
+  40-scenario subset ×1 trial (full-catalog ReAct at ~12k tokens/step cannot fit $10 at
+  110 scenarios — disclosed in BENCHMARK.md); model matrix reduced to a ≤10-scenario spot
+  check only if residual budget permits; a run that aborts on budget
   reports a partial table, not a padded/extrapolated one.
