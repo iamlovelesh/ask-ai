@@ -4,7 +4,15 @@
     "plan": {
       "goal": "Find leads created in the last week",
       "steps": [
-        { "id": "s1", "action": "leads.search_leads", "params": {}, "dependsOn": [] }
+        {
+          "id": "s1",
+          "action": "leads.search_leads",
+          "params": "{}",
+          "dependsOn": [],
+          "forEach": "",
+          "when": { "ref": "", "op": "eq", "value": null },
+          "expects": { "nonEmpty": null, "maxCount": null, "minCount": null }
+        }
       ]
     },
     "queries": [],

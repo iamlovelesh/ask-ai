@@ -195,7 +195,9 @@ describe('joinerRepair — one llmCall, returns a decision', () => {
   });
 
   it('returns a "proceed" decision parsed from the mocked LLM response', async () => {
-    const decision = { decision: 'proceed' };
+    // Wire shape (docs/SPIKES.md §1c) — joinerRepair now requests
+    // `wireJoinerDecisionSchema`: ALL 3 fields always present.
+    const decision = { decision: 'proceed', patchedSteps: [], question: null };
     const fakeFetch = (async () =>
       new Response(
         JSON.stringify({
@@ -224,7 +226,24 @@ describe('joinerRepair — one llmCall, returns a decision', () => {
   });
 
   it('returns a "patch" decision with the patched steps', async () => {
-    const patched = { decision: 'patch', patchedSteps: [step({ id: 's1', action: 'leads.search_leads', params: { created_after: '2026-10-01' } })] };
+    // Wire shape (docs/SPIKES.md §1c): patchedSteps are wire `Step`s —
+    // `params` is a JSON-encoded string, `forEach`/`when`/`expects` always
+    // present with their sentinel/null wire defaults.
+    const patched = {
+      decision: 'patch',
+      patchedSteps: [
+        {
+          id: 's1',
+          action: 'leads.search_leads',
+          params: JSON.stringify({ created_after: '2026-10-01' }),
+          dependsOn: [],
+          forEach: '',
+          when: { ref: '', op: 'eq', value: null },
+          expects: { nonEmpty: null, maxCount: null, minCount: null },
+        },
+      ],
+      question: null,
+    };
     const fakeFetch = (async () =>
       new Response(
         JSON.stringify({

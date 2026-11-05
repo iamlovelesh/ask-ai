@@ -135,54 +135,126 @@ export const planOutcomeSchema = z.discriminatedUnion('kind', [
 ]);
 export type PlanOutcome = z.infer<typeof planOutcomeSchema>;
 
-// --- FlatPlanOutcome (Task 6 round-2 fix — docs/SPIKES.md §1b) -------------
+// --- Wire schema (Task 6 round-3 fix — docs/SPIKES.md §1c) -----------------
 //
 // `planOutcomeSchema` above is `z.discriminatedUnion('kind', [...5 variants])`,
-// which Zod compiles to a JSON Schema with a **top-level `oneOf`**. That's a
-// SEPARATE, independent defect from the recursive-`Value` one fixed earlier
-// in this file (docs/SPIKES.md §1/§1a) — it was masked in round 1 because the
-// `$ref`-cycle error fired first for Anthropic/OpenAI. Once that cycle was
-// fixed, re-spiking showed both providers reject a union **at the schema
-// root** ("Schema type 'oneOf' is not supported" / "In context=(), 'oneOf'
-// is not permitted" — Gemini has no such restriction). `planOutcomeSchema`
-// itself is UNCHANGED and still the type every downstream consumer
-// (validator/pipeline/executor/events) works with — it's also still used by
-// `agent/validator.ts` for a pure in-process structural re-check of an
-// ALREADY-PARSED JS object (never sent to a provider, so its `oneOf` is
-// irrelevant there).
+// compiling to a top-level `oneOf` — round 1's defect. Round 2 fixed that
+// (flat root object) and ALSO found `.nullable()` on an object/array compiles
+// to `anyOf` (no public zod escape hatch), fixing `plan`/`queries` via
+// sentinel defaults instead. Both fixes are correct and still in place below
+// — but round 3's live diagnostic (one call per still-failing provider,
+// against the round-2 schema, BEFORE any further change — see docs/SPIKES.md
+// §1c) found the round-2 schema STILL 400s, for a THIRD, independent defect:
 //
-// `flatPlanOutcomeSchema` below is the schema actually handed to
-// `generateObject` (by `planner.ts`'s `plan()` and `pipeline.ts`'s repair
-// call site — the only two places that ever asked a real provider for a
-// `PlanOutcome`): a single FLAT root object, every field always present
-// (required). No `oneOf`/`anyOf` ANYWHERE in this schema, root or nested —
-// not just at the root:
+//   Anthropic: "output_config.format.schema: Empty schema ({}) that accepts
+//     any JSON value is not supported. Please specify a concrete type."
+//   OpenAI: "...In context=('properties','plan','properties','steps','items',
+//     'properties','params','additionalProperties'), schema must have a
+//     'type' key."
 //
-// Round-2 re-spike (docs/SPIKES.md §1b) found that fixing ONLY the root
-// `oneOf` was NOT enough — Anthropic/OpenAI still rejected the result.
-// `z.toJSONSchema` was checked locally against every nullable variant zod
-// offers (`.nullable()`, `z.union([X, z.null()])`, `.or(z.null())`) and
-// ALL of them compile a nullable OBJECT/ARRAY to `{"anyOf":[{the type},
-// {"type":"null"}]}` — zod has no public way to emit the alternative,
-// equally-valid `{"type":[X,"null"], ...}` form for complex types (it DOES
-// use that `type`-array form automatically for nullable PRIMITIVES like
-// `z.string().nullable()` → `{"type":["string","null"]}`, no `anyOf` — this
-// asymmetry is exactly why `question`/`reason`/`text` below stay
-// `.nullable()` but `plan`/`queries` do not). Since `anyOf` is the only
-// remaining union-shaped keyword anywhere in the compiled schema after the
-// root fix, and both failing providers' complaints have consistently been
-// about union keywords (`oneOf` at root, `propertyNames`+ref-loop through
-// a union branch in round 1), `plan`/`queries` use SENTINEL values instead
-// of `null` when not the active kind — `plan: planSchema` (not nullable;
-// sentinel `{goal:"", steps:[]}`) and `queries: z.array(z.string())` (not
-// nullable; sentinel `[]`) — eliminating `anyOf` for them entirely. This
-// candidate fix is NOT yet live-verified (docs/SPIKES.md §1b: the live
-// budget for this round was exhausted reaching this hypothesis) — see that
-// section for the exact status and the fallback hypothesis (nested
-// `.optional()` fields deep in `stepSchema`) if this still isn't enough.
+// Both point at the exact same place: `stepSchema.params`'s
+// `z.looseObject({})` compiles to `"additionalProperties":{}` — an EMPTY,
+// type-less nested schema (round 1 already ruled out `z.record()` here for
+// an unrelated reason, `propertyNames`, but never caught THIS one — the
+// `{}` "additionalProperties" value is identical between `z.looseObject({})`
+// and `z.record(z.string(), z.unknown())`). A local JSON-schema dump of the
+// round-2 schema additionally found `whenSchema.value` (`z.unknown()`) has
+// the IDENTICAL `{}` empty-schema shape, unexercised by either provider
+// error only because validation apparently stops at the first offending
+// field it reaches — and that `stepSchema`'s `forEach`/`when`/`expects`
+// (and `whenSchema.value`, `expectsSchema`'s 3 fields) are genuinely
+// OPTIONAL (omitted from `required`), the long-flagged-but-never-confirmed
+// hypothesis from round 2. Rather than fix one and risk a FOURTH masked
+// defect, this round fixes every remaining non-conforming construct at
+// once, uniformly:
+//
+// 1. `params`: NOT an object schema at all anymore — `z.string()`, a
+//    JSON-ENCODED blob of the real `Record<string, unknown>` (LLD §10 Spike
+//    B's own original option 1, floated back in docs/SPIKES.md §1 and
+//    finally needed). A plain string has a trivially concrete `type`, so
+//    this can never hit the "empty schema" rejection again regardless of
+//    how deeply nested or heterogeneous real param values get.
+// 2. `when`/`expects`/`forEach`: ALWAYS present (never `.optional()`) with
+//    SENTINEL semantics — `forEach: z.string()` (`''` = absent); `when` is
+//    always an object, `ref: z.string()` (`''` = absent, `op`/`value` then
+//    ignored); `expects` is always an object with `nonEmpty`/`maxCount`/
+//    `minCount` each `.nullable()` (primitive nullable collapses to a
+//    `type`-ARRAY, e.g. `{"type":["number","null"]}` — NOT `anyOf`, unlike
+//    round 2's object/array nullable finding; `null` per-field = that field
+//    unset, matching the original `Expects`'s per-field-optional shape
+//    exactly). `when.op` stays the real 5-value enum, never nullable —
+//    `z.enum([...]).nullable()` was checked locally and (unlike plain
+//    primitives) DOES compile to `anyOf` (enum adds a second `enum`
+//    keyword zod can't fold into a bare `type` array), so `op`'s "unused"
+//    state is signaled by `ref===''` instead, not by nulling `op` itself.
+// 3. `when.value`: `z.union([z.string(), z.number(), z.boolean(), z.null()])`
+//    — a union of bare primitives (no enum, no object/array) collapses
+//    cleanly to `{"type":["string","number","boolean","null"]}`, no `anyOf`
+//    — confirmed locally. This is the one place a JSON Schema union of
+//    primitives is safe: round 1/2's unions all failed because they also
+//    contained an enum, object, or array branch forcing `anyOf`.
+//
+// `toStep`/`toPlan`/`toPlanOutcome` below adapt this wire shape back to the
+// EXISTING `Step`/`Plan`/`PlanOutcome` types — `agent/validator.ts`,
+// `agent/executor.ts`, `agent/joiner.ts`, and `events/types.ts` see EXACTLY
+// what they saw before this fix; only the two call sites that ever hand a
+// schema to `generateObject` (`planner.ts`'s `plan()`, `pipeline.ts`'s
+// repair call) go through the wire schema + adapter.
+
+/** The wire (generateObject-facing) shape of `When` — see this section's
+ * header for why `ref`/`op`/`value` are all required with sentinel/
+ * collapsible-nullable semantics instead of `whenSchema`'s `.optional()`
+ * fields. `''` for `ref` means "no when clause" (then `op`/`value` are
+ * ignored by `toStep`). */
+export const wireWhenSchema = z.strictObject({
+  ref: z.string(),
+  op: whenOpSchema,
+  value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+});
+export type WireWhen = z.infer<typeof wireWhenSchema>;
+
+/** The wire shape of `Expects` — all 3 fields required+nullable (not
+ * `.optional()`); `null` means that field is unset, exactly matching the
+ * original per-field-optional `Expects` semantics once `toStep` strips the
+ * nulls back out. */
+export const wireExpectsSchema = z.strictObject({
+  nonEmpty: z.boolean().nullable(),
+  maxCount: z.number().nullable(),
+  minCount: z.number().nullable(),
+});
+export type WireExpects = z.infer<typeof wireExpectsSchema>;
+
+/** The wire shape of `Step` — `params` is a JSON-ENCODED STRING (parsed
+ * back to `Record<string, unknown>` by `toStep`), and `forEach`/`when`/
+ * `expects` are always present (sentinel/nullable, never `.optional()`) —
+ * see this section's header for the full rationale. */
+export const wireStepSchema = z.strictObject({
+  id: z.string(),
+  action: z.string(),
+  params: z.string(),
+  dependsOn: z.array(z.string()),
+  forEach: z.string(),
+  when: wireWhenSchema,
+  expects: wireExpectsSchema,
+});
+export type WireStep = z.infer<typeof wireStepSchema>;
+
+/** The wire shape of `Plan`. */
+export const wirePlanSchema = z.strictObject({
+  goal: z.string(),
+  steps: z.array(wireStepSchema),
+});
+export type WirePlan = z.infer<typeof wirePlanSchema>;
+
+/** The wire (generateObject-facing) shape of `PlanOutcome` — a single flat
+ * root object, every field always present. `plan`/`queries` use sentinel
+ * defaults (`{goal:"",steps:[]}` / `[]`) rather than `.nullable()` (round 2:
+ * nullable object/array compiles to `anyOf`, which this file avoids
+ * everywhere); `question`/`reason`/`text` stay `.nullable()` (safe for
+ * plain strings — collapses to a `type` array, no `anyOf`). */
 export const flatPlanOutcomeSchema = z.strictObject({
   kind: z.enum(['plan', 'search', 'clarify', 'unsupported', 'respond']),
-  plan: planSchema,
+  plan: wirePlanSchema,
   queries: z.array(z.string()),
   question: z.string().nullable(),
   reason: z.string().nullable(),
@@ -190,19 +262,17 @@ export const flatPlanOutcomeSchema = z.strictObject({
 });
 export type FlatPlanOutcome = z.infer<typeof flatPlanOutcomeSchema>;
 
-/** Thrown by `toPlanOutcome` when a structurally-valid `FlatPlanOutcome`
- * (already passed `flatPlanOutcomeSchema`'s zod parse) has an
- * internally-inconsistent combination of fields for its `kind` — either a
- * kind-specific field left at its SENTINEL value (`plan.steps.length===0`
- * for `kind:'plan'`; `queries.length===0` for `kind:'search'` — see
- * `flatPlanOutcomeSchema`'s header for why `plan`/`queries` use sentinels
- * instead of `null`) or still `null` (`question`/`reason`/`text`) — a
- * cross-field constraint `flatPlanOutcomeSchema` itself cannot express (zod
- * object schemas don't encode "this field is required only when that
- * discriminant has this value" without reintroducing a union, which is
- * exactly what this file is avoiding at the schema level). Call sites
- * (`planner.ts`'s `plan()`, `pipeline.ts`'s repair call) catch this and
- * re-throw it as the AI SDK's `NoObjectGeneratedError` — see `planner.ts`'s
+/** Thrown by `toPlanOutcome`/`toStep` when a structurally-valid wire value
+ * (already passed its zod parse) has an internally-inconsistent or
+ * unparseable combination of fields — a kind-specific field left at its
+ * sentinel/null default, or a `params` string that isn't valid JSON. A
+ * cross-field/content constraint the wire schema itself cannot express
+ * (zod object schemas don't encode "this field matters only when that
+ * discriminant has this value," and can't validate a string's CONTENTS as
+ * JSON, without reintroducing a union/recursive schema — exactly what this
+ * file is avoiding). Call sites (`planner.ts`'s `plan()`, `pipeline.ts`'s
+ * repair call, `joiner.ts`'s `joinerRepair`) catch this and re-throw it as
+ * the AI SDK's `NoObjectGeneratedError` — see `planner.ts`'s
  * `narrowFlatOutcome` — so `pipeline.ts`'s EXISTING
  * `NoObjectGeneratedError.isInstance(err)` handling (escalate-and-retry,
  * then a repairable `'failed'` turn; LLD: "never a crash") covers this case
@@ -212,6 +282,53 @@ export class FlatOutcomeShapeError extends Error {
     super(message);
     this.name = 'FlatOutcomeShapeError';
   }
+}
+
+/** Narrows a wire `WireStep` to the existing `Step` type every downstream
+ * consumer (validator/executor/joiner/events) already expects — pure, no
+ * I/O. `params` is JSON-parsed back to a real object (throwing
+ * `FlatOutcomeShapeError` on invalid JSON — a model mistake, not a crash);
+ * `forEach`/`when`/`expects` sentinels are stripped back to `undefined`,
+ * matching `stepSchema`'s original `.optional()` shape exactly. */
+function parseWireParams(wire: WireStep): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(wire.params);
+  } catch (err) {
+    throw new FlatOutcomeShapeError(`Step '${wire.id}': 'params' is not valid JSON (${String(err)}).`);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new FlatOutcomeShapeError(`Step '${wire.id}': 'params' must JSON-decode to an object, got ${wire.params}`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function toExpects(wire: WireExpects): Expects | undefined {
+  if (wire.nonEmpty === null && wire.maxCount === null && wire.minCount === null) return undefined;
+  return {
+    ...(wire.nonEmpty !== null ? { nonEmpty: wire.nonEmpty } : {}),
+    ...(wire.maxCount !== null ? { maxCount: wire.maxCount } : {}),
+    ...(wire.minCount !== null ? { minCount: wire.minCount } : {}),
+  };
+}
+
+export function toStep(wire: WireStep): Step {
+  const params = parseWireParams(wire);
+  const expects = toExpects(wire.expects);
+  return {
+    id: wire.id,
+    action: wire.action,
+    params,
+    dependsOn: wire.dependsOn,
+    ...(wire.forEach !== '' ? { forEach: wire.forEach } : {}),
+    ...(wire.when.ref !== '' ? { when: { ref: wire.when.ref, op: wire.when.op, value: wire.when.value } } : {}),
+    ...(expects !== undefined ? { expects } : {}),
+  };
+}
+
+/** Narrows a wire `WirePlan` to the existing `Plan` type. */
+export function toPlan(wire: WirePlan): Plan {
+  return { goal: wire.goal, steps: wire.steps.map(toStep) };
 }
 
 /** Narrows a structurally-valid `FlatPlanOutcome` to the existing
@@ -228,7 +345,7 @@ export function toPlanOutcome(flat: FlatPlanOutcome): PlanOutcome {
           "kind:'plan' requires a non-empty 'plan.steps' — got the sentinel empty plan.",
         );
       }
-      return { kind: 'plan', plan: flat.plan };
+      return { kind: 'plan', plan: toPlan(flat.plan) };
     case 'search':
       if (flat.queries.length === 0) {
         throw new FlatOutcomeShapeError("kind:'search' requires a non-empty 'queries' — got the sentinel [].");

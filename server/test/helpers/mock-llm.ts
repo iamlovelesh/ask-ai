@@ -40,35 +40,74 @@ function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
-// --- flat-PlanOutcome normalization (Task 6 round-2 fix, docs/SPIKES.md
-// §1b) ----------------------------------------------------------------------
+// --- wire-shape normalization (Task 6 round-2 + round-3 fixes, docs/
+// SPIKES.md §1b/§1c) ---------------------------------------------------------
 //
-// `planner.ts`'s `plan()` and `pipeline.ts`'s repair call site now request
-// `flatPlanOutcomeSchema` (every field present; `plan`/`queries` default to
-// a SENTINEL empty value, `question`/`reason`/`text` default to `null` —
-// see `agent/plan-schema.ts`'s header for why the two groups differ)
-// instead of the old `planOutcomeSchema` discriminated union — a real
-// provider's structured-output decoding enforces that shape mechanically,
-// but THIS mock replays raw JS values as-is, so a terse, old-style
-// scripted value like `{kind:'respond', text:'hi'}` would fail the
-// schema's own `required` check (missing `plan`/`queries`/`question`/
-// `reason`) before the test ever reaches the behavior it's checking.
-// Rather than rewrite every `queueMockLlm([...])` call site across
-// `pipeline.test.ts`/`api.test.ts` to spell out all 5 placeholders,
-// normalize here: any queued value that duck-types as a `PlanOutcome` (a
-// `kind` field matching one of the 5 real literals) gets the 4 unused
-// kind-specific fields defaulted before being replayed. Values that DON'T
-// duck-type this way (a `JoinerDecision` keyed by `decision`, or a
-// deliberately-malformed value a test uses to exercise the parse-failure
-// path, e.g. `{nonsense:true}` or `{kind:'final',...}` with an invalid
-// `kind`) pass through unchanged — malformed-on-purpose stays malformed.
+// `planner.ts`'s `plan()`, `pipeline.ts`'s repair call site, and
+// `joiner.ts`'s `joinerRepair` now request flat, all-fields-required WIRE
+// schemas (`flatPlanOutcomeSchema` / `wireJoinerDecisionSchema`, each
+// built from `wireStepSchema`) instead of the old discriminated unions — a
+// real provider's structured-output decoding enforces that shape
+// mechanically, but THIS mock replays raw JS values as-is, so a terse,
+// old-style scripted value (e.g. `{kind:'respond', text:'hi'}`, or a step
+// with a plain `params` object and no `forEach`/`when`/`expects`) would
+// fail the wire schema's own `required`/`type` checks before the test ever
+// reaches the behavior it's checking. Rather than rewrite every
+// `queueMockLlm([...])` call site across `pipeline.test.ts`/`api.test.ts`
+// to spell out every wire placeholder, normalize here:
+//   - any value duck-typed as a `PlanOutcome` (`kind` matching one of the 5
+//     real literals) gets the 4 unused kind-specific fields defaulted;
+//   - any value duck-typed as a `JoinerDecision` (`decision` matching one
+//     of the 4 real literals) gets `patchedSteps`/`question` defaulted;
+//   - every step object reachable through `plan.steps` or `patchedSteps`
+//     (recursively, for repair/replan scenarios with nested patches) is
+//     normalized to the wire `Step` shape: a plain `params` object is
+//     JSON-stringified, and `forEach`/`when`/`expects`, if omitted or
+//     partially specified, are filled out to their sentinel/null wire
+//     defaults.
+// Values that duck-type as NEITHER (a deliberately-malformed value a test
+// uses to exercise the parse-failure path, e.g. `{nonsense:true}` or
+// `{kind:'final',...}` with an invalid `kind`) pass through unchanged —
+// malformed-on-purpose stays malformed.
 const PLAN_OUTCOME_KINDS: ReadonlySet<string> = new Set(['plan', 'search', 'clarify', 'unsupported', 'respond']);
+const JOINER_DECISIONS: ReadonlySet<string> = new Set(['patch', 'proceed', 'clarify', 'abort']);
+
+function normalizeWireStep(step: unknown): unknown {
+  if (step === null || typeof step !== 'object' || Array.isArray(step)) return step;
+  const s = step as Record<string, unknown>;
+  const params = typeof s['params'] === 'string' ? s['params'] : JSON.stringify(s['params'] ?? {});
+  const whenIn = (s['when'] as Record<string, unknown> | undefined) ?? {};
+  const expectsIn = (s['expects'] as Record<string, unknown> | undefined) ?? {};
+  return {
+    ...s,
+    params,
+    forEach: typeof s['forEach'] === 'string' ? s['forEach'] : '',
+    when: { ref: '', op: 'eq', value: null, ...whenIn },
+    expects: { nonEmpty: null, maxCount: null, minCount: null, ...expectsIn },
+  };
+}
+
+function normalizeWireSteps(steps: unknown): unknown {
+  if (!Array.isArray(steps)) return steps;
+  return steps.map(normalizeWireStep);
+}
 
 function normalizeMockValue(value: unknown): unknown {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
   const obj = value as Record<string, unknown>;
-  if (typeof obj['kind'] !== 'string' || !PLAN_OUTCOME_KINDS.has(obj['kind'])) return value;
-  return { plan: { goal: '', steps: [] }, queries: [], question: null, reason: null, text: null, ...obj };
+
+  if (typeof obj['kind'] === 'string' && PLAN_OUTCOME_KINDS.has(obj['kind'])) {
+    const merged = { plan: { goal: '', steps: [] }, queries: [], question: null, reason: null, text: null, ...obj };
+    const plan = merged['plan'] as Record<string, unknown>;
+    return { ...merged, plan: { ...plan, steps: normalizeWireSteps(plan['steps']) } };
+  }
+
+  if (typeof obj['decision'] === 'string' && JOINER_DECISIONS.has(obj['decision'])) {
+    const merged = { patchedSteps: [], question: null, ...obj };
+    return { ...merged, patchedSteps: normalizeWireSteps(merged['patchedSteps']) };
+  }
+
+  return value;
 }
 
 /**

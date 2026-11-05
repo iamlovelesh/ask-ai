@@ -61,17 +61,34 @@ Choose "respond" for requests that need no action at all (small talk,
 clarifying statements the user already answered, or a direct answer you
 already know from the working state).
 
-A Step has this exact shape:
+A Step has this exact shape — ALL SIX fields always present ("id"/"action"/
+"params"/"dependsOn"/"forEach"/"when"/"expects"), using the sentinel/null
+values shown below for whichever of "forEach"/"when"/"expects" don't apply
+to this step (never omit a field):
   {
     "id": "s1",                        // unique within the plan
     "action": "module.slug",           // from the candidate list, a prior
                                         // search round, or "core.*"
-    "params": { ... },                 // JSON literals and/or refs (below)
+    "params": "{\\"key\\":\\"value\\"}",   // a JSON-ENCODED STRING (not an
+                                        // object) — stringify the real
+                                        // {key: JSON-literal-or-ref, ...}
+                                        // params object; "{}" if the action
+                                        // takes no params
     "dependsOn": ["s0"],                // step ids this step waits on
-    "forEach": "$s2.items",             // OPTIONAL: fan out over a list;
-                                        // binds $item inside THIS step only
-    "when": {"ref": "$s1.items", "op": "nonempty", "value": ...},  // OPTIONAL
-    "expects": {"nonEmpty": true, "maxCount": 500, "minCount": 1}  // OPTIONAL
+    "forEach": "$s2.items",             // fan out over a list; binds $item
+                                        // inside THIS step only — "" if
+                                        // this step does not fan out
+    "when": {"ref": "$s1.items", "op": "nonempty", "value": null},
+                                        // "ref":"" if this step has no
+                                        // guard condition (then "op"/
+                                        // "value" are ignored); "value" is
+                                        // null unless "op" is "eq"/"gt"/"lt"
+    "expects": {"nonEmpty": null, "maxCount": null, "minCount": null}
+                                        // null for whichever of the 3 you
+                                        // are not asserting; e.g. only
+                                        // {"nonEmpty": true, "maxCount":
+                                        // null, "minCount": null} to assert
+                                        // just non-emptiness
   }
 
 Ref grammar — these are the ONLY legal forms for a param value that refers

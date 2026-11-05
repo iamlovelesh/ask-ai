@@ -4,9 +4,12 @@ import {
   planOutcomeSchema,
   valueSchema,
   flatPlanOutcomeSchema,
+  wireStepSchema,
   toPlanOutcome,
+  toStep,
   FlatOutcomeShapeError,
   type FlatPlanOutcome,
+  type WireStep,
 } from '../src/agent/plan-schema';
 import { CONFORMANCE_PLAN_OUTCOME } from './fixtures/conformance-plan';
 
@@ -133,30 +136,43 @@ describe('plan-schema — PlanOutcome', () => {
   });
 });
 
-describe('plan-schema — FlatPlanOutcome (docs/SPIKES.md §1b)', () => {
-  const emptyPlan = { goal: '', steps: [] };
+/** A fully sentinel-filled wire step (no `forEach`/`when`/`expects`
+ * clause) — the baseline every test below starts from and overrides. */
+function wireStep(overrides: Partial<WireStep> = {}): WireStep {
+  return {
+    id: 's1',
+    action: 'a.b',
+    params: '{}',
+    dependsOn: [],
+    forEach: '',
+    when: { ref: '', op: 'eq', value: null },
+    expects: { nonEmpty: null, maxCount: null, minCount: null },
+    ...overrides,
+  };
+}
+
+describe('plan-schema — FlatPlanOutcome (docs/SPIKES.md §1c)', () => {
+  const emptyWirePlan = { goal: '', steps: [] };
   const base: FlatPlanOutcome = {
     kind: 'plan',
-    plan: emptyPlan,
+    plan: emptyWirePlan,
     queries: [],
     question: null,
     reason: null,
     text: null,
   };
 
-  it('compiled JSON Schema has no union (oneOf/anyOf) ANYWHERE — root or nested — no $ref cycles, no propertyNames', () => {
+  it('compiled JSON Schema has no union (oneOf/anyOf) ANYWHERE, no $ref cycles, no propertyNames, no empty/typeless schema, ALL properties required', () => {
     // Same exact conversion call as the `planOutcomeSchema` self-reference
     // test above (mirrors @ai-sdk/provider-utils' zod4Schema()) — but this
     // is the schema actually handed to `generateObject` now (by
     // `planner.ts`'s `plan()` and `pipeline.ts`'s repair call site), so
-    // THIS is the regression guard for BOTH the root-level-`oneOf` defect
-    // AND the nested-`anyOf`-via-nullable-object defect (docs/SPIKES.md
-    // §1a/§1b) that `planOutcomeSchema`'s own `z.discriminatedUnion` still
-    // has (intentionally — it's never sent to a provider; see this file's
-    // header). Checks the WHOLE tree, not just the root — round 1's root
-    // fix alone was NOT enough; `plan`/`queries` must be sentinel-valued,
-    // not `.nullable()`, to keep this true (see `flatPlanOutcomeSchema`'s
-    // header for why).
+    // THIS is the regression guard for round 1's root-`oneOf`, round 2's
+    // nested-`anyOf`-via-nullable-object, AND round 3's `params`/`value`
+    // empty-schema + optional-field defects (docs/SPIKES.md §1/§1a/§1b/
+    // §1c) that `planOutcomeSchema`'s own `z.discriminatedUnion` still has
+    // (intentionally — it's never sent to a provider; see this file's
+    // header). Checks the WHOLE tree, every nesting level.
     const jsonSchema = z.toJSONSchema(flatPlanOutcomeSchema, {
       target: 'draft-7',
       io: 'input',
@@ -167,14 +183,69 @@ describe('plan-schema — FlatPlanOutcome (docs/SPIKES.md §1b)', () => {
     expect(serialized).not.toContain('"oneOf"');
     expect(serialized).not.toContain('"anyOf"');
     expect(serialized).not.toContain('propertyNames');
+    // No empty/typeless schema `{}` anywhere (round 3's `params`/`value`
+    // defect) — every leaf must at least declare a `"type"` key.
+    expect(/:\{\}/.test(serialized)).toBe(false);
     expect(hasRefCycle(jsonSchema)).toBe(false);
+
+    // Every object in the tree lists ALL of its own properties in
+    // `required` (round 3's other defect — OpenAI strict mode rejects any
+    // omitted key) — walk the tree checking `Object.keys(properties)` ⊆
+    // `required` wherever both exist.
+    function assertAllPropertiesRequired(node: unknown): void {
+      if (node === null || typeof node !== 'object') return;
+      if (Array.isArray(node)) {
+        for (const n of node) assertAllPropertiesRequired(n);
+        return;
+      }
+      const obj = node as Record<string, unknown>;
+      const props = obj['properties'];
+      if (props !== undefined && typeof props === 'object' && props !== null) {
+        const required = new Set((obj['required'] as string[] | undefined) ?? []);
+        for (const key of Object.keys(props)) {
+          expect(required.has(key)).toBe(true);
+        }
+      }
+      for (const v of Object.values(obj)) assertAllPropertiesRequired(v);
+    }
+    assertAllPropertiesRequired(jsonSchema);
+  });
+
+  it('toStep round-trips params through the JSON-encoded string', () => {
+    const wire = wireStep({ params: '{"a":1,"b":"$s1.id"}' });
+    expect(toStep(wire)).toEqual({ id: 's1', action: 'a.b', params: { a: 1, b: '$s1.id' }, dependsOn: [] });
+  });
+
+  it('toStep throws FlatOutcomeShapeError on invalid JSON in params', () => {
+    expect(() => toStep(wireStep({ params: 'not json' }))).toThrow(FlatOutcomeShapeError);
+    expect(() => toStep(wireStep({ params: '[1,2,3]' }))).toThrow(FlatOutcomeShapeError); // not an object
+  });
+
+  it('toStep strips forEach/when/expects sentinels back to undefined', () => {
+    const wire = wireStep();
+    const step = toStep(wire);
+    expect(step.forEach).toBeUndefined();
+    expect(step.when).toBeUndefined();
+    expect(step.expects).toBeUndefined();
+  });
+
+  it('toStep materializes a real forEach/when/expects when present', () => {
+    const wire = wireStep({
+      forEach: '$s2.items',
+      when: { ref: '$s1.items', op: 'nonempty', value: null },
+      expects: { nonEmpty: true, maxCount: null, minCount: 1 },
+    });
+    const step = toStep(wire);
+    expect(step.forEach).toBe('$s2.items');
+    expect(step.when).toEqual({ ref: '$s1.items', op: 'nonempty', value: null });
+    expect(step.expects).toEqual({ nonEmpty: true, minCount: 1 });
   });
 
   it('toPlanOutcome narrows each of the 5 kinds back to the discriminated PlanOutcome union', () => {
-    const realPlan = { goal: 'g', steps: [{ id: 's1', action: 'a.b', params: {}, dependsOn: [] }] };
-    expect(toPlanOutcome({ ...base, kind: 'plan', plan: realPlan })).toEqual({
+    const realWirePlan = { goal: 'g', steps: [wireStep({ id: 's1', action: 'a.b' })] };
+    expect(toPlanOutcome({ ...base, kind: 'plan', plan: realWirePlan })).toEqual({
       kind: 'plan',
-      plan: realPlan,
+      plan: { goal: 'g', steps: [{ id: 's1', action: 'a.b', params: {}, dependsOn: [] }] },
     });
     expect(toPlanOutcome({ ...base, kind: 'search', queries: ['q'] })).toEqual({ kind: 'search', queries: ['q'] });
     expect(toPlanOutcome({ ...base, kind: 'clarify', question: 'which?' })).toEqual({
@@ -211,7 +282,7 @@ describe('plan-schema — FlatPlanOutcome (docs/SPIKES.md §1b)', () => {
 
   it('flatPlanOutcomeSchema accepts the full sentinel-filled shape for every kind', () => {
     const cases: FlatPlanOutcome[] = [
-      { ...base, kind: 'plan', plan: { goal: 'g', steps: [] } },
+      { ...base, kind: 'plan', plan: { goal: 'g', steps: [wireStep()] } },
       { ...base, kind: 'search', queries: ['q'] },
       { ...base, kind: 'clarify', question: 'which?' },
       { ...base, kind: 'unsupported', reason: 'no action' },
@@ -220,6 +291,11 @@ describe('plan-schema — FlatPlanOutcome (docs/SPIKES.md §1b)', () => {
     for (const c of cases) {
       expect(flatPlanOutcomeSchema.safeParse(c).success).toBe(true);
     }
+  });
+
+  it('wireStepSchema rejects a step missing forEach/when/expects (they must be present, not omitted)', () => {
+    const bare = { id: 's1', action: 'a.b', params: '{}', dependsOn: [] };
+    expect(wireStepSchema.safeParse(bare).success).toBe(false);
   });
 });
 

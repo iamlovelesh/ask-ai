@@ -13,10 +13,11 @@
  */
 
 import { z } from 'zod';
+import { NoObjectGeneratedError } from 'ai';
 import { llmCall, type LlmCallResult } from '../llm/client.js';
 import type { LlmUsage } from '../events/types.js';
 import { parseRefGrammar } from './validator.js';
-import { stepSchema, type Plan, type Step } from './plan-schema.js';
+import { wireStepSchema, toStep, FlatOutcomeShapeError, type Plan, type Step } from './plan-schema.js';
 
 // --- checkStratum -------------------------------------------------------------
 
@@ -169,13 +170,55 @@ export function checkStratum(
 
 // --- joinerRepair --------------------------------------------------------------
 
-const joinerDecisionSchema = z.discriminatedUnion('decision', [
-  z.strictObject({ decision: z.literal('patch'), patchedSteps: z.array(stepSchema) }),
-  z.strictObject({ decision: z.literal('proceed') }),
-  z.strictObject({ decision: z.literal('clarify'), question: z.string() }),
-  z.strictObject({ decision: z.literal('abort') }),
-]);
-type JoinerDecision = z.infer<typeof joinerDecisionSchema>;
+// --- wire schema (Task 6 round-3 fix — docs/SPIKES.md §1c) -----------------
+//
+// The ORIGINAL `joinerDecisionSchema` here was `z.discriminatedUnion(
+// 'decision', [...4 variants])` — the identical root-`oneOf` defect found
+// (and fixed, for `PlanOutcome`) in `agent/plan-schema.ts`/`agent/
+// planner.ts`. `joinerRepair` is the THIRD (and last) place that ever hands
+// a schema to `generateObject` for a real provider call — flagged but left
+// unfixed in round 2 (docs/SPIKES.md §1b), fixed here using the exact same
+// flat-root + sentinel pattern (and the same `wireStepSchema`/`toStep`
+// adapter from `plan-schema.ts` for `patchedSteps`, rather than a
+// duplicate definition).
+const wireJoinerDecisionSchema = z.strictObject({
+  decision: z.enum(['patch', 'proceed', 'clarify', 'abort']),
+  patchedSteps: z.array(wireStepSchema),
+  question: z.string().nullable(),
+});
+type WireJoinerDecision = z.infer<typeof wireJoinerDecisionSchema>;
+
+/** Narrows a wire `WireJoinerDecision` to the existing `JoinerDecision`
+ * shape every caller of `joinerRepair` already expects — pure, no I/O (see
+ * `joinerRepair`'s use of `NoObjectGeneratedError` for how a thrown
+ * `FlatOutcomeShapeError` here reaches `pipeline.ts`'s existing
+ * escalate-then-fail handling). */
+function toJoinerDecision(wire: WireJoinerDecision): JoinerDecision {
+  switch (wire.decision) {
+    case 'patch':
+      if (wire.patchedSteps.length === 0) {
+        throw new FlatOutcomeShapeError(
+          "decision:'patch' requires a non-empty 'patchedSteps' — got the sentinel [].",
+        );
+      }
+      return { decision: 'patch', patchedSteps: wire.patchedSteps.map(toStep) };
+    case 'proceed':
+      return { decision: 'proceed' };
+    case 'clarify':
+      if (wire.question === null) {
+        throw new FlatOutcomeShapeError("decision:'clarify' requires a non-null 'question' field.");
+      }
+      return { decision: 'clarify', question: wire.question };
+    case 'abort':
+      return { decision: 'abort' };
+  }
+}
+
+type JoinerDecision =
+  | { decision: 'patch'; patchedSteps: Step[] }
+  | { decision: 'proceed' }
+  | { decision: 'clarify'; question: string }
+  | { decision: 'abort' };
 
 export interface JoinerRepairCtx {
   plan: Plan;
@@ -204,16 +247,42 @@ const JOINER_SYSTEM_PROMPT = `You are the joiner repair step for a CRM automatio
 execution has hit a checkpoint violation: a step's declared expectation
 about its result did not hold (e.g. a read that was expected to be
 non-empty came back empty, or a filter zeroed out a non-empty input).
-Decide exactly one of:
-  {"decision":"patch","patchedSteps":[...]}   // replace the FULL remaining
-                                               // step array with a corrected
-                                               // one (same Step JSON shape)
-  {"decision":"proceed"}                      // the violation is actually
+Respond with exactly one JSON object with ALL THREE of these fields
+present — "decision" plus both "patchedSteps"/"question" — fully filling
+in ONLY the ONE field that matches "decision": "patchedSteps" is the
+empty array [] and "question" is null when they are not the active field:
+
+  {"decision":"patch", "patchedSteps": [...Step], "question": null}
+                                               // replace the FULL remaining
+                                               // step array with a
+                                               // corrected one
+  {"decision":"proceed", "patchedSteps": [], "question": null}
+                                               // the violation is actually
                                                // fine — continue as planned
-  {"decision":"clarify","question":"..."}     // ask the user ONE focused
+  {"decision":"clarify", "patchedSteps": [], "question": "..."}
+                                               // ask the user ONE focused
                                                // question before continuing
-  {"decision":"abort"}                        // the request cannot be
+  {"decision":"abort", "patchedSteps": [], "question": null}
+                                               // the request cannot be
                                                // salvaged; report honestly
+
+Each Step in "patchedSteps" has this exact shape — ALL SIX fields always
+present ("id"/"action"/"params"/"dependsOn"/"forEach"/"when"/"expects"),
+using sentinel/null values for whichever of "forEach"/"when"/"expects"
+don't apply (never omit a field):
+  {
+    "id": "s1",
+    "action": "module.slug",
+    "params": "{\\"key\\":\\"value\\"}",     // a JSON-ENCODED STRING (not
+                                          // an object); "{}" if no params
+    "dependsOn": ["s0"],
+    "forEach": "$s2.items",               // "" if this step does not fan out
+    "when": {"ref": "$s1.items", "op": "nonempty", "value": null},
+                                          // "ref":"" if no guard condition
+    "expects": {"nonEmpty": null, "maxCount": null, "minCount": null}
+                                          // null for whichever of the 3 you
+                                          // are not asserting
+  }
 Respond with the JSON object only. No prose, no markdown fences.`;
 
 function buildJoinerPrompt(ctx: JoinerRepairCtx): string {
@@ -232,16 +301,40 @@ function buildJoinerPrompt(ctx: JoinerRepairCtx): string {
 
 /** One `llmCall` deciding how to respond to a `checkStratum` violation. */
 export async function joinerRepair(ctx: JoinerRepairCtx): Promise<JoinerRepairResult> {
-  const result: LlmCallResult<JoinerDecision> = await llmCall<JoinerDecision>({
+  const result: LlmCallResult<WireJoinerDecision> = await llmCall<WireJoinerDecision>({
     stage: 'repair',
     model: ctx.model,
-    schema: joinerDecisionSchema,
+    schema: wireJoinerDecisionSchema,
     system: JOINER_SYSTEM_PROMPT,
     prompt: buildJoinerPrompt(ctx),
     turnId: ctx.turnId,
   });
 
-  const decision = result.value as JoinerDecision;
+  let decision: JoinerDecision;
+  try {
+    decision = toJoinerDecision(result.value as WireJoinerDecision);
+  } catch (err) {
+    if (err instanceof FlatOutcomeShapeError) {
+      // Same adapter-layer re-throw `planner.ts`'s `narrowFlatOutcome` uses
+      // for the identical situation — reusing `pipeline.ts`'s EXISTING
+      // `NoObjectGeneratedError.isInstance(err)` handling with zero new
+      // pipeline logic.
+      throw new NoObjectGeneratedError({
+        message: err.message,
+        cause: err,
+        text: JSON.stringify(result.value),
+        response: { id: result.spanId, timestamp: new Date(), modelId: ctx.model },
+        usage: {
+          inputTokens: result.usage.tokensIn,
+          outputTokens: result.usage.tokensOut,
+          totalTokens: result.usage.tokensIn + result.usage.tokensOut,
+        },
+        finishReason: 'other',
+      });
+    }
+    throw err;
+  }
+
   const out: JoinerRepairResult = {
     decision: decision.decision,
     usage: result.usage,
