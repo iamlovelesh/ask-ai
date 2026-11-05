@@ -327,6 +327,10 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
   let ctx = args.baseCtx;
   let shortlist = args.shortlist;
   let searchRounds = 0;
+  // P6: at most one MECHANICAL search+replan is forced before an
+  // `unsupported` the planner volunteered (without asking to search) is
+  // allowed to stand.
+  let autoSearchUsed = false;
 
   for (;;) {
     let attempt = await attemptPlannerCall(budget, ctx, turnId, model);
@@ -373,9 +377,40 @@ async function runPlanningPhase(args: PlanningPhaseArgs): Promise<PlanningOutcom
       continue;
     }
 
+    // P6 (mechanical search-before-refuse): a volunteered `unsupported` with
+    // search budget still available is NOT accepted on the planner's word —
+    // round-2 showed the planner giving up ("no reports module", "can only
+    // look up companies… cannot look up a company") while the very action
+    // that answers the request (opportunities.search_opportunities,
+    // companies.search_companies) sat in the candidate list. Force ONE real
+    // retrieval round on the rewritten + raw request and re-plan; only if it
+    // comes back `unsupported` AGAIN does the refusal stand. Budget-respecting
+    // (counts a search round) and at most once per turn.
+    if (
+      rawOutcome.kind === 'unsupported' &&
+      !autoSearchUsed &&
+      searchRounds < BUDGETS.maxSearchRounds &&
+      budgetPreCheck(budget) === 'ok'
+    ) {
+      autoSearchUsed = true;
+      searchRounds += 1;
+      budget.searchRounds += 1;
+      budget.planRev += 1;
+      emit({ t: 'search', turnId, round: searchRounds, reason: 'auto-retry before refusing', llm: llmUsage });
+      const merged = mergeRetrieval([ctx.rewrittenRequest, ctx.rawRequest], args.session);
+      shortlist = new Set(merged.map((c) => c.slug));
+      const nudge =
+        `\n\n[A capability search has already been run for this request. The candidate ` +
+        `actions below DO include read/search actions for the relevant entities — build a ` +
+        `plan using them (optionally with core.* ops) if ANY combination can satisfy the ` +
+        `request. Only answer "unsupported" if no combination genuinely can.]`;
+      ctx = { ...ctx, cards: renderCards(merged), rewrittenRequest: `${ctx.rewrittenRequest}${nudge}` };
+      continue;
+    }
+
     const outcome: PlanOutcome =
       rawOutcome.kind === 'search'
-        ? { kind: 'unsupported', reason: 'Could not find a matching action after exhausting search rounds.' }
+        ? { kind: 'unsupported', reason: "I couldn't find a way to do that with the actions available to me." }
         : rawOutcome;
 
     if (outcome.kind !== 'plan') {
@@ -508,7 +543,10 @@ function composeInputFor(
   // never actually returns (it always resolves a trailing `search` to a
   // synthetic `unsupported` first), but the `PlanOutcome` union doesn't
   // statically know that.
-  const reason = outcome.kind === 'unsupported' ? outcome.reason : `No matching action found (queries: ${outcome.queries.join(', ')}).`;
+  const reason =
+    outcome.kind === 'unsupported'
+      ? outcome.reason
+      : "I couldn't find a way to do that with the actions available to me.";
   return { composeInput: { outcome: 'refused', reason }, status: 'refused' };
 }
 

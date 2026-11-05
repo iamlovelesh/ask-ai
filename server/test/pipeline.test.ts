@@ -192,6 +192,54 @@ describe('runTurn — search outcome', () => {
   });
 });
 
+describe('runTurn — mechanical search-before-refuse (P6)', () => {
+  it('a volunteered "unsupported" is retried once via a forced search+replan, then a plan runs', async () => {
+    const queue = queueMockLlm([
+      { kind: 'unsupported', reason: 'I can only look up contacts, not companies.' },
+      { kind: 'plan', plan: { goal: 'after forced search', steps: [{ id: 's1', action: 'companies.search_companies', params: {}, dependsOn: [] }] } },
+    ]);
+    __setTestFetch(queue.fetch);
+
+    const registry = buildRegistry(
+      [[action('companies.search_companies', 'read', async () => ({ items: [{ id: 'co_1', name: 'Acme' }], total: 1 }))]],
+      coreOps,
+    );
+
+    const events = await drive(registry, 'whats going on with acme');
+
+    expect(queue.callCount()).toBe(2); // the forced replan happened
+    const searchEvent = events.find((e) => e.t === 'search');
+    expect(searchEvent).toBeDefined();
+    if (searchEvent && searchEvent.t === 'search') expect(searchEvent.reason).toBe('auto-retry before refusing');
+    expect(completedOf(events).status).toBe('done'); // not 'refused'
+    expect(completedOf(events).metrics.searchRounds).toBe(1);
+  });
+
+  it('a second "unsupported" after the forced retry stands as a refusal (no raw leak)', async () => {
+    const queue = queueMockLlm([
+      { kind: 'unsupported', reason: 'first refusal' },
+      { kind: 'unsupported', reason: 'I genuinely cannot do that.' },
+    ]);
+    __setTestFetch(queue.fetch);
+
+    const registry = buildRegistry(
+      [[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]],
+      coreOps,
+    );
+
+    const events = await drive(registry, 'do something impossible');
+
+    expect(queue.callCount()).toBe(2);
+    const completed = completedOf(events);
+    expect(completed.status).toBe('refused');
+    const final = events.find((e) => e.t === 'answer.final');
+    if (final && final.t === 'answer.final') {
+      expect(final.text).not.toContain('exhausting search rounds');
+      expect(final.text).not.toContain('matching action');
+    }
+  });
+});
+
 describe('runTurn — clarify short-circuit', () => {
   it('asks exactly one question, runs zero handlers, status clarify', async () => {
     const queue = queueMockLlm([{ kind: 'clarify', question: 'Which lead did you mean?' }]);
