@@ -28,10 +28,19 @@ export interface TaskFrame {
    * the next turn's (typically anaphora-free) reply can be composed with
    * it instead of leaking a stale `frame.intent` into the rewrite (fix:
    * clarify intent carryover — a clarify turn must NOT overwrite
-   * `intent`/`filters`). Cleared on the next `plan.ready` of any OTHER
-   * kind (`plan`/`respond`/`unsupported`). On a SECOND consecutive
-   * clarify, `request` is carried forward unchanged (chains to the FIRST
-   * request, never the intermediate answer that triggered this one). */
+   * `intent`/`filters`). On a SECOND consecutive clarify, `request` is
+   * carried forward unchanged (chains to the FIRST request, never the
+   * intermediate answer that triggered this one).
+   *
+   * Lifecycle (fix: clarify staleness, live-test F4/F5): whoever ANSWERS a
+   * pending clarify consumes it for that turn, at that turn's
+   * `turn.completed` — REGARDLESS of final status — unless that exact
+   * turn's OWN `plan.ready` re-set it with a fresh/back-to-back clarify.
+   * In particular this clears it even when the resolving turn FAILS
+   * outright (e.g. repair exhaustion) and never reaches a `plan.ready` at
+   * all — the prior design only cleared on a plan.ready of some other
+   * kind, so a turn that failed before ever emitting one left this
+   * dangling forever, resurfacing in every later, unrelated turn. */
   pendingClarify?: { question: string; request: string };
 }
 
@@ -156,6 +165,11 @@ export function foldMemory(events: ReadonlyArray<SeqEvent | Event>): WorkingStat
 
   const actionBySKey = new Map<string, string>();
   const userTextByTurn = new Map<string, string>();
+  // Which turn most recently (re)set `frame.pendingClarify` — read at that
+  // SAME turn's `turn.completed` to decide whether this turn is the one
+  // that just (re)asked (keep) vs. every other turn, which consumed/
+  // resolved it (clear) — see `TaskFrame.pendingClarify`'s doc comment.
+  let pendingClarifySetAtTurn: string | undefined;
 
   for (const ev of plain.slice(snapshotIdx + 1)) {
     switch (ev.t) {
@@ -192,13 +206,18 @@ export function foldMemory(events: ReadonlyArray<SeqEvent | Event>): WorkingStat
           state =
             state.frame === null
               ? { ...state, frame: { intent: '', status: 'active', filters: {}, missingParams: [], pendingClarify } }
-              : { ...state, frame: { ...state.frame, pendingClarify } };
-        } else if (state.frame?.pendingClarify !== undefined) {
-          // 'unsupported' / 'respond' — any OTHER resolution also clears a
-          // pending clarify.
-          const { pendingClarify: _drop, ...rest } = state.frame;
-          state = { ...state, frame: rest };
+              // A clarify reopens the frame — even one a prior turn.completed
+              // already marked 'completed' — since the task isn't actually
+              // done until the question is answered.
+              : { ...state, frame: { ...state.frame, status: 'active', pendingClarify } };
+          pendingClarifySetAtTurn = ev.turnId;
         }
+        // 'unsupported' / 'respond' (and the defensive 'search', which a
+        // real plan.ready never actually carries — `pipeline.ts` always
+        // resolves a leftover search to `unsupported` first): clearing a
+        // pending clarify for these — and for a turn whose planning phase
+        // failed outright and never reached a `plan.ready` at all — is
+        // handled uniformly below, at `turn.completed`.
         break;
 
       case 'step.finished':
@@ -222,8 +241,19 @@ export function foldMemory(events: ReadonlyArray<SeqEvent | Event>): WorkingStat
         break;
 
       case 'turn.completed':
-        if (ev.status === 'done' && state.frame !== null) {
-          state = { ...state, frame: { ...state.frame, status: 'completed' } };
+        if (state.frame !== null) {
+          let frame = state.frame;
+          if (ev.status === 'done') frame = { ...frame, status: 'completed' };
+          // Fix: clarify staleness (live-test F4/F5) — clear a pending
+          // clarify at the END of whichever turn answered it, REGARDLESS
+          // of that turn's final status (done/failed/refused/cancelled/
+          // clarify-again), UNLESS this exact turn is the one that just
+          // (re)set it a few lines up in the 'plan.ready' case above.
+          if (frame.pendingClarify !== undefined && pendingClarifySetAtTurn !== ev.turnId) {
+            const { pendingClarify: _drop, ...rest } = frame;
+            frame = rest;
+          }
+          if (frame !== state.frame) state = { ...state, frame };
         }
         break;
 

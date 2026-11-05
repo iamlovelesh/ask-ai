@@ -259,8 +259,31 @@ describe('rewriteQuery — deterministic anaphora rewriting (no LLM)', () => {
 
 // --- fix: clarify intent carryover (live-user-confirmed bug, sess_729a1899) -
 
+const llmUsage = { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 } as const;
+
+function turnCompleted(turnId: string, status: 'done' | 'clarify' | 'refused' | 'failed' | 'cancelled'): Event {
+  return {
+    t: 'turn.completed',
+    turnId,
+    status,
+    metrics: {
+      ttfurMs: 1,
+      totalMs: 1,
+      llmCalls: 1,
+      repairs: 0,
+      replans: 0,
+      searchRounds: 0,
+      tokensIn: 1,
+      tokensOut: 1,
+      costUsd: 0,
+      stepsOk: 0,
+      stepsFailed: 0,
+    },
+  };
+}
+
 describe('foldMemory — a clarify turn does NOT clobber frame.intent/filters', () => {
-  it('a prior plan.ready(plan) sets intent; a SUBSEQUENT clarify leaves it untouched and records pendingClarify', () => {
+  it('a prior plan.ready(plan) sets intent; a SUBSEQUENT clarify leaves it untouched, records pendingClarify, and a clarify-ending turn.completed keeps it', () => {
     const events: Event[] = [
       ev({ t: 'memory.snapshot', turnId: '0', state: emptyWorkingState() }),
       ev({ t: 'turn.started', turnId: '3', sessionId: 's', userText: 'Compare leads created Q3 vs Q2', ts: 0 }),
@@ -270,8 +293,9 @@ describe('foldMemory — a clarify turn does NOT clobber frame.intent/filters', 
         outcome: { kind: 'plan', plan: { goal: 'Compare leads created Q3 vs Q2', steps: [] } },
         planRev: 0,
         planHash: 'h3',
-        llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+        llm: llmUsage,
       }),
+      ev(turnCompleted('3', 'done')),
       ev({ t: 'turn.started', turnId: '4', sessionId: 's', userText: 'In Q1, how many leads were qualified?', ts: 0 }),
       ev({
         t: 'plan.ready',
@@ -279,8 +303,9 @@ describe('foldMemory — a clarify turn does NOT clobber frame.intent/filters', 
         outcome: { kind: 'clarify', question: 'Which Q1 do you mean?' },
         planRev: 0,
         planHash: 'h4',
-        llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+        llm: llmUsage,
       }),
+      ev(turnCompleted('4', 'clarify')),
     ];
 
     const state = foldMemory(events);
@@ -288,13 +313,14 @@ describe('foldMemory — a clarify turn does NOT clobber frame.intent/filters', 
     // intent/filters from the PRIOR plan are untouched by the clarify.
     expect(state.frame?.intent).toBe('Compare leads created Q3 vs Q2');
     expect(state.frame?.status).toBe('active');
+    // The clarify's OWN turn.completed does not clear what it just set.
     expect(state.frame?.pendingClarify).toEqual({
       question: 'Which Q1 do you mean?',
       request: 'In Q1, how many leads were qualified?',
     });
   });
 
-  it('a clarify as the VERY FIRST turn (no prior frame) still records pendingClarify', () => {
+  it('a clarify as the VERY FIRST turn (no prior frame) still records pendingClarify, surviving its own turn.completed', () => {
     const events: Event[] = [
       ev({ t: 'memory.snapshot', turnId: '0', state: emptyWorkingState() }),
       ev({ t: 'turn.started', turnId: '1', sessionId: 's', userText: 'do the thing', ts: 0 }),
@@ -304,8 +330,9 @@ describe('foldMemory — a clarify turn does NOT clobber frame.intent/filters', 
         outcome: { kind: 'clarify', question: 'Which thing?' },
         planRev: 0,
         planHash: 'h1',
-        llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+        llm: llmUsage,
       }),
+      ev(turnCompleted('1', 'clarify')),
     ];
 
     const state = foldMemory(events);
@@ -314,7 +341,7 @@ describe('foldMemory — a clarify turn does NOT clobber frame.intent/filters', 
     expect(state.frame?.status).toBe('active');
   });
 
-  it('pendingClarify is cleared by the next plan.ready of kind plan/respond/unsupported', () => {
+  it('pendingClarify is cleared at the resolving turn\'s turn.completed, for plan/respond/unsupported outcomes', () => {
     const clarifyEvents: Event[] = [
       ev({ t: 'memory.snapshot', turnId: '0', state: emptyWorkingState() }),
       ev({ t: 'turn.started', turnId: '1', sessionId: 's', userText: 'In Q1, how many leads were qualified?', ts: 0 }),
@@ -324,8 +351,9 @@ describe('foldMemory — a clarify turn does NOT clobber frame.intent/filters', 
         outcome: { kind: 'clarify', question: 'Which Q1?' },
         planRev: 0,
         planHash: 'h1',
-        llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+        llm: llmUsage,
       }),
+      ev(turnCompleted('1', 'clarify')),
     ];
 
     for (const kind of ['plan', 'respond', 'unsupported'] as const) {
@@ -335,6 +363,7 @@ describe('foldMemory — a clarify turn does NOT clobber frame.intent/filters', 
           : kind === 'respond'
             ? ({ kind, text: 'ok' } as const)
             : ({ kind, reason: 'nope' } as const);
+      const status = kind === 'plan' ? 'done' : kind === 'respond' ? 'done' : 'refused';
       const events: Event[] = [
         ...clarifyEvents,
         ev({ t: 'turn.started', turnId: '2', sessionId: 's', userText: 'Q1 2026 (Jan–Mar)', ts: 0 }),
@@ -344,15 +373,72 @@ describe('foldMemory — a clarify turn does NOT clobber frame.intent/filters', 
           outcome,
           planRev: 0,
           planHash: 'h2',
-          llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+          llm: llmUsage,
         }),
+        ev(turnCompleted('2', status)),
       ];
       const state = foldMemory(events);
       expect(state.frame?.pendingClarify).toBeUndefined();
     }
   });
 
-  it('back-to-back clarifies: the SECOND clarify keeps the ORIGINAL request, not the intermediate answer', () => {
+  it('(e) a resolving turn that FAILS outright — repair exhaustion, no plan.ready at all this turn — still clears pendingClarify at turn.completed', () => {
+    const events: Event[] = [
+      ev({ t: 'memory.snapshot', turnId: '0', state: emptyWorkingState() }),
+      ev({ t: 'turn.started', turnId: '1', sessionId: 's', userText: 'ok add a note to the first one saying follow up next week', ts: 0 }),
+      ev({
+        t: 'plan.ready',
+        turnId: '1',
+        outcome: { kind: 'clarify', question: 'Should I create a new note or an internal comment?' },
+        planRev: 0,
+        planHash: 'h1',
+        llm: llmUsage,
+      }),
+      ev(turnCompleted('1', 'clarify')),
+      // Turn 2 answers the clarify, but the PLANNING PHASE ITSELF fails
+      // (repair exhaustion) — NO plan.ready event is ever emitted for
+      // turn 2 at all (mirrors `pipeline.ts`'s `runPlanningPhase` on
+      // `{kind:'failed'}`).
+      ev({ t: 'turn.started', turnId: '2', sessionId: 's', userText: 'just a regular note, author doesnt matter', ts: 0 }),
+      ev(turnCompleted('2', 'failed')),
+    ];
+
+    const state = foldMemory(events);
+
+    expect(state.frame?.pendingClarify).toBeUndefined();
+  });
+
+  it('(f) the user abandons ("forget it") in a turn that succeeds on something else — pendingClarify is cleared after that turn', () => {
+    const events: Event[] = [
+      ev({ t: 'memory.snapshot', turnId: '0', state: emptyWorkingState() }),
+      ev({ t: 'turn.started', turnId: '1', sessionId: 's', userText: 'ok add a note to the first one saying follow up next week', ts: 0 }),
+      ev({
+        t: 'plan.ready',
+        turnId: '1',
+        outcome: { kind: 'clarify', question: 'Should I create a new note or an internal comment?' },
+        planRev: 0,
+        planHash: 'h1',
+        llm: llmUsage,
+      }),
+      ev(turnCompleted('1', 'clarify')),
+      ev({ t: 'turn.started', turnId: '2', sessionId: 's', userText: 'forget the note, whats going on with acme', ts: 0 }),
+      ev({
+        t: 'plan.ready',
+        turnId: '2',
+        outcome: { kind: 'respond', text: 'Sure, dropping that. What would you like to know about Acme?' },
+        planRev: 0,
+        planHash: 'h2',
+        llm: llmUsage,
+      }),
+      ev(turnCompleted('2', 'done')),
+    ];
+
+    const state = foldMemory(events);
+
+    expect(state.frame?.pendingClarify).toBeUndefined();
+  });
+
+  it('back-to-back clarifies: the SECOND clarify keeps the ORIGINAL request, not the intermediate answer, and survives its own turn.completed', () => {
     const events: Event[] = [
       ev({ t: 'memory.snapshot', turnId: '0', state: emptyWorkingState() }),
       ev({ t: 'turn.started', turnId: '1', sessionId: 's', userText: 'In Q1, how many leads were qualified?', ts: 0 }),
@@ -362,8 +448,9 @@ describe('foldMemory — a clarify turn does NOT clobber frame.intent/filters', 
         outcome: { kind: 'clarify', question: 'Which Q1?' },
         planRev: 0,
         planHash: 'h1',
-        llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+        llm: llmUsage,
       }),
+      ev(turnCompleted('1', 'clarify')),
       // The user's reply itself triggers a SECOND clarify (e.g. still
       // ambiguous) — its userText is the INTERMEDIATE answer, not the
       // original request.
@@ -374,8 +461,9 @@ describe('foldMemory — a clarify turn does NOT clobber frame.intent/filters', 
         outcome: { kind: 'clarify', question: 'Fiscal Q1 starts in which month for your org?' },
         planRev: 0,
         planHash: 'h2',
-        llm: { model: 'm', tokensIn: 1, tokensOut: 1, tokensCached: 0, costUsd: 0, latencyMs: 1, attempt: 1 },
+        llm: llmUsage,
       }),
+      ev(turnCompleted('2', 'clarify')),
     ];
 
     const state = foldMemory(events);
