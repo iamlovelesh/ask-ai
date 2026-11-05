@@ -1,0 +1,41 @@
+# Task 17 Batch C — category: followup, module: support_tickets.
+#
+# Turn 1 establishes a result set (support_tickets.search_tickets). Turn
+# 2 resolves "them all" against that SAME filtered subset and
+# bulk-reassigns ownership. `support_tickets.assign_ticket_owner` is
+# `risk: 'write'` (m47-support_tickets.ts) and this subset (25
+# candidates) is under the `affectedCount > 50` gate threshold, so no
+# confirmation is expected.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM support_tickets WHERE status='open' AND
+#     priority='high'; -> 25 (turn-1 result set size)
+#   SELECT COUNT(*) FROM support_tickets WHERE status='open' AND
+#     priority='high' AND assignee_id='user_9'; -> 1 (before,
+#     already-assigned baseline) -> floor of 2 asserted after (>= 1
+#     newly assigned ticket on top of the pre-existing 1).
+
+id: followup-tickets-assign
+category: followup
+profile: standard
+turns:
+  - user: "Find open high-priority support tickets."
+    expect:
+      planActions:
+        mustInclude: [support_tickets.search_tickets]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM support_tickets WHERE status='open' AND priority='high'"
+          equals: 25
+      behavior:
+        confirmation: false
+  - user: "Assign them all to user_9."
+    expect:
+      planActions:
+        mustInclude: [support_tickets.assign_ticket_owner]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM support_tickets WHERE status='open' AND priority='high' AND assignee_id='user_9'"
+          gte: 2
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

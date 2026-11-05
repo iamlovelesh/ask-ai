@@ -1,0 +1,39 @@
+# Task 17 Batch C — category: followup, module: tasks.
+#
+# Turn 1 establishes a result set (tasks.search_tasks). Turn 2 resolves
+# "the first one" — positional anaphora into that SAME result set (same
+# pattern as this batch's `followup-appointments-note`) — and completes
+# just that one task.
+#
+# Derivation (template copy, VIRTUAL_NOW = 2026-11-04T10:00:00Z, "today"
+# = 2026-11-04T00:00:00Z..2026-11-05T00:00:00Z):
+#   SELECT COUNT(*) FROM tasks WHERE owner_id='user_4' AND
+#     due_date>=1793750400000 AND due_date<1793836800000; -> 3 (turn-1
+#     result set size)
+#   SELECT COUNT(*) FROM tasks WHERE status='completed'; -> 655 (before
+#     turn 2) -> floor of 656 asserted after.
+
+id: followup-tasks-complete-first
+category: followup
+profile: standard
+turns:
+  - user: "Show me user_4's tasks for today."
+    expect:
+      planActions:
+        mustInclude: [tasks.search_tasks]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM tasks WHERE owner_id='user_4' AND due_date>=1793750400000 AND due_date<1793836800000"
+          equals: 3
+      behavior:
+        confirmation: false
+  - user: "Mark the first one complete."
+    expect:
+      planActions:
+        mustInclude: [tasks.mark_task_complete]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM tasks WHERE status='completed'"
+          gte: 656
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

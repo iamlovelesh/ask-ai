@@ -1,0 +1,38 @@
+# Task 17 Batch C — category: followup, module: invoices.
+#
+# Turn 1 establishes a result set (invoices.search_invoices). Turn 2
+# resolves "the first one" — positional anaphora into that SAME result
+# set (brief's "actually cancel the first one" pattern) — and voids
+# just that one. `invoices.void_unpaid_invoice` is `risk: 'destructive'`
+# -> always gates, so turn 2 asserts confirmation:true.
+#
+# Derivation (template copy):
+#   SELECT id,status FROM invoices WHERE contact_id='con_247' AND
+#     status='issued'; -> 2 rows (turn-1 result set size)
+#   SELECT COUNT(*) FROM invoices WHERE contact_id='con_247' AND
+#     status='void'; -> 0 (before turn 2) -> floor of 1 asserted after.
+
+id: followup-invoices-cancel-first
+category: followup
+profile: standard
+turns:
+  - user: "Show me contact con_247's unpaid invoices."
+    expect:
+      planActions:
+        mustInclude: [invoices.search_invoices]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM invoices WHERE contact_id='con_247' AND status='issued'"
+          equals: 2
+      behavior:
+        confirmation: false
+  - user: "Actually, go ahead and cancel the first one — that deal's off."
+    expect:
+      planActions:
+        mustInclude: [invoices.void_unpaid_invoice]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM invoices WHERE contact_id='con_247' AND status='void'"
+          gte: 1
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]

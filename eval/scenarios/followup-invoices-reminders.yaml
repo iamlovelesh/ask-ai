@@ -1,0 +1,39 @@
+# Task 17 Batch C — category: followup, module: invoices.
+#
+# Turn 1 establishes a result set (invoices.list_overdue_invoices). Turn
+# 2 resolves "all of them" against that SAME filtered subset and fires a
+# bulk/external action (invoices.send_invoice_reminder, which creates a
+# real `messages(channel='email')` row per m28-invoices.ts) — risk:
+# 'external' always gates, so turn 2 asserts confirmation:true.
+#
+# Derivation (template copy, VIRTUAL_NOW = 2026-11-04T10:00:00Z):
+#   SELECT COUNT(*) FROM invoices WHERE status='issued' AND
+#     due_date<1793786400000; -> 165 (turn-1 result set size)
+#   SELECT COUNT(*) FROM messages WHERE channel='email'; -> 7560
+#     (before turn 2) -> floor of 7561 asserted after (>= 1 new
+#     reminder sent into that filtered subset).
+
+id: followup-invoices-reminders
+category: followup
+profile: standard
+turns:
+  - user: "Find invoices that are overdue."
+    expect:
+      planActions:
+        mustInclude: [invoices.list_overdue_invoices]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM invoices WHERE status='issued' AND due_date<1793786400000"
+          equals: 165
+      behavior:
+        confirmation: false
+  - user: "Send reminders to all of them."
+    expect:
+      planActions:
+        mustInclude: [invoices.send_invoice_reminder]
+      state:
+        - query: "SELECT COUNT(*) AS n FROM messages WHERE channel='email'"
+          gte: 7561
+      behavior:
+        confirmation: true
+      response:
+        mustNotClaim: [failed, error]
