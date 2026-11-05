@@ -32,6 +32,7 @@ import {
   type StreamEvent,
 } from '@openai/agents';
 import { BudgetExceededError, budgetUsd, costMeter, meterLlmCost } from './client.js';
+import { withBackoff, type BackoffOptions } from './backoff.js';
 import { priceFor } from './prices.js';
 import { getDefaultSpans } from '../events/trace.js';
 
@@ -64,6 +65,7 @@ class MeteredModel implements Model {
   constructor(
     private readonly inner: Model,
     private readonly modelName: string,
+    private readonly backoff: BackoffOptions | undefined,
   ) {}
 
   async getResponse(request: ModelRequest): Promise<ModelResponse> {
@@ -79,7 +81,11 @@ class MeteredModel implements Model {
     const handle = spans.start({ turnId: ctx?.turnId ?? 'unknown', kind: 'llm', name: 'loop' });
     const startedAt = performance.now();
     try {
-      const response = await this.inner.getResponse(request);
+      // 429/5xx/network retries live HERE (same policy as llmCall's
+      // withBackoff) — the inner OpenAI client has maxRetries: 0 so this is
+      // the single retry authority. Live evidence: OpenRouter's 20-rpm
+      // new-account haiku limit failed whole turns without it.
+      const { value: response } = await withBackoff(() => this.inner.getResponse(request), this.backoff);
       const tokensIn = response.usage.inputTokens;
       const tokensOut = response.usage.outputTokens;
       const costUsd = this.price(tokensIn, tokensOut);
@@ -108,16 +114,21 @@ class MeteredModel implements Model {
 }
 
 class MeteredProvider implements ModelProvider {
-  constructor(private readonly inner: OpenAIProvider) {}
+  constructor(
+    private readonly inner: OpenAIProvider,
+    private readonly backoff: BackoffOptions | undefined,
+  ) {}
 
   async getModel(modelName?: string): Promise<Model> {
     const model = await this.inner.getModel(modelName);
-    return new MeteredModel(model, modelName ?? 'unknown');
+    return new MeteredModel(model, modelName ?? 'unknown', this.backoff);
   }
 }
 
 export interface CreateLoopRunnerOptions {
   testFetch?: typeof fetch;
+  /** Test seam: fast backoff (e.g. { baseMs: 1 }); production uses defaults. */
+  backoff?: BackoffOptions;
 }
 
 // Module-level test seam, mirroring `llm/client.ts`'s `__setTestFetch`:
@@ -140,10 +151,11 @@ export function createLoopRunner(opts: CreateLoopRunnerOptions = {}): Runner {
   const client = new OpenAI({
     apiKey: process.env['OPENROUTER_API_KEY'] || 'test-key',
     baseURL: OPENROUTER_BASE_URL,
+    maxRetries: 0, // withBackoff in MeteredModel is the single retry authority
     ...(effectiveFetch !== undefined ? { fetch: effectiveFetch } : {}),
   });
   const provider = new OpenAIProvider({ openAIClient: client, useResponses: false });
-  return new Runner({ modelProvider: new MeteredProvider(provider), tracingDisabled: true });
+  return new Runner({ modelProvider: new MeteredProvider(provider, opts.backoff), tracingDisabled: true });
 }
 
 export interface RunLoopOnceOptions {

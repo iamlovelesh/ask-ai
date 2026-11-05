@@ -114,6 +114,26 @@ describe('agents-runtime', () => {
     expect(seen).toHaveLength(1);
   });
 
+  it('retries 429 rate limits with backoff instead of failing the turn', async () => {
+    const seen: SeenRequest[] = [];
+    let n = 0;
+    const flaky: typeof fetch = (async (input: string | URL | Request) => {
+      seen.push({ url: String(input instanceof Request ? input.url : input) });
+      n += 1;
+      if (n <= 4) {
+        return new Response(JSON.stringify({ error: { message: 'Rate limit exceeded', code: 429 } }), {
+          status: 429,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify(textResponse('Recovered.')), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    const runner = createLoopRunner({ testFetch: flaky, backoff: { baseMs: 1 } });
+    const result = await runLoopOnce({ runner, agent: makeAgent(), input: 'hello', maxTurns: 2, deadlineMs: 30_000, turnId: 't_rt5' });
+    expect(result.finalOutput).toBe('Recovered.');
+    expect(seen.length).toBe(5);
+  });
+
   it('deadline exceeded raises LoopDeadlineError without waiting out the model call', async () => {
     const seen: SeenRequest[] = [];
     const runner = createLoopRunner({ testFetch: scriptedFetch([textResponse('late')], seen, 1500) });
