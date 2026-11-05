@@ -22,5 +22,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [forms.get_form_definition]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the form's own `name` field, never the
+        # slug — "form 2" is the entity the slug implied (verified
+        # against server/data/crm-standard.template.db: struct_137).
+        mustMention: ["form 2"]
         mustNotClaim: [failed, error]

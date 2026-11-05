@@ -15,5 +15,11 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [quotes.create_quote]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts's write-leaf renderer names the record by the
+        # catalog's own generated id (no name field on QuoteView) — every
+        # created quote's id is prefixed "quote_" (next-id.ts), so
+        # "quote" is a safe, grounded substring regardless of the exact
+        # generated number.
+        mustMention: ["quote"]
         mustNotClaim: [failed, error]

@@ -15,5 +15,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [calendars.update_calendar_details]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts's write-leaf renderer names the record by its own
+        # post-write `name` field, never the slug — "Enterprise Demos" is
+        # the new name the user's own request asked for.
+        mustMention: ["Enterprise Demos"]
         mustNotClaim: [failed, error]

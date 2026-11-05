@@ -24,5 +24,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [conversations.search_conversations]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts never emits the dotted slug — the exact grounded
+        # count (189 open SMS conversations, per this file's own
+        # derivation comment) is the semantic equivalent.
+        mustMention: ["189"]
         mustNotClaim: [failed, error]

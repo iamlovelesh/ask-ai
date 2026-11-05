@@ -20,5 +20,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [conversations.get_conversation]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the conversation's own `name`/subject field,
+        # never the slug — "Re: your inquiry" is conv_1's actual subject
+        # (verified against server/data/crm-standard.template.db).
+        mustMention: ["Re: your inquiry"]
         mustNotClaim: [failed, error]

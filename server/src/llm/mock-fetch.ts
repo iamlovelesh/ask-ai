@@ -37,6 +37,72 @@ function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
+// --- wire-shape normalization — the SAME terse-value tolerance as
+// `server/test/helpers/mock-llm.ts` (duplicated by design: src/ cannot
+// import test helpers): planner/joiner/baseline call sites now request
+// flat, all-fields-required WIRE schemas, so old-style scripted values
+// (plain `params` objects, no `reasoning`, no sentinels) are filled out
+// here before replay. Malformed-on-purpose values pass through unchanged.
+const PLAN_OUTCOME_KINDS: ReadonlySet<string> = new Set(['plan', 'search', 'clarify', 'unsupported', 'respond']);
+const JOINER_DECISIONS: ReadonlySet<string> = new Set(['patch', 'proceed', 'clarify', 'abort']);
+const BASELINE_KINDS: ReadonlySet<string> = new Set(['call_action', 'final']);
+
+function normalizeWireStep(step: unknown): unknown {
+  if (step === null || typeof step !== 'object' || Array.isArray(step)) return step;
+  const s = step as Record<string, unknown>;
+  const params = typeof s['params'] === 'string' ? s['params'] : JSON.stringify(s['params'] ?? {});
+  const whenIn = (s['when'] as Record<string, unknown> | undefined) ?? {};
+  const expectsIn = (s['expects'] as Record<string, unknown> | undefined) ?? {};
+  return {
+    ...s,
+    params,
+    forEach: typeof s['forEach'] === 'string' ? s['forEach'] : '',
+    when: { ref: '', op: 'eq', value: null, ...whenIn },
+    expects: { nonEmpty: null, maxCount: null, minCount: null, ...expectsIn },
+  };
+}
+
+function normalizeWireSteps(steps: unknown): unknown {
+  if (!Array.isArray(steps)) return steps;
+  return steps.map(normalizeWireStep);
+}
+
+function normalizeMockValue(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  const obj = value as Record<string, unknown>;
+
+  if (typeof obj['kind'] === 'string' && PLAN_OUTCOME_KINDS.has(obj['kind'])) {
+    const merged = {
+      reasoning: 'scripted reasoning',
+      plan: { goal: '', steps: [] },
+      queries: [],
+      question: null,
+      reason: null,
+      text: null,
+      ...obj,
+    };
+    const plan = merged['plan'] as Record<string, unknown>;
+    return { ...merged, plan: { ...plan, steps: normalizeWireSteps(plan['steps']) } };
+  }
+
+  if (typeof obj['kind'] === 'string' && BASELINE_KINDS.has(obj['kind'])) {
+    const params = obj['params'];
+    return {
+      kind: obj['kind'],
+      slug: typeof obj['slug'] === 'string' ? obj['slug'] : '',
+      paramsJson: typeof obj['paramsJson'] === 'string' ? obj['paramsJson'] : JSON.stringify(params ?? {}),
+      text: typeof obj['text'] === 'string' ? obj['text'] : '',
+    };
+  }
+
+  if (typeof obj['decision'] === 'string' && JOINER_DECISIONS.has(obj['decision'])) {
+    const merged = { patchedSteps: [], question: null, ...obj };
+    return { ...merged, patchedSteps: normalizeWireSteps(merged['patchedSteps']) };
+  }
+
+  return value;
+}
+
 /** Builds a `fetch` replaying `values` in order, one per `llmCall` invocation. */
 export function buildMockFetch(values: readonly unknown[]): typeof fetch {
   let i = 0;
@@ -46,7 +112,7 @@ export function buildMockFetch(values: readonly unknown[]): typeof fetch {
         `MOCK_LLM_SCRIPT exhausted after ${values.length} scripted response(s) — an unscripted extra LLM call was made.`,
       );
     }
-    const value = values[i];
+    const value = normalizeMockValue(values[i]);
     i += 1;
     return jsonResponse(200, chatCompletionBody(JSON.stringify(value), 'mock-model'));
   }) as typeof fetch;

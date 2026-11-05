@@ -9,6 +9,16 @@
  * the same cross-workspace-relative-import convention `eval/smoke.ts`
  * already uses (`tsx` resolves both packages' TS directly; there is no
  * build step between them).
+ *
+ * task-harness-fairness: `paramChecks` used to compare ONLY the plan's
+ * literal `step.params[param]` text, which penalized a plan that legitimately
+ * resolves an id via a ref (e.g. `"$s1.items[0].id"` → `"struct_200"` at
+ * execution time) — the literal text never equals the resolved value, so
+ * the check failed even though the agent did exactly the right thing.
+ * `checkOneParam` now also checks the step's RESOLVED runtime params,
+ * carried on `step.started.resolvedParams` (an additive/optional field on
+ * the server's event payload — see `server/src/events/types.ts`); either
+ * the literal plan match OR the resolved-value match is sufficient.
  */
 
 import type { Event, Plan, PlanOutcome } from '../server/src/events/types.js';
@@ -54,17 +64,24 @@ export function isComplexTurn(events: readonly Event[]): boolean {
 
 // --- planActions -------------------------------------------------------------
 
+/** Actions actually dispatched this turn, in order — the plan-less (tool
+ * loop) agent's equivalent of a plan's step list (task-harness-fairness:
+ * a transcript with no `plan.ready` must not auto-fail plan checks). */
+function dispatchedActions(events: readonly Event[]): string[] {
+  return events
+    .filter((e): e is Extract<Event, { t: 'step.started' }> => e.t === 'step.started')
+    .map((e) => e.action);
+}
+
 function checkPlanActions(
   events: readonly Event[],
   expect: NonNullable<TurnExpect['planActions']>,
 ): AssertFailure[] {
   const planReady = findPlanReady(events);
-  if (!planReady) {
-    const needsPlan = (expect.mustInclude?.length ?? 0) > 0;
-    return needsPlan ? [{ kind: 'planActions', detail: 'no plan.ready event was emitted this turn' }] : [];
-  }
-  const plan = planFromOutcome(planReady.outcome);
-  const actions = plan ? plan.steps.map((s) => s.action) : [];
+  const plan = planReady ? planFromOutcome(planReady.outcome) : undefined;
+  // Plan-less transcripts (tool-loop agent): assert against the actions
+  // that actually RAN, in dispatch order.
+  const actions = plan ? plan.steps.map((s) => s.action) : dispatchedActions(events);
   const failures: AssertFailure[] = [];
 
   const mustInclude = expect.mustInclude ?? [];
@@ -122,30 +139,75 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function checkOneParam(plan: Plan | undefined, check: ParamCheck): AssertFailure | undefined {
+/** Every `resolvedParams` entry (task-harness-fairness) that `step.started`
+ * events recorded for a given plan step id — i.e. the FULLY RESOLVED
+ * (ref-substituted) params the executor actually dispatched with. Empty for
+ * a transcript from a build that predates the `resolvedParams` field (the
+ * event payload addition is optional/additive), which just means resolved
+ * matching degrades to "no resolved candidates" and literal matching is
+ * still tried. */
+function resolvedParamsForStep(events: readonly Event[], stepId: string): Record<string, unknown>[] {
+  return events
+    .filter((e): e is Extract<Event, { t: 'step.started' }> => e.t === 'step.started' && e.stepId === stepId)
+    .flatMap((e) => e.resolvedParams ?? []);
+}
+
+function paramMatches(check: ParamCheck, actual: unknown): boolean {
+  if (check.equals !== undefined) return deepEqual(actual, check.equals);
+  if (check.contains !== undefined) return valueContains(actual, check.contains);
+  return false;
+}
+
+function checkOneParam(plan: Plan | undefined, events: readonly Event[], check: ParamCheck): AssertFailure | undefined {
   const matchingSteps = (plan?.steps ?? []).filter((s) => s.action === check.action);
   if (matchingSteps.length === 0) {
-    return { kind: 'paramChecks', detail: `no step for action '${check.action}' in the plan` };
+    // Plan-less transcripts (tool-loop agent): check the RESOLVED runtime
+    // params on any step.started events that dispatched this action.
+    const dispatched = events.filter(
+      (e): e is Extract<Event, { t: 'step.started' }> => e.t === 'step.started' && e.action === check.action,
+    );
+    if (dispatched.length > 0) {
+      const satisfied = dispatched.some((e) => (e.resolvedParams ?? []).some((rp) => paramMatches(check, rp[check.param])));
+      if (satisfied) return undefined;
+      const seen = dispatched
+        .flatMap((e) => e.resolvedParams ?? [])
+        .map((rp) => JSON.stringify(rp[check.param] ?? null))
+        .join(' | ');
+      const expected = check.equals !== undefined ? `equals ${JSON.stringify(check.equals)}` : `contains ${JSON.stringify(check.contains)}`;
+      return {
+        kind: 'paramChecks',
+        detail: `'${check.action}'.params.${check.param} expected to ${expected} — dispatched resolved-params saw [${seen}]`,
+      };
+    }
+    return { kind: 'paramChecks', detail: `no step for action '${check.action}' in the plan or dispatched steps` };
   }
 
-  // "resolved where literal" (LLD §9.1): a step param that is a $ref string
-  // is compared AS-IS — this engine never attempts runtime ref resolution.
-  // ANY matching step satisfying the condition is enough to pass (a
+  // task-harness-fairness: a paramCheck passes if EITHER the plan's literal
+  // `step.params[param]` matches (unchanged — a param that is a $ref string
+  // is compared as-is here, no resolution attempted) OR the RESOLVED
+  // runtime value recorded on that step's `step.started` event matches (a
+  // plan that legitimately resolves ids via refs, e.g. "$s1.items[0].id" →
+  // "struct_200" at runtime, must not fail a check written against the
+  // resolved value — the two modes are either/or, not both-required). ANY
+  // matching step satisfying either condition is enough to pass (a
   // forEach/multi-step plan may dispatch the same action several times).
-  const satisfied = matchingSteps.some((step) => {
-    const actual = step.params[check.param];
-    if (check.equals !== undefined) return deepEqual(actual, check.equals);
-    if (check.contains !== undefined) return valueContains(actual, check.contains);
-    return false;
-  });
+  const satisfiedLiteral = matchingSteps.some((step) => paramMatches(check, step.params[check.param]));
+  const satisfiedResolved = matchingSteps.some((step) =>
+    resolvedParamsForStep(events, step.id).some((resolved) => paramMatches(check, resolved[check.param])),
+  );
 
-  if (satisfied) return undefined;
+  if (satisfiedLiteral || satisfiedResolved) return undefined;
 
-  const seen = matchingSteps.map((s) => JSON.stringify(s.params[check.param] ?? null)).join(' | ');
+  const seenLiteral = matchingSteps.map((s) => JSON.stringify(s.params[check.param] ?? null)).join(' | ');
+  const resolvedCandidates = matchingSteps.flatMap((s) => resolvedParamsForStep(events, s.id));
+  const seenResolved =
+    resolvedCandidates.length > 0
+      ? resolvedCandidates.map((r) => JSON.stringify(r[check.param] ?? null)).join(' | ')
+      : '(no step.started resolvedParams recorded)';
   const expected = check.equals !== undefined ? `equals ${JSON.stringify(check.equals)}` : `contains ${JSON.stringify(check.contains)}`;
   return {
     kind: 'paramChecks',
-    detail: `'${check.action}'.params.${check.param} expected to ${expected}, saw [${seen}]`,
+    detail: `'${check.action}'.params.${check.param} expected to ${expected} — plan-literal saw [${seenLiteral}], resolved-runtime saw [${seenResolved}]`,
   };
 }
 
@@ -153,7 +215,7 @@ function checkParamChecks(events: readonly Event[], checks: readonly ParamCheck[
   const plan = planFromOutcome(findPlanReady(events)?.outcome);
   const failures: AssertFailure[] = [];
   for (const check of checks) {
-    const failure = checkOneParam(plan, check);
+    const failure = checkOneParam(plan, events, check);
     if (failure) failures.push(failure);
   }
   return failures;

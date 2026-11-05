@@ -22,11 +22,11 @@ describe('buildMockFetch', () => {
     const fetchFn = buildMockFetch([{ kind: 'respond', text: 'first' }, { kind: 'respond', text: 'second' }]);
     const res1 = await fetchFn('https://example.test', {});
     const body1 = (await res1.json()) as { choices: { message: { content: string } }[] };
-    expect(JSON.parse(body1.choices[0]?.message.content ?? '')).toEqual({ kind: 'respond', text: 'first' });
+    expect(JSON.parse(body1.choices[0]?.message.content ?? '')).toMatchObject({ kind: 'respond', text: 'first' });
 
     const res2 = await fetchFn('https://example.test', {});
     const body2 = (await res2.json()) as { choices: { message: { content: string } }[] };
-    expect(JSON.parse(body2.choices[0]?.message.content ?? '')).toEqual({ kind: 'respond', text: 'second' });
+    expect(JSON.parse(body2.choices[0]?.message.content ?? '')).toMatchObject({ kind: 'respond', text: 'second' });
   });
 
   it('throws loudly once the scripted queue is exhausted', async () => {

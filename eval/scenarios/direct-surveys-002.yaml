@@ -22,5 +22,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [surveys.get_survey_definition]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the survey's own `name` field, never the
+        # slug — "survey 2" is the entity the slug implied (verified
+        # against server/data/crm-standard.template.db: struct_152).
+        mustMention: ["survey 2"]
         mustNotClaim: [failed, error]

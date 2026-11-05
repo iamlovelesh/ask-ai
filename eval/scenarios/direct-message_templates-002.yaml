@@ -18,5 +18,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [message_templates.search_templates]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts never emits the dotted slug — "message templates" is
+        # the plain-English module noun its template always uses (found
+        # or empty branch alike), so it's a safe, grounded stand-in.
+        mustMention: ["message templates"]
         mustNotClaim: [failed, error]

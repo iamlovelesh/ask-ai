@@ -22,5 +22,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [campaigns.get_campaign_details]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the campaign's own `name` field, never the
+        # slug — "campaign 3" is the entity the slug implied (verified
+        # against server/data/crm-standard.template.db: struct_73).
+        mustMention: ["campaign 3"]
         mustNotClaim: [failed, error]

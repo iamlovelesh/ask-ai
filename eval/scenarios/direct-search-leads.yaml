@@ -17,8 +17,13 @@ turns:
       behavior:
         confirmation: false
       response:
-        # composer.ts is pure-template (LLD §5: "no LLM call, ever") and
-        # always renders a done step as "<action>: <N> record(s)" — this is
-        # a GROUNDED assertion, not a guess about model wording.
-        mustMention: [leads.search_leads]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # the original comment above described `step.finished.summary`
+        # (an internal event field, "<action>: <N> record(s)"), NOT
+        # `answer.final` — composer.ts (LLD §5, "no LLM call, ever", and
+        # its own grounding contract #4) deliberately never lets a dotted
+        # tool slug reach answer.final. "leads" is the plain-English
+        # module noun its template always uses instead (found or empty
+        # branch alike), so it's a safe, grounded stand-in.
+        mustMention: ["leads"]
         mustNotClaim: [failed, error]

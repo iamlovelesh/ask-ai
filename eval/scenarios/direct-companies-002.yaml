@@ -20,5 +20,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [companies.get_company_details]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the company's own `name` field, never the
+        # slug — "Cobalt Networks 618" is the entity the slug implied (per
+        # this file's own derivation comment).
+        mustMention: ["Cobalt Networks 618"]
         mustNotClaim: [failed, error]

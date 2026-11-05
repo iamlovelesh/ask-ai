@@ -69,12 +69,14 @@ export const planActionsExpectSchema = z.strictObject({
 });
 export type PlanActionsExpect = z.infer<typeof planActionsExpectSchema>;
 
-/** Checked against the matching step's literal `params[param]` in the
- * validated plan (LLD §9.1 "paramChecks from step.started/plan params
- * (resolved where literal)") — a param that is a `$ref` string is compared
- * as-is (never resolved at assert time); scenario authors should only
- * write `paramChecks` for params they expect the planner to emit as plain
- * JSON literals. */
+/** Checked against the matching step's `params[param]` — EITHER the
+ * literal value in the validated plan (a `$ref` string compared as-is) OR
+ * the FULLY RESOLVED runtime value recorded on that step's `step.started`
+ * event (task-harness-fairness: refs like `"$s1.items[0].id"` that
+ * legitimately resolve to a runtime id, e.g. `"struct_200"`, must not fail
+ * a check written against that resolved value). Either match is
+ * sufficient — scenario authors may write `paramChecks` against the
+ * literal param OR the value they expect it to resolve to at runtime. */
 export const paramCheckSchema = z
   .strictObject({
     action: z.string(),

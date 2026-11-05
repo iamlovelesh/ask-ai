@@ -21,5 +21,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [calendars.get_calendar_settings]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the calendar's own `name` field, never the
+        # slug — "calendar 6" is the entity the slug implied (verified
+        # against server/data/crm-standard.template.db: struct_181).
+        mustMention: ["calendar 6"]
         mustNotClaim: [failed, error]

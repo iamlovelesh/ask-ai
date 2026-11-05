@@ -58,7 +58,9 @@ describe('runner E2E — direct seed scenario, real spawned server, MockLLM', ()
 
     const tuples = planTuples(scenarios, { agent: 'optimized', trials: 1 });
     expect(tuples).toHaveLength(1);
-    const tuple = tuples[0];
+    // The scripted mock is PLAN-shaped; 'optimized' is now the tool loop,
+    // so this runner-machinery e2e drives the plan-DSL comparator instead.
+    const tuple = tuples[0] ? { ...tuples[0], agent: 'plandsl' as const } : undefined;
     if (!tuple) throw new Error('unreachable: tuples has length 1');
 
     db = openReadOnly(resolve(SERVER_DIR, `data/crm-${PROFILE}.db`));
@@ -68,7 +70,7 @@ describe('runner E2E — direct seed scenario, real spawned server, MockLLM', ()
     // The full loop actually ran: reset -> session -> SSE turn -> assert.
     expect(row.scenarioId).toBe('direct-search-leads');
     expect(row.category).toBe('direct');
-    expect(row.agent).toBe('optimized');
+    expect(row.agent).toBe('plandsl');
     expect(row.trial).toBe(1);
     expect(row.turns).toHaveLength(1);
 

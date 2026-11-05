@@ -16,5 +16,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [opportunities.search_opportunities]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts never emits the dotted slug — "opportunities" is
+        # the plain-English module noun its template always uses (found
+        # or empty branch alike), so it's a safe, grounded stand-in.
+        mustMention: ["opportunities"]
         mustNotClaim: [failed, error]

@@ -19,5 +19,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [events.get_event_details]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the event's own `name` field, never the
+        # slug — "Product Roadmap Webinar" is evt_1's actual name (per
+        # this file's own derivation comment).
+        mustMention: ["Product Roadmap Webinar"]
         mustNotClaim: [failed, error]

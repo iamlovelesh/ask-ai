@@ -166,6 +166,86 @@ describe('assertTurn — paramChecks', () => {
   });
 });
 
+// --- paramChecks against RESOLVED runtime params (task-harness-fairness) ---
+//
+// A plan step may legitimately hold a $ref string as its literal param
+// (e.g. `"$s1.items[0].id"`) that only resolves to a concrete value (e.g.
+// `"struct_200"`) once the executor runs it — that resolved value is
+// carried on the matching `step.started` event's `resolvedParams`. A
+// paramCheck must pass if EITHER the literal OR the resolved value matches.
+
+function stepStarted(stepId: string, action: string, resolvedParams?: Record<string, unknown>[]): Event {
+  return resolvedParams === undefined
+    ? { t: 'step.started', turnId: 't1', stepId, action }
+    : { t: 'step.started', turnId: 't1', stepId, action, resolvedParams };
+}
+
+describe('assertTurn — paramChecks against resolved runtime params', () => {
+  it('passes when the literal plan param is a $ref but the resolved runtime value matches', () => {
+    const events = [
+      planReady('structures.update_structure', { id: '$s1.items[0].id' }),
+      stepStarted('s1', 'structures.update_structure', [{ id: 'struct_200' }]),
+    ];
+    const result = assertTurn(
+      events,
+      { paramChecks: [{ action: 'structures.update_structure', param: 'id', equals: 'struct_200' }] },
+      fakeDb(undefined),
+    );
+    expect(result.pass).toBe(true);
+  });
+
+  it('fails when the resolved runtime value does not match either', () => {
+    const events = [
+      planReady('structures.update_structure', { id: '$s1.items[0].id' }),
+      stepStarted('s1', 'structures.update_structure', [{ id: 'struct_999' }]),
+    ];
+    const result = assertTurn(
+      events,
+      { paramChecks: [{ action: 'structures.update_structure', param: 'id', equals: 'struct_200' }] },
+      fakeDb(undefined),
+    );
+    expect(result.pass).toBe(false);
+    expect(result.failures[0]?.kind).toBe('paramChecks');
+    expect(result.failures[0]?.detail).toContain('resolved-runtime saw');
+  });
+
+  it('a literal match still passes even when no step.started resolvedParams is present', () => {
+    const events = [planReady('companies.search_companies', { industry: 'software' })];
+    const result = assertTurn(
+      events,
+      { paramChecks: [{ action: 'companies.search_companies', param: 'industry', equals: 'software' }] },
+      fakeDb(undefined),
+    );
+    expect(result.pass).toBe(true);
+  });
+
+  it('a literal match still passes even when a resolved value for the SAME step disagrees (either/or, not both-required)', () => {
+    const events = [
+      planReady('companies.search_companies', { industry: 'software' }),
+      stepStarted('s1', 'companies.search_companies', [{ industry: 'something else entirely' }]),
+    ];
+    const result = assertTurn(
+      events,
+      { paramChecks: [{ action: 'companies.search_companies', param: 'industry', equals: 'software' }] },
+      fakeDb(undefined),
+    );
+    expect(result.pass).toBe(true);
+  });
+
+  it('forEach fan-out: passes when ANY item in resolvedParams matches', () => {
+    const events = [
+      planReady('tasks.update_task', { id: '$item.id' }),
+      stepStarted('s1', 'tasks.update_task', [{ id: 'task_1' }, { id: 'task_2' }, { id: 'task_3' }]),
+    ];
+    const result = assertTurn(
+      events,
+      { paramChecks: [{ action: 'tasks.update_task', param: 'id', equals: 'task_2' }] },
+      fakeDb(undefined),
+    );
+    expect(result.pass).toBe(true);
+  });
+});
+
 // --- state (SQL + countDelta) ----------------------------------------------
 
 describe('assertTurn — state', () => {
@@ -310,5 +390,52 @@ describe('isComplexTurn', () => {
 
   it('a non-plan outcome is NOT complex', () => {
     expect(isComplexTurn([clarifyReady('Which channel?')])).toBe(false);
+  });
+});
+
+// --- plan-less transcripts (tool-loop agent fairness) ----------------------
+
+function loopStepStarted(action: string, resolvedParams: Record<string, unknown> = {}, stepId = 's1'): Event {
+  return { t: 'step.started', turnId: 't1', stepId, action, resolvedParams: [resolvedParams] } as Event;
+}
+
+describe('assertTurn — plan-less transcripts (loop agent)', () => {
+  it('planActions mustInclude passes against step.started events when no plan.ready exists', () => {
+    const events = [loopStepStarted('leads.search_leads', { status: 'new' }), answerFinal('ok'), turnCompleted('done')];
+    const result = assertTurn(events, { planActions: { mustInclude: ['leads.search_leads'] } }, fakeDb(undefined));
+    expect(result.pass).toBe(true);
+  });
+
+  it('planActions mustInclude fails when the action never ran and no plan.ready exists', () => {
+    const events = [loopStepStarted('leads.search_leads'), answerFinal('ok'), turnCompleted('done')];
+    const result = assertTurn(events, { planActions: { mustInclude: ['tasks.create_task'] } }, fakeDb(undefined));
+    expect(result.pass).toBe(false);
+    expect(result.failures[0]?.kind).toBe('planActions');
+  });
+
+  it('planActions mustNotInclude fails when the forbidden action ran, plan-less', () => {
+    const events = [loopStepStarted('leads.delete_lead'), answerFinal('ok'), turnCompleted('done')];
+    const result = assertTurn(events, { planActions: { mustNotInclude: ['leads.delete_lead'] } }, fakeDb(undefined));
+    expect(result.pass).toBe(false);
+  });
+
+  it('paramChecks pass against step.started resolvedParams when no plan.ready exists', () => {
+    const events = [loopStepStarted('leads.search_leads', { status: 'new' }), answerFinal('ok'), turnCompleted('done')];
+    const result = assertTurn(
+      events,
+      { paramChecks: [{ action: 'leads.search_leads', param: 'status', equals: 'new' }] },
+      fakeDb(undefined),
+    );
+    expect(result.pass).toBe(true);
+  });
+
+  it('paramChecks fail on a wrong resolved value, plan-less', () => {
+    const events = [loopStepStarted('leads.search_leads', { status: 'won' }), answerFinal('ok'), turnCompleted('done')];
+    const result = assertTurn(
+      events,
+      { paramChecks: [{ action: 'leads.search_leads', param: 'status', equals: 'new' }] },
+      fakeDb(undefined),
+    );
+    expect(result.pass).toBe(false);
   });
 });

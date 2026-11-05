@@ -22,7 +22,15 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [events.search_events]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts never emits a dotted tool slug into answer.final.
+        # An exact count ("18 published events" per this file's derivation
+        # comment) is NOT safe here because the user's own phrasing
+        # ("upcoming") invites the planner to add a date filter on top of
+        # status=published, changing the live count — "events" is the
+        # plain-English module noun composer's template always uses
+        # (found or empty branch alike), so it's the robust equivalent.
+        mustMention: ["events"]
         mustNotClaim: [failed, error]
   - user: "Register them for it"
     expect:

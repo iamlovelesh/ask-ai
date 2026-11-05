@@ -21,5 +21,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [orders.search_orders]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts never emits the dotted slug — the exact grounded
+        # count (136 cancelled orders, per this file's own derivation
+        # comment) is the semantic equivalent.
+        mustMention: ["136"]
         mustNotClaim: [failed, error]

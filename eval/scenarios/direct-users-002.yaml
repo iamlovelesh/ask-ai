@@ -19,5 +19,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [users.get_user_profile]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the user's own `name` field, never the
+        # slug — "Isla Reyes" is user_1's actual name (per this file's own
+        # derivation comment).
+        mustMention: ["Isla Reyes"]
         mustNotClaim: [failed, error]

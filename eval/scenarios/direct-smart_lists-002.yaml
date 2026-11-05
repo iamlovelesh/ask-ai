@@ -21,5 +21,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [smart_lists.get_smart_list_definition]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the smart list's own `name` field, never the
+        # slug — "smart list 10" is the entity the slug implied (verified
+        # against server/data/crm-standard.template.db: struct_10).
+        mustMention: ["smart list 10"]
         mustNotClaim: [failed, error]

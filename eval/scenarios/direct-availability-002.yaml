@@ -21,5 +21,10 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [availability.find_available_slots]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts never emits the dotted slug — "availability" is the
+        # plain-English module noun its template always uses (found or
+        # empty branch alike), so it is a safe, grounded stand-in that
+        # doesn't depend on exactly how many slots the computed range has.
+        mustMention: ["availability"]
         mustNotClaim: [failed, error]

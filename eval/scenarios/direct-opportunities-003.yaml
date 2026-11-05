@@ -19,5 +19,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [opportunities.get_opportunity_details]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the opportunity's own `name` field, never
+        # the slug — "Opportunity opp_1" is opp_1's actual name (verified
+        # against server/data/crm-standard.template.db).
+        mustMention: ["Opportunity opp_1"]
         mustNotClaim: [failed, error]

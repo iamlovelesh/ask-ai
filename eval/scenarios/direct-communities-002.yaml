@@ -22,5 +22,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [communities.get_community_details]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the community's own `name` field, never the
+        # slug — "community 2" is the entity the slug implied (verified
+        # against server/data/crm-standard.template.db: struct_297).
+        mustMention: ["community 2"]
         mustNotClaim: [failed, error]

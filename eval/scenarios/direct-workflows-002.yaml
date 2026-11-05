@@ -21,5 +21,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [workflows.get_workflow_definition]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the workflow's own `name` field, never the
+        # slug — "workflow 6" is the entity the slug implied (verified
+        # against server/data/crm-standard.template.db: struct_101).
+        mustMention: ["workflow 6"]
         mustNotClaim: [failed, error]

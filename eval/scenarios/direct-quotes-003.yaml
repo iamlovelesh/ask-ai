@@ -19,5 +19,11 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [quotes.get_quote_details]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # QuoteView has no name/title field, so composer.ts's
+        # describeSingleRecord falls through to the record's amount
+        # (total_cents, the catalog's money-field convention) — "$3291.48"
+        # is quote_1's actual total (verified against
+        # server/data/crm-standard.template.db: total_cents=329148).
+        mustMention: ["$3291.48"]
         mustNotClaim: [failed, error]

@@ -16,5 +16,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [teams.get_team_details]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the team's own `name` field, never the
+        # slug — "Enterprise Sales" is team_1's actual name (verified
+        # against server/data/crm-standard.template.db).
+        mustMention: ["Enterprise Sales"]
         mustNotClaim: [failed, error]

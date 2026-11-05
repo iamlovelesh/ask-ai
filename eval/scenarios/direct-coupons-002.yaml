@@ -21,5 +21,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [coupons.get_coupon_details]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the coupon's own `name` field, never the
+        # slug — "coupon 3" is the entity the slug implied (verified
+        # against server/data/crm-standard.template.db: struct_198).
+        mustMention: ["coupon 3"]
         mustNotClaim: [failed, error]

@@ -23,5 +23,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [contacts.search_contacts]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts never emits the dotted slug — the exact grounded
+        # count (1757 customer-stage contacts, per this file's own
+        # derivation comment) is the semantic equivalent.
+        mustMention: ["1757"]
         mustNotClaim: [failed, error]

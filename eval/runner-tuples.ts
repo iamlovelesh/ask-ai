@@ -16,7 +16,7 @@ export type AgentSelection = 'optimized' | 'baseline' | 'both';
 
 export interface Tuple {
   scenario: Scenario;
-  agent: 'optimized' | 'baseline';
+  agent: 'optimized' | 'baseline' | 'plandsl';
   trial: number;
 }
 
@@ -27,7 +27,7 @@ export interface ResultRow {
   scenarioId: string;
   category: string;
   subtype?: string;
-  agent: 'optimized' | 'baseline';
+  agent: 'optimized' | 'baseline' | 'plandsl';
   trial: number;
   pass: boolean;
   turns: TurnResultRow[];

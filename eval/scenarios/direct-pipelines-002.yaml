@@ -21,5 +21,9 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [pipelines.get_pipeline_configuration]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # composer.ts renders the pipeline's own `name` field, never the
+        # slug — "pipeline 3" is the entity the slug implied (verified
+        # against server/data/crm-standard.template.db: struct_168).
+        mustMention: ["pipeline 3"]
         mustNotClaim: [failed, error]

@@ -20,5 +20,11 @@ turns:
       behavior:
         confirmation: false
       response:
-        mustMention: [subscriptions.get_subscription_details]
+        # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
+        # SubscriptionView has no name/title field, so composer.ts's
+        # describeSingleRecord falls through to the record's amount
+        # (amount_cents, the catalog's money-field convention) — "$830.01"
+        # is sub_1's actual amount (verified against
+        # server/data/crm-standard.template.db: amount_cents=83001).
+        mustMention: ["$830.01"]
         mustNotClaim: [failed, error]
