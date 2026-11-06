@@ -346,6 +346,9 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
         userText,
         answerText: finalText,
         model: sessionDeps.extractModel ?? turnModel,
+        // Record each applied op into THIS turn's trace. Appended after
+        // turn.completed (extraction is detached), so it surfaces on replay.
+        emit: (ev) => eventLog.append(sessionId, ev),
       }).catch(() => {});
     }
     return { status, metrics };

@@ -14,6 +14,7 @@ import {
   budgetUsd,
 } from '../src/llm/client';
 import { queueMockLlm } from './helpers/mock-llm';
+import type { Event } from '../src/events/types';
 
 const paths: string[] = [];
 function freshMemory(): MemoryStore {
@@ -114,6 +115,47 @@ describe('runMemoryExtraction', () => {
     __setTestFetch(queueMockLlm([{ candidates: [salientCandidate] }, { op: 'NOOP' }]).fetch);
     await run(memory);
     expect(memory.listLive('user_1')).toHaveLength(0);
+  });
+
+  describe('memory.op trace events', () => {
+    function runEmit(memory: MemoryStore, emit: (ev: Event) => void): Promise<void> {
+      return runMemoryExtraction({
+        memory, userId: 'user_1', sessionId: 's_1', turnId: 't_1',
+        userText: 'x', answerText: 'y', model: 'mock-model', emit,
+      });
+    }
+
+    it('emits an ADD op tagged with the turn', async () => {
+      const memory = freshMemory();
+      __setTestFetch(queueMockLlm([{ candidates: [salientCandidate] }, { op: 'ADD' }]).fetch);
+      const ops: Event[] = [];
+      await runEmit(memory, (e) => ops.push(e));
+      expect(ops.find((e) => e.t === 'memory.op')).toMatchObject({
+        t: 'memory.op', op: 'ADD', turnId: 't_1', body: 'prefers EU date format',
+      });
+    });
+
+    it('emits an UPDATE op carrying the superseded targetId', async () => {
+      const memory = freshMemory();
+      const old = memory.add({ userId: 'user_1', category: 'preference', kind: 'profile', key: 'date-format', body: 'US', source: 'tool' });
+      __setTestFetch(
+        queueMockLlm([
+          { candidates: [{ category: 'preference', kind: 'profile', key: 'date-format', body: 'EU', salient: true }] },
+          { op: 'UPDATE', targetId: old.id },
+        ]).fetch,
+      );
+      const ops: Event[] = [];
+      await runEmit(memory, (e) => ops.push(e));
+      expect(ops.find((e) => e.t === 'memory.op')).toMatchObject({ op: 'UPDATE', targetId: old.id });
+    });
+
+    it('emits nothing on NOOP', async () => {
+      const memory = freshMemory();
+      __setTestFetch(queueMockLlm([{ candidates: [salientCandidate] }, { op: 'NOOP' }]).fetch);
+      const ops: Event[] = [];
+      await runEmit(memory, (e) => ops.push(e));
+      expect(ops.some((e) => e.t === 'memory.op')).toBe(false);
+    });
   });
 
   it('drops a denylisted candidate before any consolidation call', async () => {

@@ -1237,6 +1237,73 @@ button {
   line-height: 1.5;
 }
 
+/* Memory operations in a turn's trace */
+.trace-mem {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--hair);
+}
+.trace-mem-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--slate);
+  margin-bottom: 8px;
+}
+.trace-mem-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.trace-mem-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.trace-mem-badge {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.trace-mem-badge.op-add {
+  color: var(--petrol-ink);
+  background: var(--petrol-wash);
+  border-color: color-mix(in srgb, var(--petrol) 35%, transparent);
+}
+.trace-mem-badge.op-update {
+  color: var(--amber-text);
+  background: var(--amber-wash);
+  border-color: color-mix(in srgb, var(--amber) 35%, transparent);
+}
+.trace-mem-badge.op-delete {
+  color: var(--red);
+  background: var(--red-wash);
+  border-color: color-mix(in srgb, var(--red) 35%, transparent);
+}
+.trace-mem-body {
+  color: var(--ink);
+}
+.trace-mem-cat {
+  color: var(--slate-soft);
+  margin-right: 6px;
+  text-transform: capitalize;
+}
+.trace-mem-key {
+  font-weight: 600;
+  margin-right: 3px;
+}
+
 .trace-note-legacy {
   margin-top: -6px;
   padding-left: 8px;

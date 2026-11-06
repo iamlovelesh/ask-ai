@@ -152,6 +152,21 @@ export type Event =
   | { t: 'answer.final'; turnId: string; text: string }
   | { t: 'turn.completed'; turnId: string; status: TurnStatus; metrics: TurnMetrics }
   /** fold checkpoint, written every turn end. */
-  | { t: 'memory.snapshot'; turnId: string; state: WorkingState };
+  | { t: 'memory.snapshot'; turnId: string; state: WorkingState }
+  /** A durable-memory operation the post-turn extractor performed for THIS
+   * turn (ADD/UPDATE/DELETE). Persisted and tagged with the turnId so the
+   * trace can show which message produced which memory change. Appended after
+   * `turn.completed` (extraction is fire-and-forget), so a live SSE may miss
+   * it — it surfaces on trace replay. */
+  | {
+      t: 'memory.op';
+      turnId: string;
+      op: 'ADD' | 'UPDATE' | 'DELETE';
+      category: string;
+      key?: string;
+      body: string;
+      memoryId?: string;
+      targetId?: string;
+    };
 
 export type EventType = Event['t'];

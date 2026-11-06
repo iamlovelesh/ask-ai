@@ -103,7 +103,18 @@ export type AppEvent =
   | { t: 'answer.delta'; seq: number; turnId: string; text: string; reset?: boolean }
   | { t: 'answer.final'; seq: number; turnId: string; text: string }
   | { t: 'turn.completed'; seq: number; turnId: string; status: TurnStatus; metrics: TurnMetrics }
-  | { t: 'memory.snapshot'; seq: number; turnId: string; state: unknown };
+  | { t: 'memory.snapshot'; seq: number; turnId: string; state: unknown }
+  | {
+      t: 'memory.op';
+      seq: number;
+      turnId: string;
+      op: 'ADD' | 'UPDATE' | 'DELETE';
+      category: string;
+      key?: string;
+      body: string;
+      memoryId?: string;
+      targetId?: string;
+    };
 
 export type AppEventType = AppEvent['t'];
 

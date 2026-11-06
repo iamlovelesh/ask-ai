@@ -16,6 +16,7 @@ import { llmCall } from '../llm/client.js';
 import { screenMemory } from './denylist.js';
 import type { MemoryStore } from './store.js';
 import type { Memory, MemoryCategory, MemoryKind } from './types.js';
+import type { Event } from '../events/types.js';
 
 export interface MemoryExtractionInput {
   memory: MemoryStore;
@@ -25,6 +26,11 @@ export interface MemoryExtractionInput {
   userText: string;
   answerText: string;
   model: string;
+  /** Records each applied memory operation into the turn's trace (design
+   * extension): the caller appends these to the event log so the UI can show
+   * which message produced which ADD/UPDATE/DELETE. Best-effort, like the rest
+   * of extraction. */
+  emit?: (ev: Event) => void;
 }
 
 const CATEGORIES = ['preference', 'fact', 'goal', 'context'] as const;
@@ -122,7 +128,8 @@ function applyDecision(
     sourceSession: input.sessionId,
   };
   if (decision.op === 'ADD') {
-    input.memory.add(base);
+    const created = input.memory.add(base);
+    emitOp(input, 'ADD', { category: base.category, key: base.key, body: base.body, memoryId: created.id });
     return;
   }
   if (decision.op === 'UPDATE' || decision.op === 'DELETE') {
@@ -131,10 +138,35 @@ function applyDecision(
     const target = input.memory.get(id);
     // No-op on a stale/foreign/already-invalid target (Review Focus).
     if (!target || target.userId !== input.userId || target.invalidAt !== undefined) return;
-    if (decision.op === 'UPDATE') input.memory.supersede(id, base);
-    else input.memory.invalidate(id);
+    if (decision.op === 'UPDATE') {
+      const created = input.memory.supersede(id, base);
+      emitOp(input, 'UPDATE', { category: base.category, key: base.key, body: base.body, memoryId: created.id, targetId: id });
+    } else {
+      input.memory.invalidate(id);
+      // DELETE describes the memory being removed (its own body/category).
+      emitOp(input, 'DELETE', { category: target.category, key: target.key, body: target.body, targetId: id });
+    }
   }
   // NOOP: nothing.
+}
+
+function emitOp(
+  input: MemoryExtractionInput,
+  op: 'ADD' | 'UPDATE' | 'DELETE',
+  fields: { category: string; key?: string | undefined; body: string; memoryId?: string | undefined; targetId?: string | undefined },
+): void {
+  if (!input.emit) return;
+  const ev: Event = {
+    t: 'memory.op',
+    turnId: input.turnId,
+    op,
+    category: fields.category,
+    body: fields.body,
+    ...(fields.key !== undefined ? { key: fields.key } : {}),
+    ...(fields.memoryId !== undefined ? { memoryId: fields.memoryId } : {}),
+    ...(fields.targetId !== undefined ? { targetId: fields.targetId } : {}),
+  };
+  input.emit(ev);
 }
 
 export async function runMemoryExtraction(input: MemoryExtractionInput): Promise<void> {

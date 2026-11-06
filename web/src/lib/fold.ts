@@ -71,6 +71,16 @@ export interface TurnView {
   pendingConfirm?: PendingConfirm;
   status?: TurnStatus;
   metrics?: TurnMetrics;
+  /** Durable-memory operations the post-turn extractor performed for this turn
+   * (ADD/UPDATE/DELETE), shown in the trace. */
+  memoryOps: MemoryOpView[];
+}
+
+export interface MemoryOpView {
+  op: 'ADD' | 'UPDATE' | 'DELETE';
+  category: string;
+  key?: string;
+  body: string;
 }
 
 export interface SessionChatState {
@@ -136,6 +146,7 @@ function findOrCreateTurn(chat: SessionChatState, turnId: string, userText = '')
     steps: {},
     activity: [],
     deltaText: '',
+    memoryOps: [],
   };
   chat.turnIndex[turnId] = chat.turns.length;
   chat.turns.push(turn);
@@ -274,5 +285,14 @@ export function applyEvent(chat: SessionChatState, ev: AppEvent): void {
     }
     case 'memory.snapshot':
       return; // fold checkpoint only — no direct render effect.
+    case 'memory.op': {
+      // Appended after turn.completed (extraction is detached) — attach to the
+      // turn so the trace shows which message produced which memory change.
+      const turn = findOrCreateTurn(chat, ev.turnId);
+      const view: MemoryOpView = { op: ev.op, category: ev.category, body: ev.body };
+      if (ev.key !== undefined) view.key = ev.key;
+      turn.memoryOps.push(view);
+      return;
+    }
   }
 }

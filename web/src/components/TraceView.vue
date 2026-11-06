@@ -18,6 +18,11 @@ const store = useSessionStore();
 
 const traceState = computed(() => store.traces[props.turnId] ?? null);
 const spans = computed(() => traceState.value?.spans ?? []);
+/** Durable-memory ops the post-turn extractor performed for this turn — folded
+ * onto the turn from `memory.op` events (surface on replay/reload, since
+ * extraction runs after the live stream closes). */
+const memoryOps = computed(() => store.activeChat?.turns.find((t) => t.turnId === props.turnId)?.memoryOps ?? []);
+const OP_LABEL: Record<string, string> = { ADD: 'Added', UPDATE: 'Updated', DELETE: 'Forgot' };
 const bars = computed(() => layoutSpans(spans.value));
 /** A turn recorded before span-timing instrumentation — its bars are drawn
  * equal-width in recorded order (no real offsets exist) with a quiet note. */
@@ -57,6 +62,21 @@ function metricText(ms: number | undefined, tokensIn: number | undefined, tokens
 
 <template>
   <div class="trace-view">
+    <!-- Memory operations for this turn (what was remembered from this message) -->
+    <section v-if="memoryOps.length > 0" class="trace-mem">
+      <div class="trace-mem-title">Memory updated from this message</div>
+      <ul class="trace-mem-list">
+        <li v-for="(m, i) in memoryOps" :key="i" class="trace-mem-item">
+          <span :class="['trace-mem-badge', `op-${m.op.toLowerCase()}`]">{{ OP_LABEL[m.op] ?? m.op }}</span>
+          <span class="trace-mem-body">
+            <span class="trace-mem-cat">{{ m.category }}</span>
+            <span v-if="m.key" class="trace-mem-key">{{ m.key }}:</span>
+            {{ m.body }}
+          </span>
+        </li>
+      </ul>
+    </section>
+
     <div v-if="traceState?.loading" class="trace-status">Loading spans…</div>
     <div v-else-if="traceState?.error" class="trace-status trace-status-error">
       {{ traceState.error }}
