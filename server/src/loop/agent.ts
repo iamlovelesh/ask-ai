@@ -45,6 +45,7 @@ import { numberCheck } from './number-check.js';
 import { rescueToolCalls } from './tool-call-rescue.js';
 import { unsanctionedFilters } from './scope-check.js';
 import { unreadRequestedIds } from './coverage-check.js';
+import { stripMonologue } from './strip-monologue.js';
 import {
   collectRecordIds,
   entityForId,
@@ -528,10 +529,12 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       const parts = [...exits.writeActions.entries()].map(([name, n]) => `${name} ×${n}`).join(', ');
       finalText += `\n\n— Changes this turn: ${exits.writesLanded} (${parts})`;
     }
-    // Deterministic name resolution: rewrite cited record ids → named chips so
-    // the answer shows "Liam Mehta", not "con_4403" (non-Anthropic tiers often
-    // skip the lookup). Safe — the id was already in the model's context.
-    if (status === 'done') finalText = resolveNamesInText(finalText, crm);
+    // Strip leaked internal monologue ("Perfect! Let me create a table…")
+    // then resolve cited record ids → named chips. Both only on a real answer.
+    if (status === 'done') {
+      finalText = stripMonologue(finalText);
+      finalText = resolveNamesInText(finalText, crm);
+    }
     return yield* finalize(status, finalText);
   } catch (err) {
     if (wasCancelled()) {
