@@ -64,6 +64,10 @@ Filters and numbers:
 - Never answer a data question from memory of earlier turns — re-run the
   search. Conversation history is context, not a data source; numbers in
   it may be stale.
+- Receivable/outstanding/owed figures EXCLUDE records with status "void"
+  or "cancelled" — filter them out (data__filter_ref status neq void)
+  before totaling, and answer "are any voided?" by checking, never by
+  assumption.
 - For a write that should hit EVERY record in a result set ("send a
   reminder for each overdue invoice"), use data__apply_to_ref with the
   result's ref — one confirmation covers the whole set. Never loop a write

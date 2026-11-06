@@ -93,6 +93,19 @@ function buildSessionCtx(events: readonly Event[]): SessionCtx {
   };
 }
 
+/** Round-6 billing G1: a zero-step answer stating dates/amounts/counts is a
+ * fabrication risk — nothing in context contains full records. Triggers ONE
+ * grounded re-run. Deterministic, narrow: data-shaped claims only. */
+const DATA_CLAIM_RE =
+  /\$\s?\d|\d{4}-\d{2}-\d{2}|\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}\b|\b\d+\s+(days?|weeks?|months?)\s+(overdue|ago|old)\b/i;
+
+function needsGrounding(finalText: string, stepsRun: number): boolean {
+  return stepsRun === 0 && DATA_CLAIM_RE.test(finalText);
+}
+
+const GROUNDING_NOTE =
+  'IMPORTANT: your previous draft answered without reading any data this turn. Every date, amount, and count you state must come from a tool result THIS turn — call the tools now, then answer.';
+
 function pickCards(userText: string, registry: Registry, sessionCtx: SessionCtx): Card[] {
   const all = registry.all();
   if (all.length <= FULL_BIND_THRESHOLD) {
@@ -249,23 +262,29 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
 
     let finalText: string | undefined;
     try {
-      const result = await runLoopOnce({
-        runner,
-        agent,
-        input: prompt,
-        maxTurns,
-        deadlineMs,
-        turnId,
-        stopSignal: stopController.signal,
-        gateWaitMs: () => counters.gateWaitMs,
-        onLlmCall: (u) => {
-          llmCalls += 1;
-          tokensIn += u.tokensIn;
-          tokensOut += u.tokensOut;
-          costUsd += u.costUsd;
-        },
-      });
-      finalText = typeof result.finalOutput === 'string' ? result.finalOutput : JSON.stringify(result.finalOutput ?? '');
+      const runOnce = async (input2: string): Promise<string> => {
+        const result = await runLoopOnce({
+          runner,
+          agent,
+          input: input2,
+          maxTurns,
+          deadlineMs,
+          turnId,
+          stopSignal: stopController.signal,
+          gateWaitMs: () => counters.gateWaitMs,
+          onLlmCall: (u) => {
+            llmCalls += 1;
+            tokensIn += u.tokensIn;
+            tokensOut += u.tokensOut;
+            costUsd += u.costUsd;
+          },
+        });
+        return typeof result.finalOutput === 'string' ? result.finalOutput : JSON.stringify(result.finalOutput ?? '');
+      };
+      finalText = await runOnce(prompt);
+      if (finalText !== MAX_TURNS_FALLBACK && exits.clarify === undefined && exits.refused === undefined && needsGrounding(finalText, counters.step)) {
+        finalText = await runOnce(`${prompt}\n\n${GROUNDING_NOTE}`);
+      }
     } catch (err) {
       if (err instanceof LoopStoppedError) {
         // interpreted below via exits

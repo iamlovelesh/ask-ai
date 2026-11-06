@@ -886,6 +886,75 @@ describe('runLoopTurn — follow-up tool binding (I10)', () => {
   });
 });
 
+describe('runLoopTurn — zero-width date window hint (round-6 sales F38)', () => {
+  it('warns the model when an _after/_before pair is equal (matches nothing)', async () => {
+    const registry = buildRegistry(
+      [[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }), z.object({ created_after: z.number().optional(), created_before: z.number().optional() }))]],
+      [],
+    );
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'leads created today',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('leads__search_leads', { created_after: '2026-11-04T00:00:00Z', created_before: '2026-11-04T00:00:00Z' }),
+          textResponse('ok'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).toMatch(/zero-width|matches nothing|equals created_before/i);
+  });
+});
+
+describe('runLoopTurn — zero-step grounding check (round-6 billing G1)', () => {
+  it('a zero-step answer containing dates/amounts triggers ONE grounded re-run', async () => {
+    let fetched = 0;
+    const registry = buildRegistry(
+      [[action('invoices.get_invoice_details', 'read', async () => { fetched += 1; return { id: 'inv_6', issued_at: 1746921600000 }; })]],
+      [],
+    );
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'when exactly was invoice inv_6 issued?',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          textResponse('Invoice inv_6 was issued on August 16, 2026.'),
+          toolCallResponse('invoices__get_invoice_details', { id: 'inv_6' }),
+          textResponse('Invoice inv_6 was issued on May 11, 2025.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(fetched).toBe(1);
+    expect(finalOf(events)).toContain('May 11');
+    const reRunPrompt = seen.bodies[1] ?? '';
+    expect(reRunPrompt).toMatch(/without reading any data|must come from a tool result/i);
+    expect(completedOf(events).status).toBe('done');
+  });
+
+  it('a zero-step answer WITHOUT data claims (small talk) passes straight through', async () => {
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'thanks, youre a lifesaver',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([textResponse('Happy to help! Anything else?')], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(seen.bodies.length).toBe(1);
+    expect(finalOf(events)).toBe('Happy to help! Anything else?');
+  });
+});
+
 describe('runLoopTurn — SDK arg-rejection observability (round-5b N1)', () => {
   it('emits step.failed and a specific observation when the SDK rejects tool args pre-execute', async () => {
     const registry = buildRegistry(

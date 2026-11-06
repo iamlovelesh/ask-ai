@@ -410,9 +410,19 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           if (isWrite) exits.writesLanded += 1;
 
           const echo = resolved.length > 0 ? ` [resolved dates: ${resolved.join('; ')}]` : '';
+          // Round-6 sales F38: an equal _after/_before pair is a zero-width
+          // window — it matches nothing and reads as a confident wrong zero.
+          let windowNote = '';
+          for (const [k, v] of Object.entries(params)) {
+            if (!k.endsWith('_after')) continue;
+            const sibling = `${k.slice(0, -6)}_before`;
+            if (params[sibling] !== undefined && params[sibling] === v) {
+              windowNote = ` WARNING: ${k} equals ${sibling} — that zero-width window matches nothing; use the full-day bounds from the date anchors (e.g. 00:00:00 to 23:59:59).`;
+            }
+          }
           const body = JSON.stringify(renderDatesForModel(finalResult) ?? null).slice(0, OBSERVATION_CAP);
           harvestIds(JSON.stringify(finalResult ?? ''), input.knownIds);
-          return `${summary}.${echo} result=${body}`;
+          return `${summary}.${echo}${windowNote} result=${body}`;
         } catch (err) {
           const ms = performance.now() - startedAt;
           const error = describeError(err);

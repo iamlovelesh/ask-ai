@@ -59,6 +59,10 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/never ask permission/i);
   });
 
+  it('excludes void records from receivable/owed figures (round-6 billing G2)', () => {
+    expect(system).toMatch(/void/i);
+  });
+
   it('bans answering data questions from conversation memory', () => {
     expect(system).toMatch(/never answer .*from memory|re-run the search/i);
   });
