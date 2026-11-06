@@ -678,6 +678,31 @@ describe('runLoopTurn — ref data tools', () => {
     expect(completedOf(events).status).toBe('done');
   });
 
+  it('data__search_ref finds rows by free-text across any field within the set (#11)', async () => {
+    const namedRows = [
+      { id: 'co_1', name: 'Acme Corp', city: 'Austin' },
+      { id: 'co_2', name: 'Globex', city: 'Boston' },
+      { id: 'co_3', name: 'Initech', city: 'Acme Valley' },
+    ];
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'find acme in my companies',
+      sessionDeps: {
+        registry: buildRegistry([[action('companies.search', 'read', async () => ({ items: [], total: 3 }))]], []),
+        crm: fakeCrm, refs: refsWithRows(namedRows, true), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__search_ref', { ref: 'r_t1_s1', query: 'acme' }),
+          textResponse('Found 2.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const followUp = seen.bodies[1] ?? '';
+    expect(followUp).toContain('2 matched'); // 'Acme Corp' (name) + 'Acme Valley' (city)
+    expect(followUp).toContain('co_1');
+  });
+
   it('round-7c N8: a top-10 sort over wide rows shows ALL ranked rows, never a mid-token cut', async () => {
     // Billing 7c CRITICAL: sort_ref char-sliced its row JSON at the cap, the
     // model saw ~5 whole rows plus a broken tail, and fabricated ranks 6-10.

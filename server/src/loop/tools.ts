@@ -835,6 +835,43 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
+  const searchRef = tool({
+    name: 'data__search_ref',
+    description:
+      'Free-text search WITHIN the set behind a ref: returns rows where ANY field contains the query (case-insensitive). Use to find specific records in a large result ("the one named Acme", "rows mentioning refund") WITHOUT re-querying. Use data__filter_ref instead when you know the exact field and condition. Returns a NEW ref + count + sample.',
+    parameters: z.object({ ref: z.string(), query: z.string() }),
+    execute: async ({ ref, query }): Promise<string> => {
+      const q = query.trim().toLowerCase();
+      if (q === '') return `Provide a non-empty query to search ${ref}.`;
+      const { rows, complete, total } = hydrateRows(ref);
+      const matches = rows.filter((row) =>
+        Object.values(row as Record<string, unknown>).some(
+          (v) => v !== null && v !== undefined && String(v).toLowerCase().includes(q),
+        ),
+      );
+      const ids = matches.map(rowId).filter((id): id is string => id !== undefined);
+      const source = refs.get(ref);
+      const handle = refs.put({
+        action: 'data.search_ref',
+        turnId,
+        stepId: `s${counters.step += 1}`,
+        entityType: source?.entityType ?? 'record',
+        total: matches.length,
+        // Only a COMPLETE source yields an authoritative id enumeration; for a
+        // partial sample search, elide the idList ([]) so hydrate reports the
+        // derived subset as incomplete rather than falsely exact.
+        idList: complete ? ids : [],
+        sample: matches.slice(0, SPILL_SAMPLE_ROWS),
+      });
+      const scope = complete
+        ? `${total} records`
+        : `a partial ${rows.length}-row sample (the server set is incomplete — narrow the original search for an exhaustive lookup)`;
+      const obs = `Search "${query}" over ${scope}: ${matches.length} matched [ref ${handle.ref}]. Sample: ${renderRefRows(matches.slice(0, 5), [])}`;
+      publishObs(obs);
+      return obs;
+    },
+  });
+
   const aggregateRef = tool({
     name: 'data__aggregate_ref',
     description:
@@ -1050,6 +1087,6 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
-  tools.push(searchActions, sortRef, filterRef, aggregateRef, groupByRef, applyToRef, loadSkillsTool, askUser, refuse);
+  tools.push(searchActions, sortRef, filterRef, searchRef, aggregateRef, groupByRef, applyToRef, loadSkillsTool, askUser, refuse);
   return tools;
 }
