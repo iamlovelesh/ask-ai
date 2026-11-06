@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import { createRegistry } from './catalog/registry.js';
 import { withFailureInjection } from './catalog/inject-failures.js';
 import { getCrm } from './store/db.js';
+import { wallClockNow } from './store/clock.js';
 import { openEventLog } from './events/log.js';
 import { openSessions, sessionsDbPath } from './store/sessions-db.js';
 import { openSpans } from './events/trace.js';
@@ -69,7 +70,23 @@ async function start(): Promise<void> {
     registerMetricsRoutes(app, deps);
     registerRecordRoutes(app, deps);
 
+    // Auto-resume poller for durable scheduled follow-ups (#8): fires due
+    // tasks as system-initiated turns. Disabled with SCHEDULER_POLL_MS=0.
+    const pollMs = Number(process.env['SCHEDULER_POLL_MS'] ?? 30_000);
+    const pollTimer =
+      pollMs > 0
+        ? setInterval(() => {
+            try {
+              runtime.fireDueScheduledTasks(wallClockNow());
+            } catch (err) {
+              app.log.error(err, 'scheduled-task poll failed');
+            }
+          }, pollMs)
+        : undefined;
+    pollTimer?.unref(); // never keep the process alive on the timer alone
+
     app.addHook('onClose', async () => {
+      if (pollTimer) clearInterval(pollTimer);
       eventLog.close();
       sessionsDb.close();
       spans.close();

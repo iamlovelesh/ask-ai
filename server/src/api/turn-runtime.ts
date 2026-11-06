@@ -365,4 +365,31 @@ export class SessionRuntime {
       },
     };
   }
+
+  /**
+   * Auto-resume due scheduled follow-ups (#8): for each pending task whose
+   * dueAt has passed, start a system-initiated turn that runs the stored
+   * instruction, then mark it fired. A session with a turn already in flight
+   * is skipped and retried next tick (never two concurrent turns). A task is
+   * marked fired ONLY after its turn starts, so a failed start leaves it
+   * pending to retry. Returns how many fired. `start` is injectable for tests.
+   */
+  fireDueScheduledTasks(
+    nowMs: number,
+    start: (sessionId: string, instruction: string) => void = (sessionId, instruction) =>
+      void this.startTurn({ sessionId, userText: instruction, agent: 'optimized' }),
+  ): number {
+    let fired = 0;
+    for (const task of this.scheduler().due(nowMs)) {
+      if (this.isRunning(task.sessionId)) continue; // retry next tick
+      try {
+        start(task.sessionId, task.instruction);
+        this.scheduler().markFired(task.id);
+        fired += 1;
+      } catch {
+        /* leave pending; retry next tick */
+      }
+    }
+    return fired;
+  }
 }

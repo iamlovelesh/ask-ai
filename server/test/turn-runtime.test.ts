@@ -110,6 +110,31 @@ async function waitFor(sessionId: string, type: Event['t'], timeoutMs = 10_000):
   }
 }
 
+describe('SessionRuntime.fireDueScheduledTasks (#8 auto-resume)', () => {
+  const NOW = 1_762_000_000_000;
+
+  it('fires due tasks via start + marks them fired; future tasks stay pending', () => {
+    const runtime = makeRuntime([]);
+    const sid = eventLog.createSession('sched');
+    runtime.scheduler().schedule({ id: 'task_due', sessionId: sid, dueAt: NOW - 1000, instruction: 'do the overdue thing', createdAt: NOW - 10_000 });
+    runtime.scheduler().schedule({ id: 'task_future', sessionId: sid, dueAt: NOW + 86_400_000, instruction: 'later', createdAt: NOW });
+    const calls: { sessionId: string; instruction: string }[] = [];
+    const fired = runtime.fireDueScheduledTasks(NOW, (sessionId, instruction) => { calls.push({ sessionId, instruction }); });
+    expect(fired).toBe(1);
+    expect(calls).toEqual([{ sessionId: sid, instruction: 'do the overdue thing' }]);
+    expect(runtime.scheduler().listPending(sid).map((t) => t.id)).toEqual(['task_future']);
+  });
+
+  it('a failed start leaves the task pending (retry next tick)', () => {
+    const runtime = makeRuntime([]);
+    const sid = eventLog.createSession('sched2');
+    runtime.scheduler().schedule({ id: 'task_x', sessionId: sid, dueAt: NOW - 1000, instruction: 'x', createdAt: NOW - 1 });
+    const fired = runtime.fireDueScheduledTasks(NOW, () => { throw new Error('busy'); });
+    expect(fired).toBe(0);
+    expect(runtime.scheduler().listPending(sid).map((t) => t.id)).toEqual(['task_x']);
+  });
+});
+
 describe('SessionRuntime agent routing', () => {
   it("agent:'optimized' drives the tool loop — no plan.ready, loop-shaped events", async () => {
     __setLoopTestFetch(loopFetch([toolCallResponse('leads__search_leads', { query: 'x' }), textResponse('Found 2 leads.')]));
