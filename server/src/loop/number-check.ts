@@ -56,8 +56,17 @@ function close(a: number, b: number): boolean {
 const RECORD_TOKEN_RE = /\[\[record:([a-z_]+):([a-z_]+_\d+):((?:(?!\]\])[^\n])+)\]\]/g;
 const BARE_ID_RE = /\b[a-z][a-z]*(?:_[a-z]+)*_\d+\b/g;
 
-export function numberCheck(draft: string, toolOutputs: readonly string[], userText = ''): NumberCheckResult {
-  const outputs = toolOutputs.join('\n');
+export function numberCheck(
+  draft: string,
+  toolOutputs: readonly string[],
+  userText = '',
+  // Additional supported-source corpus — recalled memory (design §4.6.1).
+  // Folded into `outputs` so memory feeds the numeric pool, the date pool,
+  // and the id/name evidence uniformly: a figure/date legitimately recalled
+  // from memory is not a fabrication.
+  extraEvidence: readonly string[] = [],
+): NumberCheckResult {
+  const outputs = [...toolOutputs, ...extraEvidence].join('\n');
   // ids/names the USER typed are legitimate evidence too
   const evidence = `${outputs}\n${userText}`;
   const evidenceLower = evidence.toLowerCase();
