@@ -58,6 +58,22 @@ export class StuckTracker {
   }
 }
 
+/** Infer which param of a write action receives each record id for a bulk
+ * apply_to_ref — removes the main friction (persona eval: the model looped
+ * per-record creates rather than construct apply_to_ref's id_param). Prefers a
+ * foreign-key param matching the ref's entity ("task per lead" → lead_id), then
+ * the record's own `id` (updates/sends), then any required *_id. */
+export function inferIdParam(propNames: readonly string[], required: readonly string[], refEntity?: string): string | undefined {
+  const idish = propNames.filter((p) => p === 'id' || /_id$/.test(p));
+  if (refEntity) {
+    const sing = refEntity.replace(/s$/, '').replace(/ie$/, 'y'); // leads→lead, companies→company
+    const fk = idish.find((p) => p !== 'id' && (p.includes(sing) || p.includes(refEntity)));
+    if (fk) return fk;
+  }
+  if (idish.includes('id') && required.includes('id')) return 'id';
+  return idish.find((p) => required.includes(p)) ?? idish[0];
+}
+
 // --- exits --------------------------------------------------------------------
 
 /** Set by the session__ask_user / session__refuse tools (and the stuck
@@ -1124,19 +1140,25 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   const applyToRef = tool({
     name: 'data__apply_to_ref',
     description:
-      'Apply ONE write action to EVERY record behind a ref (e.g. send a reminder for each overdue invoice found earlier). One confirmation covers the whole set. Provide the tool name of the write action and which of its params receives each record id. Use this for bulk writes instead of calling the action record-by-record.',
+      'Apply ONE write action to EVERY record behind a ref IN A SINGLE STEP — use this for ANY per-record write ("send a reminder for each overdue invoice", "create a follow-up task for each of these leads", "assign all of them"), instead of calling the action once per record (which exhausts your step budget). One confirmation covers the whole set. Give the ref and the write action; id_param is auto-detected (override only if the record id should go into a specific param). Put shared values in params_json.',
     parameters: z.object({
       ref: z.string(),
-      action: z.string().describe('tool name of the write action, e.g. invoices__send_invoice_reminder'),
-      id_param: z.string().describe('the action param that takes each record id, e.g. "id"'),
-      params_json: z.string().optional().describe('JSON object of extra params shared by every call'),
+      action: z.string().describe('tool name of the write action, e.g. invoices__send_invoice_reminder or tasks__create_task'),
+      id_param: z.string().optional().describe('OPTIONAL — the action param that takes each record id; auto-detected from the action schema + ref entity when omitted'),
+      params_json: z.string().optional().describe('JSON object of extra params shared by every call (e.g. {"title":"Follow up"})'),
       dry_run: z.boolean().nullable().optional().describe('true = preview only: report what WOULD be affected, no confirmation, no writes'),
     }),
-    execute: async ({ ref, action: actionName, id_param, params_json, dry_run }): Promise<string> => {
+    execute: async ({ ref, action: actionName, id_param: providedIdParam, params_json, dry_run }): Promise<string> => {
       const slug = actionName.replace('__', '.');
       const target = registry.get(slug);
       if (!target) return `Unknown action "${actionName}" — check the tool name.`;
       if (target.risk === 'read') return `"${actionName}" is a read action — call it directly, apply_to_ref is for writes.`;
+      let id_param = providedIdParam;
+      if (id_param === undefined || id_param === '') {
+        const js = JSON.parse(JSON.stringify(z.toJSONSchema(target.inputSchema as z.ZodType, { io: 'input', target: 'draft-7' }))) as { properties?: Record<string, unknown>; required?: string[] };
+        id_param = inferIdParam(Object.keys(js.properties ?? {}), js.required ?? [], refs.get(ref)?.entityType);
+        if (id_param === undefined) return `Could not auto-detect which param of "${actionName}" takes the record id — pass id_param explicitly.`;
+      }
       let extra: Record<string, unknown> = {};
       if (params_json !== undefined && params_json !== '') {
         try {

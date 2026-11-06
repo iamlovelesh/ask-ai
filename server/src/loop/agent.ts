@@ -47,6 +47,7 @@ import { numberCheck } from './number-check.js';
 import { rescueToolCalls } from './tool-call-rescue.js';
 import { unsanctionedFilters } from './scope-check.js';
 import { unreadRequestedIds } from './coverage-check.js';
+import { countReconciliationNote } from './count-reconcile.js';
 import { stripMonologue } from './strip-monologue.js';
 import {
   collectRecordIds,
@@ -566,6 +567,11 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
             const shown = unread.slice(0, 5).join(', ');
             finalText += `\n\n⚠ I could not include ${unread.length} of the records you named (${shown}${unread.length > 5 ? ', …' : ''}) — I found no data for them this turn.`;
           }
+          // Count reconciliation (#1): the model stated a small count while a
+          // ref-tool reported a much larger matching set (it reported a sorted
+          // top-N as if it were the total). Surface the real total.
+          const countNote = countReconciliationNote(finalText, exits.toolOutputs);
+          if (countNote !== null) finalText += `\n\n${countNote}`;
           // Belt (zero-read guarantee): a data/audit answer that read NOTHING
           // all turn — even after the grounding re-run, which can itself fail
           // to force a read — is unverifiable. This catches cases NumberCheck
