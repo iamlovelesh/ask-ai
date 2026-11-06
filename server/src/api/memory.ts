@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { createMemoryStore } from '../memory/store.js';
+import type { MemoryPatch } from '../memory/types.js';
 import { sessionExists } from './turn-runtime.js';
 import type { AppDeps } from './types.js';
 
@@ -63,7 +64,12 @@ export function registerMemoryRoutes(app: FastifyInstance, deps: AppDeps): void 
       reply.code(404).send({ error: 'memory_not_found' });
       return;
     }
-    const updated = memory.update(req.params.id, parsed.data);
+    // Build the patch dropping absent keys — MemoryPatch's optionals are exact
+    // (no `| undefined`) under exactOptionalPropertyTypes.
+    const patch: MemoryPatch = {};
+    if (parsed.data.body !== undefined) patch.body = parsed.data.body;
+    if (parsed.data.category !== undefined) patch.category = parsed.data.category;
+    const updated = memory.update(req.params.id, patch);
     reply.send(updated);
   });
 

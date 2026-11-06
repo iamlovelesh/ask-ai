@@ -150,12 +150,12 @@ function widenField(key: string, field: z.ZodType): z.ZodType {
     const stringOnly = z.union([z.string(), z.array(z.string())]);
     return field instanceof z.ZodOptional || field instanceof z.ZodNullable ? stringOnly.optional() : stringOnly;
   }
-  if (field instanceof z.ZodOptional) return widenField(key, (field.def as { innerType: z.ZodType }).innerType).nullable().optional();
-  if (field instanceof z.ZodNullable) return widenField(key, (field.def as { innerType: z.ZodType }).innerType).nullable();
+  if (field instanceof z.ZodOptional) return widenField(key, (field.def as unknown as { innerType: z.ZodType }).innerType).nullable().optional();
+  if (field instanceof z.ZodNullable) return widenField(key, (field.def as unknown as { innerType: z.ZodType }).innerType).nullable();
   if (field instanceof z.ZodDefault) return field; // default wrapper: leave as-is (rare in params)
   if (field instanceof z.ZodObject) return widenDateFields(field as z.ZodObject<z.ZodRawShape>);
   if (field instanceof z.ZodArray) {
-    const element = (field.def as { element: z.ZodType }).element;
+    const element = (field.def as unknown as { element: z.ZodType }).element;
     if (element instanceof z.ZodObject) return z.array(widenDateFields(element as z.ZodObject<z.ZodRawShape>));
     return field;
   }
@@ -171,13 +171,13 @@ export function widenForModel<T extends z.ZodRawShape>(schema: z.ZodObject<T>): 
 
 export function widenDateFields<T extends z.ZodRawShape>(schema: z.ZodObject<T>): z.ZodObject<z.ZodRawShape> {
   const shape = schema.shape as z.ZodRawShape;
-  const widened: z.ZodRawShape = {};
+  const widened: Record<string, z.ZodType> = {};
   for (const [key, field] of Object.entries(shape)) {
     widened[key] = widenField(key, field as z.ZodType);
   }
   // Preserve a catchall — dropping it would silently strip unknown keys at
   // the SDK's strict validation layer before our own schema ever sees them.
-  const catchall = (schema.def as { catchall?: z.ZodType }).catchall;
+  const catchall = (schema.def as unknown as { catchall?: z.ZodType }).catchall;
   const out = z.object(widened);
   return catchall ? (out.catchall(catchall) as z.ZodObject<z.ZodRawShape>) : out;
 }

@@ -23,6 +23,7 @@ import {
   OpenAIProvider,
   Runner,
   setTracingDisabled,
+  type AgentOutputType,
   type Model,
   type ModelProvider,
   type ModelRequest,
@@ -228,7 +229,7 @@ export class LoopStoppedError extends Error {
  * wall-clock breach, `LoopStoppedError` on stopSignal abort,
  * `BudgetExceededError` on $ cap; maxTurns exhaustion returns the honest
  * `MAX_TURNS_FALLBACK` final output WITHOUT another model call. */
-export async function runLoopOnce(opts: RunLoopOnceOptions): Promise<RunResult<undefined, Agent>> {
+export async function runLoopOnce(opts: RunLoopOnceOptions): Promise<RunResult<undefined, Agent<undefined, AgentOutputType>>> {
   // The deadline is ACTIVE time: wall clock minus gate-wait. Enforced as a
   // pre-model-call check (not an AbortSignal.timeout) so a human taking two
   // minutes at a confirmation never kills the turn; per-call hangs are
@@ -247,7 +248,11 @@ export async function runLoopOnce(opts: RunLoopOnceOptions): Promise<RunResult<u
     ...(opts.fixResponse ? { fixResponse: opts.fixResponse } : {}),
   };
   try {
-    return await turnContext.run(ctx, () =>
+    // Boundary cast: the runner infers the agent's default context (`unknown`),
+    // but RunResult's constraint wants `Agent<undefined, AgentOutputType>`. The
+    // runtime value is the real run result; the cast only reconciles the SDK's
+    // invariant generic under exactOptionalPropertyTypes.
+    const result = await turnContext.run(ctx, () =>
       opts.runner.run(opts.agent, opts.input as string, {
         maxTurns: opts.maxTurns,
         ...(signal ? { signal } : {}),
@@ -259,6 +264,7 @@ export async function runLoopOnce(opts: RunLoopOnceOptions): Promise<RunResult<u
         },
       }),
     );
+    return result as unknown as RunResult<undefined, Agent<undefined, AgentOutputType>>;
   } catch (err) {
     if (opts.stopSignal?.aborted) throw new LoopStoppedError();
     throw err;
@@ -279,7 +285,7 @@ export interface RunLoopStreamedOptions extends RunLoopOnceOptions {
  * authoritative `answer.final` (which supersedes the streamed preview). */
 export async function runLoopStreamed(
   opts: RunLoopStreamedOptions,
-): Promise<RunResult<undefined, Agent>> {
+): Promise<RunResult<undefined, Agent<undefined, AgentOutputType>>> {
   const startedAt = performance.now();
   const checkDeadline = (): void => {
     const active = performance.now() - startedAt - (opts.gateWaitMs?.() ?? 0);
@@ -308,7 +314,7 @@ export async function runLoopStreamed(
         if (chunk) opts.onTextDelta(chunk);
       }
       await streamed.completed;
-      return streamed as unknown as RunResult<undefined, Agent>;
+      return streamed as unknown as RunResult<undefined, Agent<undefined, AgentOutputType>>;
     });
   } catch (err) {
     if (opts.stopSignal?.aborted) throw new LoopStoppedError();
