@@ -98,7 +98,7 @@ describe('runLoopTurn — memory recall', () => {
     expect(seen.bodies[0]).toContain('prefers EU date format');
   });
 
-  it('omits <memories> and does not run extraction when memory is disabled', async () => {
+  it('omits <memories>, binds no memory tools, and does not extract when memory is disabled', async () => {
     memory.add({ userId: 'user_1', category: 'preference', kind: 'collection', body: 'prefers EU dates', source: 'tool' });
     const seen: Seen = { bodies: [] };
     let extracted = false;
@@ -108,7 +108,19 @@ describe('runLoopTurn — memory recall', () => {
     // closing block tag (only emitted in the user prompt).
     expect(seen.bodies[0]).not.toContain('prefers EU dates');
     expect(seen.bodies[0]).not.toContain('</memories>');
+    // Global-off must also remove the recall READ path, not just injection.
+    // The static system prompt MENTIONS the tool names in prose, so assert on
+    // the JSON tool DEFINITION form (`"name":"memory__recall"`) instead.
+    expect(seen.bodies[0]).not.toContain('"name":"memory__recall"');
+    expect(seen.bodies[0]).not.toContain('"name":"memory__save"');
     expect(extracted).toBe(false);
+  });
+
+  it('binds the memory tools when memory is enabled', async () => {
+    const seen: Seen = { bodies: [] };
+    await drive('hello', [textResponse('Hi!')], { memory, memoryEnabled: true, memoryWritable: true, runExtraction: async () => {} }, seen);
+    expect(seen.bodies[0]).toContain('"name":"memory__recall"');
+    expect(seen.bodies[0]).toContain('"name":"memory__save"');
   });
 
   it('a figure recalled from memory is NOT flagged and triggers NO grounding re-run', async () => {

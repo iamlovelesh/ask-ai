@@ -61,17 +61,20 @@ export function numberCheck(
   toolOutputs: readonly string[],
   userText = '',
   // Additional supported-source corpus — recalled memory (design §4.6.1).
-  // Folded into `outputs` so memory feeds the numeric pool, the date pool,
-  // and the id/name evidence uniformly: a figure/date legitimately recalled
-  // from memory is not a fabrication.
+  // Memory grants EXACT membership only (restating a remembered figure/date is
+  // not a fabrication); it is deliberately kept OUT of the arithmetic pool —
+  // pairwise sums/differences and day-diffs derive from TOOL outputs only, so
+  // a fabricated figure that merely equals the sum of two unrelated memories
+  // cannot "support" itself through memory.
   extraEvidence: readonly string[] = [],
 ): NumberCheckResult {
-  const outputs = [...toolOutputs, ...extraEvidence].join('\n');
-  // ids/names the USER typed are legitimate evidence too
-  const evidence = `${outputs}\n${userText}`;
+  const outputs = toolOutputs.join('\n');
+  const memory = extraEvidence.join('\n');
+  // ids/names the USER typed, and anything in recalled memory, are evidence too
+  const evidence = `${outputs}\n${userText}\n${memory}`;
   const evidenceLower = evidence.toLowerCase();
 
-  // candidate pool: every number in outputs plus cents/dollars variants
+  // derivation pool: every number in TOOL outputs plus cents/dollars variants
   const pool: number[] = [];
   const numericOutputs = outputs.replace(ISO_TIMESTAMP_RE, ' ');
   for (const m of numericOutputs.matchAll(NUMBER_RE)) {
@@ -80,8 +83,19 @@ export function numberCheck(
     pool.push(n, n / 100, n * 100);
     if (pool.length >= MAX_POOL * 3) break;
   }
+  // memory numbers: exact membership + the same figure's cents/dollars variant,
+  // never cross-number derivation.
+  const memExact: number[] = [];
+  const numericMemory = memory.replace(ISO_TIMESTAMP_RE, ' ');
+  for (const m of numericMemory.matchAll(NUMBER_RE)) {
+    const n = parseNum(m[0]);
+    if (!Number.isFinite(n)) continue;
+    memExact.push(n, n / 100, n * 100);
+    if (memExact.length >= MAX_POOL * 3) break;
+  }
   const supported = (claim: number): boolean => {
     if (pool.some((c) => close(claim, c))) return true;
+    if (memExact.some((c) => close(claim, c))) return true; // memory: exact only
     // pairwise sum/difference of raw output figures (first variant only)
     const raws = pool.filter((_, i) => i % 3 === 0).slice(0, 120);
     for (let i = 0; i < raws.length; i += 1) {
@@ -94,7 +108,8 @@ export function numberCheck(
     return false;
   };
 
-  // ISO dates available in outputs, as month-day(-year) tuples
+  // ISO dates available in outputs, as month-day(-year) tuples. Only TOOL-output
+  // dates feed day-diff derivation; memory dates are exact-membership only.
   const outputDates = new Set<string>();
   const dateMs: number[] = [];
   for (const m of outputs.matchAll(ISO_DATE_RE)) {
@@ -102,6 +117,10 @@ export function numberCheck(
     outputDates.add(`${Number(m[2])}-${Number(m[3])}`);
     const ms = Date.parse(`${m[1]}-${m[2]}-${m[3]}T00:00:00Z`);
     if (Number.isFinite(ms) && dateMs.length < 60) dateMs.push(ms);
+  }
+  for (const m of memory.matchAll(ISO_DATE_RE)) {
+    outputDates.add(`${Number(m[2])}-${Number(m[3])}-${m[1]}`);
+    outputDates.add(`${Number(m[2])}-${Number(m[3])}`);
   }
   // day-count claims ("89 days overdue") derivable as |date_i - date_j|
   const DAY = 86_400_000;

@@ -11,6 +11,9 @@ describe('screenMemory — rejects sensitive data', () => {
     ['bearer token', 'Authorization: Bearer abcdef0123456789abcdef0123456789'],
     ['long hex secret', 'token deadbeefdeadbeefdeadbeefdeadbeef12345678'],
     ['password phrase', 'the password is hunter2'],
+    ['password colon-attached', 'my password: hunter2'],
+    ['password equals', 'password=hunter2'],
+    ['undashed SSN', 'his ssn is 123456789'],
   ];
   for (const [label, body] of rejected) {
     it(`rejects ${label}`, () => {

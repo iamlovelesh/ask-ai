@@ -22,15 +22,20 @@ interface Rule {
 /** 13–16 digits, optionally grouped by spaces or dashes (card-shaped). */
 const CARD_RE = /\b(?:\d[ -]?){13,16}\b/;
 const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/;
+/** Undashed 9-digit SSN, only when an "ssn" keyword is nearby — a bare
+ * 9-digit run alone is too ambiguous (ids, counts) to reject. */
+const SSN_UNDASHED_RE = /\bssn\b[^0-9]{0,12}\d{9}\b/i;
 const OPENAI_KEY_RE = /\bsk-[A-Za-z0-9_-]{16,}\b/;
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._-]{16,}\b/i;
 /** A long unbroken hex/base64-ish run reads as a token/secret. */
 const LONG_SECRET_RE = /\b[A-Za-z0-9+/_-]{32,}\b/;
-const PASSWORD_RE = /\b(password|passcode|passphrase|secret)\s+(is|=|:)\s*\S+/i;
+// `\s*` (not `\s+`) so "password: x" / "password=x" (separator attached) are
+// caught, not just "password is x".
+const PASSWORD_RE = /\b(password|passcode|passphrase|secret)\s*(is|=|:)\s*\S+/i;
 
 const RULES: Rule[] = [
   { reason: 'looks like a payment card number', test: (b) => CARD_RE.test(b) },
-  { reason: 'looks like a government id (SSN)', test: (b) => SSN_RE.test(b) },
+  { reason: 'looks like a government id (SSN)', test: (b) => SSN_RE.test(b) || SSN_UNDASHED_RE.test(b) },
   { reason: 'looks like an API key', test: (b) => OPENAI_KEY_RE.test(b) },
   { reason: 'looks like a bearer token', test: (b) => BEARER_RE.test(b) },
   { reason: 'contains a credential phrase', test: (b) => PASSWORD_RE.test(b) },

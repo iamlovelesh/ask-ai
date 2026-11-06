@@ -368,7 +368,11 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       planHash,
       actingUserId: demoUserId,
       knownIds,
-      ...(memoryStore !== undefined ? { memory: memoryStore, memoryWritable } : {}),
+      // Gate on memoryOn (recall allowed), NOT store-presence: when memory is
+      // globally OFF, memoryOn is false → neither memory tool is bound, so the
+      // model cannot read memories back via memory__recall. Incognito keeps
+      // memoryOn true (recall on) but memoryWritable false (save suppressed).
+      ...(memoryOn ? { memory: memoryStore, memoryWritable } : {}),
     });
 
     // P1 (pattern): the full catalog rides in the (cacheable) system
