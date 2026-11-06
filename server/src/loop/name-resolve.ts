@@ -21,6 +21,21 @@ export const ID_ENTITY: ReadonlyArray<{ prefix: string; entity: string }> = [
   { prefix: 'user', entity: 'users' },
   { prefix: 'ticket', entity: 'support_tickets' },
   { prefix: 'inv', entity: 'invoices' },
+  // Every prefix is matched `${prefix}_` (delimited), so these never collide
+  // with the shorter ones above (`con_` vs `conv_`/`content_`, `co_` vs
+  // `course_`). Verified against the CRM schema's id prefixes + name columns.
+  { prefix: 'team', entity: 'teams' },
+  { prefix: 'prod', entity: 'products' },
+  { prefix: 'ord', entity: 'orders' },
+  { prefix: 'quote', entity: 'quotes' },
+  { prefix: 'evt', entity: 'events' },
+  { prefix: 'appt', entity: 'appointments' },
+  { prefix: 'task', entity: 'tasks' },
+  { prefix: 'conv', entity: 'conversations' },
+  { prefix: 'msg', entity: 'messages' },
+  { prefix: 'course', entity: 'courses' },
+  { prefix: 'rev', entity: 'reviews' },
+  { prefix: 'content', entity: 'content_items' },
 ];
 
 const PREFIX_ALT = ID_ENTITY.map((e) => e.prefix).join('|');
@@ -37,6 +52,18 @@ export const ENTITY_NAME_SQL: Readonly<Record<string, { table: string; expr: str
   users: { table: 'users', expr: 'name' },
   support_tickets: { table: 'support_tickets', expr: 'subject' },
   invoices: { table: 'invoices', expr: 'number' },
+  teams: { table: 'teams', expr: 'name' },
+  products: { table: 'products', expr: 'name' },
+  orders: { table: 'orders', expr: 'number' },
+  quotes: { table: 'quotes', expr: 'number' },
+  events: { table: 'events', expr: 'name' },
+  appointments: { table: 'appointments', expr: 'title' },
+  tasks: { table: 'tasks', expr: 'title' },
+  conversations: { table: 'conversations', expr: 'subject' },
+  messages: { table: 'messages', expr: 'subject' },
+  courses: { table: 'courses', expr: 'title' },
+  reviews: { table: 'reviews', expr: 'title' },
+  content_items: { table: 'content_items', expr: 'title' },
 };
 
 export function entityForId(id: string): string | undefined {
