@@ -46,6 +46,12 @@ describe('numberCheck', () => {
     expect(numberCheck('Okay — I stopped. Nothing further was changed.', []).ok).toBe(true);
   });
 
+  it('round-7b N2: repeated unsupported figures are reported once (deduped)', () => {
+    const r = numberCheck('You owe $55.55. To repeat: $55.55 — that is $55.55.', OUTPUTS);
+    expect(r.ok).toBe(false);
+    expect(r.unsupported.filter((u) => u.includes('55.55'))).toHaveLength(1);
+  });
+
   it('round-7 support: record reference tokens are verified — id AND name must appear in outputs', () => {
     const outs = ['result={"items":[{"id":"con_77","name":"Sofia Osei"}],"total":1}'];
     expect(numberCheck('The thread belongs to [[record:contacts:con_77:Sofia Osei]].', outs).ok).toBe(true);

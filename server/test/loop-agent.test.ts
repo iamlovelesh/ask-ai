@@ -634,6 +634,35 @@ describe('runLoopTurn — ref data tools', () => {
     expect(completedOf(events).status).toBe('done');
   });
 
+  it('round-7b: ids surfaced by ref-tool outputs are provenance-known for follow-up reads', async () => {
+    // Live failure: sort_ref rows showed contact_id con_8518, but the
+    // firewall rejected contacts__get_contact_details(id=con_8518) with
+    // UNKNOWN_ID because ref observations never fed harvestIds.
+    const rowsWithContacts = Array.from({ length: 30 }, (_, i) => ({ id: `inv_${i}`, total_cents: (i + 1) * 100, contact_id: `con_${700 + i}` }));
+    const getContact = action(
+      'contacts.get',
+      'read',
+      async () => ({ id: 'con_729', name: 'Ada Lovelace' }),
+      z.object({ contact_id: z.string() }),
+    );
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'who owes the most',
+      sessionDeps: {
+        registry: buildRegistry([[action('invoices.search', 'read', async () => ({ items: [], total: 30 })), getContact]], []),
+        crm: fakeCrm, refs: refsWithRows(rowsWithContacts, true), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__sort_ref', { ref: 'r_t1_s1', field: 'total_cents', direction: 'desc', limit: 1 }),
+          toolCallResponse('contacts__get', { contact_id: 'con_729' }),
+          textResponse('The top invoice belongs to Ada Lovelace.'),
+        ]),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(events.some((e) => e.t === 'step.failed' && JSON.stringify(e).includes('UNKNOWN_ID'))).toBe(false);
+    expect(completedOf(events).status).toBe('done');
+  });
+
   it('data__aggregate_ref supports subtract_field for owed-style derived metrics (round-5 billing F1)', async () => {
     const owedRows = Array.from({ length: 4 }, (_, i) => ({ id: `inv_${i}`, total_cents: 1000, amount_paid_cents: 250 }));
     const seen: Seen = { bodies: [] };
@@ -1385,6 +1414,42 @@ describe('runLoopTurn — NumberCheck on stepped turns (P2, Chatwoot pattern)', 
     expect(final).toContain('6,842.02');
   });
 
+  it('round-7b N2: the caution lists at most 5 unique figures and the retry steers to aggregate_ref', async () => {
+    const registry = buildRegistry(
+      [[action('invoices.search', 'read', async () => ({ items: [{ id: 'inv_1', total_cents: 955865 }], total: 14 }))]],
+      [],
+    );
+    // 8 distinct fabricated figures, one of them repeated — the caution must
+    // dedupe, cap at 5, and disclose the remainder count instead of leaking
+    // a 33-item scratch list (billing 7b cry-wolf failure).
+    const fabricated =
+      'Totals: $111.01, $222.02, $333.03, $444.04, $555.05, $666.06, $777.07, $888.08 and again $111.01.';
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'how much is owed',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('invoices__search', {}),
+          textResponse(fabricated),
+          toolCallResponse('invoices__search', {}),
+          textResponse(fabricated),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const final = finalOf(events);
+    const caution = final.slice(final.indexOf('⚠'));
+    expect(caution).toContain('111.01');
+    const listed = [...caution.matchAll(/\$\d{3}\.\d{2}/g)].map((m) => m[0]);
+    expect(listed.length).toBeLessThanOrEqual(5);
+    expect(new Set(listed).size).toBe(listed.length);
+    expect(caution).toMatch(/3 more/);
+    // the re-run instruction steers the model to tool-computed totals, no scratch work
+    expect(seen.bodies[2] ?? '').toContain('data__aggregate_ref');
+  });
+
   it('a stepped answer whose figures all come from outputs passes untouched', async () => {
     const registry = buildRegistry(
       [[action('invoices.search', 'read', async () => ({ items: [{ id: 'inv_1', total_cents: 955865 }], total: 14 }))]],
@@ -1395,6 +1460,74 @@ describe('runLoopTurn — NumberCheck on stepped turns (P2, Chatwoot pattern)', 
       textResponse('You have 14 invoices; the largest is $9,558.65.'),
     ]);
     expect(finalOf(events)).toBe('You have 14 invoices; the largest is $9,558.65.');
+  });
+});
+
+describe('runLoopTurn — unknown-tool rescue (round-7b N1)', () => {
+  it('a direct call to an unbound catalog action is rerouted through catalog search and completes', async () => {
+    // >24 actions so the loop binds a retrieval subset instead of everything;
+    // the target action stays unbound for the first model call.
+    const fillers = Array.from({ length: 25 }, (_, i) =>
+      action(`alpha.task_${i}`, 'read', async () => ({ ok: true })),
+    );
+    const target = action('contacts.get_contact_details', 'read', async () => ({ id: 'con_7', name: 'Ada' }));
+    const registry = buildRegistry([fillers, [target]], []);
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'alpha work please',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('contacts__get_contact_details', {}),
+          toolCallResponse('contacts__get_contact_details', {}),
+          textResponse('Found the contact details.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const completed = events.find((e) => e.t === 'turn.completed') as { status: string } | undefined;
+    expect(completed?.status).toBe('done');
+    // proves the rescue path ran: the search tool bound the action mid-turn
+    expect(seen.bodies.join('')).toContain('NOW AVAILABLE');
+    expect(events.some((e) => e.t === 'step.started' && (e as { action?: string }).action === 'contacts.get_contact_details')).toBe(true);
+  });
+
+  it('a dot-form call to a bound tool is renamed and executes', async () => {
+    const registry = buildRegistry(
+      [[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]],
+      [],
+    );
+    const events = await drive(registry, 'find leads', [
+      toolCallResponse('leads.search_leads', {}),
+      textResponse('No leads found.'),
+    ]);
+    const completed = events.find((e) => e.t === 'turn.completed') as { status: string } | undefined;
+    expect(completed?.status).toBe('done');
+    expect(events.some((e) => e.t === 'step.started' && (e as { action?: string }).action === 'leads.search_leads')).toBe(true);
+  });
+
+  it('a call to a name matching nothing in the catalog degrades to a search observation, not a dead turn', async () => {
+    const registry = buildRegistry(
+      [[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]],
+      [],
+    );
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'frobnicate the widgets',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('zzz__frobnicate_widgets', {}),
+          textResponse('I cannot do that — no matching capability exists.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const completed = events.find((e) => e.t === 'turn.completed') as { status: string } | undefined;
+    expect(completed?.status).not.toBe('failed');
+    expect(seen.bodies.join('')).toContain('No matching actions found');
   });
 });
 

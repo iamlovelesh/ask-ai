@@ -55,6 +55,11 @@ interface TurnCallContext {
    * round-4: a hard AbortSignal.timeout failed turns while users were
    * still deciding at a gate. */
   checkDeadline?: () => void;
+  /** Applied to each model response's output items before the Runner
+   * resolves tool calls — the loop's unknown-tool rescue (round-7b N1)
+   * repairs names here because the Runner's tool lookup map is captured
+   * BEFORE the model call. */
+  fixResponse?: (output: unknown[]) => void;
 }
 
 const turnContext = new AsyncLocalStorage<TurnCallContext>();
@@ -92,6 +97,7 @@ class MeteredModel implements Model {
       // the single retry authority. Live evidence: OpenRouter's 20-rpm
       // new-account haiku limit failed whole turns without it.
       const { value: response } = await withBackoff(() => this.inner.getResponse(request), this.backoff);
+      if (ctx?.fixResponse && Array.isArray(response.output)) ctx.fixResponse(response.output);
       const tokensIn = response.usage.inputTokens;
       const tokensOut = response.usage.outputTokens;
       const costUsd = this.price(tokensIn, tokensOut);
@@ -178,6 +184,8 @@ export interface RunLoopOnceOptions {
   /** Time spent suspended at confirmation gates — EXCLUDED from the
    * deadline so human decision time never fails a turn. */
   gateWaitMs?: () => number;
+  /** See TurnCallContext.fixResponse. */
+  fixResponse?: TurnCallContext['fixResponse'];
 }
 
 export const MAX_TURNS_FALLBACK =
@@ -210,6 +218,7 @@ export async function runLoopOnce(opts: RunLoopOnceOptions): Promise<RunResult<u
     checkDeadline,
     ...(signal ? { signal } : {}),
     ...(opts.onLlmCall ? { onLlmCall: opts.onLlmCall } : {}),
+    ...(opts.fixResponse ? { fixResponse: opts.fixResponse } : {}),
   };
   try {
     return await turnContext.run(ctx, () =>

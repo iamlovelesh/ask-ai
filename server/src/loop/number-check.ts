@@ -150,5 +150,8 @@ export function numberCheck(draft: string, toolOutputs: readonly string[], userT
     if (!tokenIds.has(id) && !evidence.includes(id)) unsupported.push(id);
   }
 
-  return { ok: unsupported.length === 0, unsupported };
+  // One report per distinct claim (round-7b N2): a figure repeated through a
+  // draft must not multiply into a cry-wolf wall of flags.
+  const unique = [...new Set(unsupported)];
+  return { ok: unique.length === 0, unsupported: unique };
 }

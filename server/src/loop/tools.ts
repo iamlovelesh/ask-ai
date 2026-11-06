@@ -589,6 +589,14 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     return crm.tx((db) => refs.hydrate(ref, db));
   };
 
+  /** Ref-tool observations are evidence AND provenance: ids the model sees
+   * in sorted/filtered rows must be usable in follow-up reads (round-7b:
+   * the firewall rejected contact ids taken straight from sort_ref rows). */
+  const publishObs = (obs: string): void => {
+    harvestIds(obs, input.knownIds);
+    exits.toolOutputs.push(obs);
+  };
+
   const sortRef = tool({
     name: 'data__sort_ref',
     description:
@@ -627,7 +635,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const top = sorted.slice(0, limit);
       const sortLabel = subtract_field ? `${field} - ${subtract_field}` : field;
       const obs = `Sorted ${total} records by ${sortLabel} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length}: ${JSON.stringify(renderDatesForModel(top)).slice(0, OBSERVATION_CAP)}${statusComposition(rows)}`;
-      exits.toolOutputs.push(obs);
+      publishObs(obs);
       return obs;
     },
   });
@@ -675,7 +683,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         sample: matches.slice(0, SPILL_SAMPLE_ROWS),
       });
       const obs = `Filter ${field} ${op} ${JSON.stringify(value ?? null)} over ${total} records: ${matches.length} matched [ref ${handle.ref}]. Sample: ${JSON.stringify(renderDatesForModel(matches.slice(0, 5))).slice(0, OBSERVATION_CAP)}`;
-      exits.toolOutputs.push(obs);
+      publishObs(obs);
       return obs;
     },
   });
@@ -704,7 +712,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const value = op === 'sum' ? sum : op === 'avg' ? sum / values.length : op === 'min' ? Math.min(...values) : Math.max(...values);
       const label = subtract_field ? `${field} - ${subtract_field}` : field;
       const obs = `${op} of ${label} over ${values.length} records: ${value}${statusComposition(rows)}`;
-      exits.toolOutputs.push(obs);
+      publishObs(obs);
       return obs;
     },
   });
@@ -752,7 +760,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       });
       result.sort((a, b) => Number(Object.values(b)[2]) - Number(Object.values(a)[2]));
       const obs = `Breakdown of ${total} records by ${group_by}${group_by_2 ? ` and ${group_by_2}` : ''} (${op}${measure ? ` of ${measure}${subtract_field ? ` - ${subtract_field}` : ''}` : ''}): ${JSON.stringify(result).slice(0, OBSERVATION_CAP)}`;
-      exits.toolOutputs.push(obs);
+      publishObs(obs);
       return obs;
     },
   });
@@ -792,7 +800,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const ids = rows.map(rowId).filter((id): id is string => id !== undefined);
       if (dry_run === true) {
         const obs = `DRY RUN — "${target.name}" would apply to ${ids.length} record(s) (e.g. ${ids.slice(0, 5).join(', ')}). Nothing was changed; call again without dry_run to execute (a confirmation will be requested).`;
-        exits.toolOutputs.push(obs);
+        publishObs(obs);
         return obs;
       }
 
@@ -848,7 +856,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       if (failed > 0 && ok === 0) counters.stepsFailed += 1;
       emit({ t: 'step.finished', turnId, stepId, summary: `${target.name}: ${ok}/${ids.length} ${pluralNoun(noun, ids.length)} processed`, ms });
       const obs = `Applied "${target.name}" to ${ids.length} ${pluralNoun(noun, ids.length)}: ${ok} succeeded, ${failed} failed${errors.length > 0 ? ` (examples: ${errors.join('; ')})` : ''}.`;
-      exits.toolOutputs.push(obs);
+      publishObs(obs);
       return obs;
     },
   });

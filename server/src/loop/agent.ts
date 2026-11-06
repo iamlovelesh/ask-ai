@@ -41,6 +41,7 @@ import { buildDateAnchors } from './date-rail.js';
 import { renderRecentTurns } from './recent-turns.js';
 import { buildTurnTools, harvestIds, StuckTracker, type LoopExits } from './tools.js';
 import { numberCheck } from './number-check.js';
+import { rescueToolCalls } from './tool-call-rescue.js';
 
 export interface LoopSessionDeps {
   registry: Registry;
@@ -289,6 +290,17 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
 
     let finalText: string | undefined;
     try {
+      // Round-7b N1: a model call to an unbound/unknown tool name must be
+      // repaired (rename or reroute to catalog search), never a dead turn.
+      // Names are read at response time — the tools array grows mid-run.
+      const fixResponse = (output: unknown[]): void => {
+        const names = new Set(
+          tools
+            .map((t) => (t as { name?: unknown }).name)
+            .filter((n): n is string => typeof n === 'string'),
+        );
+        rescueToolCalls(output, names);
+      };
       const runOnce = async (input2: string, agentToUse: Agent = agent): Promise<string> => {
         const result = await runLoopOnce({
           runner,
@@ -299,6 +311,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
           turnId,
           stopSignal: stopController.signal,
           gateWaitMs: () => counters.gateWaitMs,
+          fixResponse,
           onLlmCall: (u) => {
             llmCalls += 1;
             tokensIn += u.tokensIn;
@@ -321,7 +334,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
           const check = numberCheck(finalText, exits.toolOutputs, userText);
           if (!check.ok) {
             finalText = await runOnce(
-              `${prompt}\n\nIMPORTANT: your previous draft stated figures I could not find in any tool result this turn: ${check.unsupported.join(', ')}. Re-read the data with tools and answer using ONLY figures that appear in tool results.`,
+              `${prompt}\n\nIMPORTANT: your previous draft stated figures I could not find in any tool result this turn: ${check.unsupported.slice(0, 8).join(', ')}. Re-read the data with tools, use data__aggregate_ref (with subtract_field for owed/outstanding amounts) for any total — never do arithmetic yourself — and answer using ONLY figures that appear verbatim in tool results. Do NOT show intermediate calculations or scratch work in the answer.`,
               groundedAgent,
             );
           }
@@ -330,7 +343,11 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
         if (exits.clarify === undefined && exits.refused === undefined && finalText !== MAX_TURNS_FALLBACK) {
           const finalCheck = numberCheck(finalText, exits.toolOutputs, userText);
           if (!finalCheck.ok) {
-            finalText += `\n\n⚠ Please double-check these figures against the records — I could not verify them: ${finalCheck.unsupported.join(', ')}`;
+            // Cap the caution (round-7b N2): a 33-item scratch list buries
+            // the one real warning and reads as leaked internal state.
+            const listed = finalCheck.unsupported.slice(0, 5);
+            const rest = finalCheck.unsupported.length - listed.length;
+            finalText += `\n\n⚠ Please double-check these figures against the records — I could not verify them: ${listed.join(', ')}${rest > 0 ? ` (and ${rest} more)` : ''}`;
           }
         }
       }
