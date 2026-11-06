@@ -82,6 +82,24 @@ export interface TraceState {
   error: string | null;
 }
 
+/** The model choice persists across refreshes (localStorage). Guarded so a
+ * non-browser/denied-storage environment degrades to the server default. */
+const MODEL_STORAGE_KEY = 'ask-ai:selectedModel';
+function readStoredModel(): string {
+  try {
+    return localStorage.getItem(MODEL_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+function writeStoredModel(id: string): void {
+  try {
+    localStorage.setItem(MODEL_STORAGE_KEY, id);
+  } catch {
+    /* storage unavailable — selection just won't persist this session */
+  }
+}
+
 export const useSessionStore = defineStore('session', {
   state: () => ({
     sessions: [] as SessionSummary[],
@@ -108,7 +126,8 @@ export const useSessionStore = defineStore('session', {
     /** Model-picker: the tier allowlist from GET /api/models and the id the
      * user has chosen (sent with each message; '' = server default). */
     models: [] as ModelOption[],
-    selectedModel: '' as string,
+    /** Restored from localStorage so a refresh keeps the user's choice. */
+    selectedModel: readStoredModel(),
     /** Advanced picker: the full OpenRouter catalog (lazy-loaded on first open)
      * and whether a load is in flight. */
     catalog: [] as CatalogModel[],
@@ -142,10 +161,18 @@ export const useSessionStore = defineStore('session', {
         if (!res.ok) return;
         const body = (await res.json()) as { models: ModelOption[]; default: string };
         this.models = body.models;
+        // Keep any restored/persisted choice; only fall back to the server
+        // default when the user has never chosen one.
         if (this.selectedModel === '') this.selectedModel = body.default;
       } catch {
         /* non-fatal: the picker just stays empty and the server default applies */
       }
+    },
+
+    /** Set the active model AND persist it across refreshes. */
+    selectModel(id: string): void {
+      this.selectedModel = id;
+      writeStoredModel(id);
     },
 
     async loadCatalog(): Promise<void> {

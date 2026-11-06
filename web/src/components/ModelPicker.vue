@@ -37,7 +37,7 @@ const index = computed<number>({
   },
   set(i: number) {
     const m = store.models[i];
-    if (m) store.selectedModel = m.id;
+    if (m) store.selectModel(m.id);
   },
 });
 
@@ -59,7 +59,7 @@ const filteredCatalog = computed(() => {
 });
 
 function pickCatalog(id: string): void {
-  store.selectedModel = id;
+  store.selectModel(id);
   advancedOpen.value = false;
   search.value = '';
 }
