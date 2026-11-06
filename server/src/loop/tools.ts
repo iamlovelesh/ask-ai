@@ -1246,6 +1246,125 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
+  // createMany shape (pattern): the model builds an explicit array of
+  // per-record params and writes them in ONE step — this is the shape the model
+  // reaches for naturally ("create these N"), unlike the abstract apply_to_ref.
+  // One confirmation; every id used is provenance-checked; schema-validated
+  // per record. For writes over a WHOLE large result set, prefer apply_to_ref.
+  const batchWrite = tool({
+    name: 'data__batch',
+    description:
+      'Create or update MANY records in ONE step. Give the write action tool name and a JSON array of per-record parameter objects (one object per record you want written). Use this for "create a task for each of these leads", "update all of these", etc. — build the array from records you have ALREADY seen and call this ONCE, instead of calling the action per record (which exhausts your step budget and fails half-done). Every record id you reference must have appeared in an earlier result. One confirmation covers the whole batch.',
+    parameters: z.object({
+      action: z.string().describe('tool name of the write action, e.g. tasks__create_task'),
+      records: z.string().describe('JSON array of parameter objects, one per record, e.g. [{"contact_id":"con_5","title":"Follow up"},{"contact_id":"con_6","title":"Follow up"}]'),
+      dry_run: z.boolean().nullable().optional().describe('true = preview only: report what WOULD be written, no confirmation, no writes'),
+    }),
+    execute: async ({ action: actionName, records, dry_run }): Promise<string> => {
+      const slug = actionName.replace('__', '.');
+      const target = registry.get(slug);
+      if (!target) return `Unknown action "${actionName}" — check the tool name.`;
+      if (target.risk === 'read') return `"${actionName}" is a read action — call it directly, data__batch is for writes.`;
+      let arr: unknown;
+      try {
+        arr = JSON.parse(records);
+      } catch {
+        return 'records is not valid JSON — pass a JSON array of parameter objects.';
+      }
+      if (!Array.isArray(arr) || arr.length === 0) return 'records must be a non-empty JSON array of parameter objects.';
+      if (arr.length > APPLY_MAX_RECORDS) return `That is ${arr.length} records — more than the ${APPLY_MAX_RECORDS}-record batch limit. Narrow the set.`;
+      // Validate + provenance-check every record BEFORE any write.
+      const validated: Record<string, unknown>[] = [];
+      const preErrors: string[] = [];
+      for (const [i, rec] of arr.entries()) {
+        if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) {
+          preErrors.push(`#${i}: not an object`);
+          continue;
+        }
+        const coerced = coerceDateParams(rec as Record<string, unknown>, clock.now()).params;
+        const parsed = target.inputSchema.safeParse(coerced);
+        if (!parsed.success) {
+          preErrors.push(`#${i}: invalid params`);
+          continue;
+        }
+        const data = parsed.data as Record<string, unknown>;
+        const bad = firstUnseenId(data, input.knownIds);
+        if (bad) {
+          preErrors.push(`#${i}: unseen id ${bad.slice(bad.indexOf('=') + 1)}`);
+          continue;
+        }
+        validated.push(data);
+      }
+      if (validated.length === 0) {
+        return `No valid records to write. Issues: ${preErrors.slice(0, 5).join('; ')}. Fix the parameters (or look up any unseen ids first) and retry.`;
+      }
+      const noun = target.entities[0] ?? 'record';
+      if (dry_run === true) {
+        const obs = `DRY RUN — would ${target.name} on ${validated.length} ${pluralNoun(noun, validated.length)}${preErrors.length > 0 ? ` (${preErrors.length} invalid, skipped)` : ''}. Nothing changed; call again without dry_run to execute (a confirmation will be requested).`;
+        publishObs(obs);
+        return obs;
+      }
+      if (deniedActions.has(`${target.slug}|batch`)) {
+        return `The user already DECLINED "${target.name}" this turn — do not retry or re-propose it. Acknowledge their decision.`;
+      }
+      counters.step += 1;
+      const stepId = `s${counters.step}`;
+      const sampleIds = validated
+        .map((r) => Object.values(r).find((v) => typeof v === 'string' && /^[a-z][a-z_]*_\d+$/.test(v)))
+        .filter((x): x is string => typeof x === 'string')
+        .slice(0, 5);
+      const confirmId = `cf_${randomUUID()}`;
+      const scope: ConfirmationScope = {
+        actions: [target.slug],
+        affectedCount: validated.length,
+        targetSample: sampleIds,
+        description: `${target.name} — ${validated.length} ${pluralNoun(noun, validated.length)}.`,
+      };
+      markTtfur();
+      emit({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+      const gateStartedAt = performance.now();
+      const verdict = await confirm.request({ turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+      counters.gateWaitMs += performance.now() - gateStartedAt;
+      const approved = typeof verdict === 'boolean' ? verdict : verdict.approved;
+      emit({ t: 'confirmation.resolved', turnId, confirmId, approved });
+      if (!approved) {
+        exits.denied = true;
+        deniedActions.add(`${target.slug}|batch`);
+        return `DENIED by the user — "${target.name}" was NOT executed for any of the ${validated.length} records. Nothing was changed; do NOT propose it again this turn.`;
+      }
+      emit({ t: 'step.started', turnId, stepId, action: target.slug, resolvedParams: [{ batch: validated.length }] });
+      const startedAt = performance.now();
+      let ok = 0;
+      const errors: string[] = [];
+      const createdIds: string[] = [];
+      for (const [i, data] of validated.entries()) {
+        try {
+          const res = await crm.tx((db) =>
+            target.handler(data, { db, clock, idempotencyKey: `${turnId}:0:${stepId}:${i}`, format: 'concise' } satisfies ActionContext),
+          );
+          ok += 1;
+          const rid = rowId(res);
+          if (rid !== undefined && createdIds.length < 5) createdIds.push(rid);
+        } catch (err) {
+          const e = describeError(err);
+          if (errors.length < 5) errors.push(`#${i}: ${e.code}`);
+        }
+      }
+      const ms = performance.now() - startedAt;
+      const failed = validated.length - ok;
+      if (ok > 0) {
+        counters.stepsOk += 1;
+        exits.writesLanded += ok;
+        exits.writeActions.set(target.name, (exits.writeActions.get(target.name) ?? 0) + ok);
+      }
+      if (failed > 0 && ok === 0) counters.stepsFailed += 1;
+      emit({ t: 'step.finished', turnId, stepId, summary: `${target.name}: ${ok}/${validated.length} ${pluralNoun(noun, validated.length)} written`, ms });
+      const obs = `Batch "${target.name}" on ${validated.length} ${pluralNoun(noun, validated.length)}: ${ok} succeeded, ${failed} failed${createdIds.length > 0 ? ` (e.g. ${createdIds.join(', ')})` : ''}${errors.length > 0 ? ` [errors: ${errors.join('; ')}]` : ''}${preErrors.length > 0 ? ` (${preErrors.length} skipped before write)` : ''}.`;
+      publishObs(obs);
+      return obs;
+    },
+  });
+
   const askUser = tool({
     name: 'session__ask_user',
     description: 'Ask the user ONE specific question when you need their decision to proceed (ambiguity, missing required detail). This ends your turn.',
@@ -1371,7 +1490,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     tools.push(scheduleFollowUp);
   }
 
-  tools.push(searchActions, sortRef, filterRef, searchRef, aggregateRef, groupByRef, applyToRef, loadSkillsTool, askUser, refuse);
+  tools.push(searchActions, sortRef, filterRef, searchRef, aggregateRef, groupByRef, applyToRef, batchWrite, loadSkillsTool, askUser, refuse);
   if (memory) tools.push(memorySave, memoryRecall);
   return tools;
 }

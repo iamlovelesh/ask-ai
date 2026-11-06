@@ -322,6 +322,37 @@ describe('runLoopTurn — gate affectedCount counts id-shaped params (round-7 su
   });
 });
 
+describe('runLoopTurn — data__batch (createMany bulk shape)', () => {
+  it('writes a whole explicit set in ONE step, not a per-record loop', async () => {
+    let calls = 0;
+    const registry = buildRegistry(
+      [[{ ...action('tasks.create_task', 'write', async () => { calls += 1; return { id: `task_${calls}` }; }, z.object({ contact_id: z.string(), title: z.string() })), entities: ['tasks'] }]],
+      [],
+    );
+    const events = await drive(registry, 'create a follow-up task for con_1 and con_2', [
+      toolCallResponse('data__batch', { action: 'tasks__create_task', records: '[{"contact_id":"con_1","title":"Follow up"},{"contact_id":"con_2","title":"Follow up"}]' }),
+      textResponse('Done — created 2 tasks.'),
+    ]);
+    expect(calls).toBe(2); // both records written
+    const starts = events.filter((e) => e.t === 'step.started' && e.t === 'step.started' && e.action === 'tasks.create_task');
+    expect(starts).toHaveLength(1); // ONE step for the whole batch (no loop)
+    expect(completedOf(events).status).toBe('done');
+  });
+
+  it('rejects a batch record that references an unseen id (provenance)', async () => {
+    let calls = 0;
+    const registry = buildRegistry(
+      [[{ ...action('tasks.create_task', 'write', async () => { calls += 1; return { id: 't' }; }, z.object({ contact_id: z.string(), title: z.string() })), entities: ['tasks'] }]],
+      [],
+    );
+    await drive(registry, 'create a task for con_1', [
+      toolCallResponse('data__batch', { action: 'tasks__create_task', records: '[{"contact_id":"con_99999","title":"X"}]' }),
+      textResponse('I could not — that id was not seen.'),
+    ]);
+    expect(calls).toBe(0); // unseen con_99999 never reached the handler
+  });
+});
+
 describe('runLoopTurn — scheduled follow-up (#8)', () => {
   it('session__schedule_follow_up records a durable future reminder instead of refusing', async () => {
     const scheduler = openScheduledTasks(sessionsDb);

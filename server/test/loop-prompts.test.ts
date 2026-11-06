@@ -103,9 +103,10 @@ describe('buildLoopSystemPrompt', () => {
     expect(buildLoopSystemPrompt()).toBe(system);
   });
 
-  it('directs per-record writes (incl. creates) to ONE data__apply_to_ref, warning about step exhaustion', () => {
+  it('directs per-record writes to the two one-step bulk tools (data__batch / apply_to_ref)', () => {
+    expect(system).toMatch(/data__batch/);
     expect(system).toMatch(/data__apply_to_ref/);
-    expect(system).toMatch(/create a task for each|includes CREATES/i);
+    expect(system).toMatch(/create a follow-up task for each|SPECIFIC LIST/i);
     expect(system).toMatch(/exhaust your step budget|partial writes/i);
   });
 

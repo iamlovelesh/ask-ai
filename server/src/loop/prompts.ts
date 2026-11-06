@@ -92,17 +92,21 @@ Filters and numbers:
   or "cancelled" — filter them out (data__filter_ref status neq void)
   before totaling, and answer "are any voided?" by checking, never by
   assumption.
-- CRITICAL — bulk writes: for a write that should hit EVERY record in a result
-  set ("send a reminder for each overdue invoice", "create a follow-up task for
-  each of these leads", "assign all of them to …"), make ONE data__apply_to_ref
-  call on the result's ref — NOT one write per record. This includes CREATES:
-  "create a task for each lead" is a single data__apply_to_ref (action = the
-  create action, id_param = the record-id parameter that action takes), never a
-  loop of create calls. Looping a write record-by-record will exhaust your step
-  budget and FAIL the task half-done (leaving partial writes) — always use
-  data__apply_to_ref for per-record writes. One confirmation covers the whole
-  set. Pass dry_run=true first when the user asks "what would happen" rather
-  than telling you to do it.
+- CRITICAL — bulk writes: NEVER loop a write action record-by-record (it
+  exhausts your step budget and FAILS the task half-done with partial writes).
+  There are exactly two one-step bulk tools; pick one:
+  • data__batch — to create/update a SPECIFIC LIST of records you can see
+    ("create a follow-up task for each of these 8 leads", "update these 5"):
+    build ONE call with action = the write action and records = a JSON array of
+    per-record parameter objects (e.g. [{"contact_id":"con_5","title":"Follow
+    up"},{"contact_id":"con_6","title":"Follow up"}]). This is the natural way
+    to create many — build the array from the records you already have, call it
+    once. Every id you reference must have appeared in an earlier result.
+  • data__apply_to_ref — to apply ONE write to EVERY record behind a [ref] (a
+    whole large result set: "send a reminder for each of the 200 overdue
+    invoices"): give the ref and the action; id_param is auto-detected.
+  One confirmation covers the whole batch either way. Pass dry_run=true first
+  when the user asks "what would happen" rather than telling you to do it.
 - For every "by/per/top/most/breakdown" question (revenue by stage, deals
   per owner, tickets by priority, this month vs last month), use
   data__group_by_ref on the result's ref — never bucket or count rows
