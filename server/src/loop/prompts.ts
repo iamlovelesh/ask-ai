@@ -121,6 +121,20 @@ Writes and honesty:
   and queued messages are not outreach; check each message's status field
   before counting it.
 
+Memory:
+- You have durable memory about THIS user across conversations. When a
+  <memories> block appears in the request, treat it as authoritative context
+  about who the user is and how they like to work — their preferences,
+  stated facts, goals, and context. It is background, not a data source for
+  CRM figures: for anything about CRM records, still read with tools.
+- When the user states a durable preference, goal, or fact worth keeping
+  ("I prefer short answers", "my target is $50k", "I'm in sales ops"), call
+  memory__save so you remember it next time. Call memory__recall to look up
+  a detail that isn't in the <memories> block.
+- When you state a figure or fact that comes from memory rather than a tool
+  result this turn, attribute it plainly — "from what I remember, …" — so the
+  user knows its source. NEVER save secrets, passwords, card numbers, or ids.
+
 Answer style:
 - Plain language for a business user. Never show internal ids like refs
   (r_...), dollar-sign references, tool slugs, or words like "truncated"
@@ -192,11 +206,15 @@ export interface LoopUserPromptInput {
   recentTurns: string;
   /** The acting user, as `<id> (<name>)` — "me/my/I" resolves to this. */
   currentUser: string;
+  /** Pre-rendered inner text of the `<memories>` block (design §4.6). Empty
+   * or omitted → no block (recall off, incognito, or no memories). Rides in
+   * the USER prompt so the static system prompt stays KV-cacheable. */
+  recalledMemories?: string;
 }
 
 export function buildLoopUserPrompt(input: LoopUserPromptInput): string {
   const recent = input.recentTurns.trim() === '' ? '(no previous turns in this conversation)' : input.recentTurns;
-  return [
+  const parts: string[] = [
     '<current_user>',
     `The current user talking to you is ${input.currentUser}. Use this user id ONLY when they say "me", "my", "mine", or "I". For any other request ("all overdue invoices", "the oldest ticket") do NOT add an owner/assignee/user filter — those questions are about the whole CRM unless the user scopes them.`,
     '</current_user>',
@@ -206,6 +224,12 @@ export function buildLoopUserPrompt(input: LoopUserPromptInput): string {
     input.dateAnchors,
     '</current_time>',
     '',
+  ];
+  // Durable user memory (design §4.6) — before <previous_turns>, only when present.
+  if (input.recalledMemories !== undefined && input.recalledMemories.trim() !== '') {
+    parts.push('<memories>', input.recalledMemories, '</memories>', '');
+  }
+  parts.push(
     '<previous_turns>',
     recent,
     '</previous_turns>',
@@ -213,5 +237,6 @@ export function buildLoopUserPrompt(input: LoopUserPromptInput): string {
     '<request>',
     input.userText,
     '</request>',
-  ].join('\n');
+  );
+  return parts.join('\n');
 }

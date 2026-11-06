@@ -139,6 +139,15 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/could not (evaluate|check)|name what you could not/i); // gap disclosure
     expect(system).toMatch(/answer the question.*not the biggest|sorted by risk|most at-risk/i); // relevance ordering
   });
+
+  it('has a static Memory section naming the memory tools and the "from memory" attribution', () => {
+    expect(system).toMatch(/memory__save/);
+    expect(system).toMatch(/memory__recall/);
+    expect(system).toMatch(/<memories>/);
+    expect(system).toMatch(/from what I remember|from memory/i);
+    // stays byte-stable with the Memory section present
+    expect(buildLoopSystemPrompt('a: b')).toBe(buildLoopSystemPrompt('a: b'));
+  });
 });
 
 describe('buildLoopUserPrompt', () => {
@@ -174,5 +183,17 @@ describe('buildLoopUserPrompt', () => {
   it('marks an empty history as such rather than omitting the section', () => {
     const prompt = buildLoopUserPrompt({ ...input, recentTurns: '' });
     expect(prompt).toMatch(/no previous turns/i);
+  });
+
+  it('includes a <memories> block before <previous_turns> when recalledMemories is non-empty', () => {
+    const prompt = buildLoopUserPrompt({ ...input, recalledMemories: '- [preference] date-format: prefers EU dates' });
+    expect(prompt).toContain('<memories>');
+    expect(prompt).toContain('prefers EU dates');
+    expect(prompt.indexOf('<memories>')).toBeLessThan(prompt.indexOf('<previous_turns>'));
+  });
+
+  it('omits the <memories> block when recalledMemories is empty or absent', () => {
+    expect(buildLoopUserPrompt(input)).not.toContain('<memories>');
+    expect(buildLoopUserPrompt({ ...input, recalledMemories: '' })).not.toContain('<memories>');
   });
 });
