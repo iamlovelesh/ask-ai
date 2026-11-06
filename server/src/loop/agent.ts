@@ -44,6 +44,12 @@ import { buildTurnTools, harvestIds, StuckTracker, type LoopExits } from './tool
 import { numberCheck } from './number-check.js';
 import { rescueToolCalls } from './tool-call-rescue.js';
 import { unsanctionedFilters } from './scope-check.js';
+import {
+  collectRecordIds,
+  entityForId,
+  resolveRecordNames,
+  ENTITY_NAME_SQL,
+} from './name-resolve.js';
 
 export interface LoopSessionDeps {
   registry: Registry;
@@ -121,6 +127,44 @@ const AUDIT_CLAIM_RE =
 
 function needsGrounding(finalText: string, stepsRun: number): boolean {
   return stepsRun === 0 && (DATA_CLAIM_RE.test(finalText) || AUDIT_CLAIM_RE.test(finalText));
+}
+
+/** Resolve cited record ids in a final answer to display names (named chips),
+ * batch-querying the CRM. Must never break a turn — any error returns the
+ * original text unchanged. */
+function resolveNamesInText(text: string, crm: Crm): string {
+  const ids = collectRecordIds(text);
+  if (ids.length === 0) return text;
+  try {
+    const byEntity = new Map<string, string[]>();
+    for (const id of ids) {
+      const entity = entityForId(id);
+      if (!entity) continue;
+      const list = byEntity.get(entity) ?? [];
+      list.push(id);
+      byEntity.set(entity, list);
+    }
+    const names = new Map<string, string>();
+    crm.tx((db) => {
+      for (const [entity, idList] of byEntity) {
+        const cfg = ENTITY_NAME_SQL[entity];
+        if (!cfg) continue;
+        const placeholders = idList.map(() => '?').join(',');
+        const rows = db.all(
+          `SELECT id, ${cfg.expr} AS nm FROM ${cfg.table} WHERE id IN (${placeholders})`,
+          idList,
+        );
+        for (const r of rows) {
+          const nm = r['nm'];
+          if (nm != null && String(nm).trim() !== '') names.set(String(r['id']), String(nm).trim());
+        }
+      }
+      return undefined;
+    });
+    return resolveRecordNames(text, (id) => names.get(id));
+  } catch {
+    return text;
+  }
 }
 
 const GROUNDING_NOTE =
@@ -464,6 +508,10 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       const parts = [...exits.writeActions.entries()].map(([name, n]) => `${name} ×${n}`).join(', ');
       finalText += `\n\n— Changes this turn: ${exits.writesLanded} (${parts})`;
     }
+    // Deterministic name resolution: rewrite cited record ids → named chips so
+    // the answer shows "Liam Mehta", not "con_4403" (non-Anthropic tiers often
+    // skip the lookup). Safe — the id was already in the model's context.
+    if (status === 'done') finalText = resolveNamesInText(finalText, crm);
     return yield* finalize(status, finalText);
   } catch (err) {
     if (wasCancelled()) {
