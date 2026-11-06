@@ -80,6 +80,32 @@ function scriptedFetch(script: unknown[], seen?: Seen): typeof fetch {
   }) as typeof fetch;
 }
 
+/** A fetch that answers /chat/completions with an SSE stream (stream:true),
+ * emitting one chat.completion.chunk per content piece then usage + [DONE] —
+ * the shape the Agents SDK's chat-completions streaming parser expects. */
+function sseFetch(contentPieces: string[]): typeof fetch {
+  return (async () => {
+    const enc = new TextEncoder();
+    const lines: string[] = [];
+    for (const piece of contentPieces) {
+      lines.push(
+        `data: ${JSON.stringify({ id: 'gen', object: 'chat.completion.chunk', created: 1, model: 'anthropic/claude-haiku-4.5', choices: [{ index: 0, delta: { role: 'assistant', content: piece }, finish_reason: null }] })}\n\n`,
+      );
+    }
+    lines.push(
+      `data: ${JSON.stringify({ id: 'gen', object: 'chat.completion.chunk', created: 1, model: 'anthropic/claude-haiku-4.5', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 42, completion_tokens: 7, total_tokens: 49 } })}\n\n`,
+      'data: [DONE]\n\n',
+    );
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const l of lines) controller.enqueue(enc.encode(l));
+        controller.close();
+      },
+    });
+    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  }) as typeof fetch;
+}
+
 // --- harness --------------------------------------------------------------------
 
 const tmpPaths: string[] = [];
@@ -1588,6 +1614,30 @@ describe('runLoopTurn — unknown-tool rescue (round-7b N1)', () => {
     const completed = events.find((e) => e.t === 'turn.completed') as { status: string } | undefined;
     expect(completed?.status).not.toBe('failed');
     expect(seen.bodies.join('')).toContain('No matching actions found');
+  });
+});
+
+describe('runLoopTurn — answer-token streaming (Live+correct)', () => {
+  it('forwards answer tokens as live answer.delta events (with a reset marker) and meters usage', async () => {
+    const registry = buildRegistry([[action('x.search', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'say hello',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        stream: true, testFetch: sseFetch(['Hello', ', ', 'world']),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const deltas = events.filter((e): e is Extract<Event, { t: 'answer.delta' }> => e.t === 'answer.delta');
+    // a reset marker opens the stream, then the real token pieces arrive
+    expect(deltas.some((d) => d.reset === true)).toBe(true);
+    expect(deltas.map((d) => d.text).join('')).toContain('Hello, world');
+    // authoritative final matches the streamed text
+    expect(finalOf(events)).toContain('Hello, world');
+    // usage from the SSE `usage` chunk was metered
+    expect(completedOf(events).metrics.tokensOut).toBe(7);
+    expect(completedOf(events).status).toBe('done');
   });
 });
 

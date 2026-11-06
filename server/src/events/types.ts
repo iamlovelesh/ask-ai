@@ -139,7 +139,7 @@ export type Event =
     }
   | { t: 'confirmation.resolved'; turnId: string; confirmId: string; approved: boolean }
   /** SSE-only — NOT persisted by EventLog.append (still fanned out live). */
-  | { t: 'answer.delta'; turnId: string; text: string }
+  | { t: 'answer.delta'; turnId: string; text: string; reset?: boolean }
   /** persisted — replay reads this. */
   | { t: 'answer.final'; turnId: string; text: string }
   | { t: 'turn.completed'; turnId: string; status: TurnStatus; metrics: TurnMetrics }

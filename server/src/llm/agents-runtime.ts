@@ -111,11 +111,37 @@ class MeteredModel implements Model {
     }
   }
 
-  getStreamedResponse(request: ModelRequest): AsyncIterable<StreamEvent> {
-    // The loop agent never streams model output today (answer chunking is
-    // done by the caller); delegate unmetered rather than guess at partial
-    // usage shapes.
-    return this.inner.getStreamedResponse(request);
+  async *getStreamedResponse(request: ModelRequest): AsyncIterable<StreamEvent> {
+    // Streaming path (answer-token streaming): same budget/abort/deadline
+    // gate as getResponse, then pass events through and meter each
+    // `response_done` (one per model turn) from the usage it carries. No
+    // withBackoff — you cannot cleanly retry a half-consumed stream; the
+    // pre-call checks plus single-turn exposure bound the risk.
+    const limit = budgetUsd();
+    if (costMeter.total() >= limit) throw new BudgetExceededError(costMeter.total(), limit);
+    const ctx = turnContext.getStore();
+    if (ctx?.signal?.aborted) throw new Error('Run aborted before model call');
+    ctx?.checkDeadline?.();
+    const spans = getDefaultSpans();
+    const handle = spans.start({ turnId: ctx?.turnId ?? 'unknown', kind: 'llm', name: 'loop-stream' });
+    const startedAt = performance.now();
+    try {
+      for await (const ev of this.inner.getStreamedResponse(request)) {
+        const done = ev as { type?: string; response?: { usage?: { inputTokens?: number; outputTokens?: number } } };
+        if (done.type === 'response_done' && done.response?.usage) {
+          const tokensIn = done.response.usage.inputTokens ?? 0;
+          const tokensOut = done.response.usage.outputTokens ?? 0;
+          const costUsd = this.price(tokensIn, tokensOut);
+          meterLlmCost(costUsd);
+          ctx?.onLlmCall?.({ tokensIn, tokensOut, costUsd });
+        }
+        yield ev;
+      }
+      spans.end(handle, { meta: { ms: performance.now() - startedAt } });
+    } catch (err) {
+      spans.end(handle, { meta: { error: err instanceof Error ? err.message : String(err) } });
+      throw err;
+    }
   }
 
   private price(tokensIn: number, tokensOut: number): number {
@@ -233,6 +259,57 @@ export async function runLoopOnce(opts: RunLoopOnceOptions): Promise<RunResult<u
         },
       }),
     );
+  } catch (err) {
+    if (opts.stopSignal?.aborted) throw new LoopStoppedError();
+    throw err;
+  }
+}
+
+export interface RunLoopStreamedOptions extends RunLoopOnceOptions {
+  /** Called with each chunk of the FINAL answer text as the model produces
+   * it (answer-token streaming). Tool-call rounds emit no text, so this
+   * fires only for the user-facing answer. */
+  onTextDelta: (chunk: string) => void;
+}
+
+/** Streaming twin of `runLoopOnce` (Live+correct answer streaming): same
+ * budgets, but the run is driven in `stream: true` mode and the final
+ * answer's tokens are forwarded to `onTextDelta` as they arrive. Returns the
+ * completed result; the caller still verifies the full text and emits the
+ * authoritative `answer.final` (which supersedes the streamed preview). */
+export async function runLoopStreamed(
+  opts: RunLoopStreamedOptions,
+): Promise<RunResult<undefined, Agent>> {
+  const startedAt = performance.now();
+  const checkDeadline = (): void => {
+    const active = performance.now() - startedAt - (opts.gateWaitMs?.() ?? 0);
+    if (active > opts.deadlineMs) throw new LoopDeadlineError(opts.deadlineMs);
+  };
+  const signal = opts.stopSignal;
+  const ctx: TurnCallContext = {
+    turnId: opts.turnId,
+    checkDeadline,
+    ...(signal ? { signal } : {}),
+    ...(opts.onLlmCall ? { onLlmCall: opts.onLlmCall } : {}),
+    ...(opts.fixResponse ? { fixResponse: opts.fixResponse } : {}),
+  };
+  try {
+    return await turnContext.run(ctx, async () => {
+      const streamed = await opts.runner.run(opts.agent, opts.input as string, {
+        stream: true,
+        maxTurns: opts.maxTurns,
+        ...(signal ? { signal } : {}),
+        toolExecution: { maxFunctionToolConcurrency: 1 },
+        errorHandlers: {
+          maxTurns: () => ({ finalOutput: MAX_TURNS_FALLBACK }),
+        },
+      });
+      for await (const chunk of streamed.toTextStream()) {
+        if (chunk) opts.onTextDelta(chunk);
+      }
+      await streamed.completed;
+      return streamed as unknown as RunResult<undefined, Agent>;
+    });
   } catch (err) {
     if (opts.stopSignal?.aborted) throw new LoopStoppedError();
     throw err;

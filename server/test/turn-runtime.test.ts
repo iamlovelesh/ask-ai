@@ -88,7 +88,7 @@ afterEach(() => {
 
 function makeRuntime(actions: ActionDef[]): SessionRuntime {
   const registry = buildRegistry([actions], []);
-  return new SessionRuntime(sessionsDb, eventLog, registry, [], () => fakeCrm);
+  return new SessionRuntime(sessionsDb, eventLog, registry, [], () => fakeCrm, false);
 }
 
 async function waitForCompleted(sessionId: string, timeoutMs = 10_000): Promise<Event[]> {

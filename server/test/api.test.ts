@@ -131,7 +131,7 @@ interface BuildAppOpts {
 function buildApp(opts: BuildAppOpts): FastifyInstance {
   const app = Fastify({ logger: false });
   const playbooks: Playbook[] = [];
-  const runtime = new SessionRuntime(sessionsDb, eventLog, opts.registry, playbooks, opts.getCrm ?? (() => fakeCrm));
+  const runtime = new SessionRuntime(sessionsDb, eventLog, opts.registry, playbooks, opts.getCrm ?? (() => fakeCrm), false);
   const deps: AppDeps = {
     registry: opts.registry,
     eventLog,

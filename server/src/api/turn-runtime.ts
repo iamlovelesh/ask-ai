@@ -123,6 +123,14 @@ export class SessionRuntime {
     private readonly registry: Registry,
     private readonly playbooks: readonly Playbook[],
     private readonly getCrm: () => Crm,
+    /** Stream answer tokens live (Live+correct). DEFAULT false: running the
+     * whole agent loop in stream:true mode breaks tool-call argument assembly
+     * with our provider (OpenRouter→Anthropic over chat-completions) — tools
+     * stop executing (stepsOk→0), confirmed by live repro 2026-11-07. The
+     * streaming path (runLoopStreamed) is proven for the answer-only case and
+     * stays behind this flag until the tool-turn issue is solved (needs
+     * final-answer-only streaming, not whole-run). See docs research. */
+    private readonly streamAnswers: boolean = false,
   ) {}
 
   private refsFor(sessionId: string): RefStore {
@@ -221,6 +229,8 @@ export class SessionRuntime {
                 eventLog: this.eventLog,
                 confirm,
                 cancelSignal: state.cancel.signal,
+                // Live answer-token streaming in production (Live+correct).
+                stream: this.streamAnswers,
               } satisfies LoopSessionDeps,
             });
 

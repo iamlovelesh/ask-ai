@@ -30,6 +30,7 @@ import { plannerModel } from '../llm/router.js';
 import {
   createLoopRunner,
   runLoopOnce,
+  runLoopStreamed,
   LoopDeadlineError,
   LoopStoppedError,
   MAX_TURNS_FALLBACK,
@@ -56,6 +57,11 @@ export interface LoopSessionDeps {
   cancelSignal?: AbortSignal;
   /** Test seam: fetch handed to the runner's OpenAI client. */
   testFetch?: typeof fetch;
+  /** Stream the final answer's tokens live (Live+correct). Default false so
+   * the deterministic test/eval harness stays on the proven non-streaming
+   * path; production wiring sets it true. The verified answer.final always
+   * supersedes the streamed preview, so correctness is unchanged either way. */
+  stream?: boolean;
 }
 
 export interface RunLoopTurnInput {
@@ -159,6 +165,9 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     eventLog.append(sessionId, e);
     buffer.push(e);
   };
+  // True once answer tokens have been streamed live (via `record` answer.delta
+  // during the model call); finalize then skips the end-of-turn chunk replay.
+  let streamedLive = false;
 
   const counters = { stepsOk: 0, stepsFailed: 0, step: 0, gateWaitMs: 0, virtualReads: 0 };
   const stopController = new AbortController();
@@ -179,11 +188,16 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
 
   async function* finalize(status: TurnStatus, finalText: string): AsyncGenerator<Event, TurnResult> {
     for (const e of buffer.splice(0, buffer.length)) yield e;
-    for (const chunk of chunkText(finalText)) {
-      markTtfur();
-      const ev: Event = { t: 'answer.delta', turnId, text: chunk };
-      eventLog.append(sessionId, ev);
-      yield ev;
+    // Non-streaming: replay the answer as chunked deltas here. Streaming:
+    // the deltas already went out live during the model call (and are in the
+    // buffer above), so skip the replay — answer.final below is authoritative.
+    if (!streamedLive) {
+      for (const chunk of chunkText(finalText)) {
+        markTtfur();
+        const ev: Event = { t: 'answer.delta', turnId, text: chunk };
+        eventLog.append(sessionId, ev);
+        yield ev;
+      }
     }
     markTtfur();
     const finalEv: Event = { t: 'answer.final', turnId, text: finalText };
@@ -303,7 +317,33 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
         );
         rescueToolCalls(output, names);
       };
+      const onLlmCall = (u: { tokensIn: number; tokensOut: number; costUsd: number }): void => {
+        llmCalls += 1;
+        tokensIn += u.tokensIn;
+        tokensOut += u.tokensOut;
+        costUsd += u.costUsd;
+      };
+      // Live+correct answer streaming: forward the model's answer tokens as
+      // answer.delta events the moment they arrive (via eventLog → SSE), with
+      // a reset marker at the start of each answer call so a verification
+      // re-run visibly replaces the prior draft rather than appending to it.
+      // The authoritative answer.final (verified) still supersedes all deltas.
+      const streaming = sessionDeps.stream === true;
+      const streamDeltas = (input2: string, agentToUse: Agent): Promise<string> =>
+        runLoopStreamed({
+          runner, agent: agentToUse, input: input2, maxTurns, deadlineMs, turnId,
+          stopSignal: stopController.signal, gateWaitMs: () => counters.gateWaitMs, fixResponse, onLlmCall,
+          onTextDelta: (chunk) => {
+            markTtfur();
+            record({ t: 'answer.delta', turnId, text: chunk });
+          },
+        }).then((r) => (typeof r.finalOutput === 'string' ? r.finalOutput : JSON.stringify(r.finalOutput ?? '')));
       const runOnce = async (input2: string, agentToUse: Agent = agent): Promise<string> => {
+        if (streaming) {
+          streamedLive = true;
+          record({ t: 'answer.delta', turnId, text: '', reset: true });
+          return streamDeltas(input2, agentToUse);
+        }
         const result = await runLoopOnce({
           runner,
           agent: agentToUse,
@@ -314,12 +354,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
           stopSignal: stopController.signal,
           gateWaitMs: () => counters.gateWaitMs,
           fixResponse,
-          onLlmCall: (u) => {
-            llmCalls += 1;
-            tokensIn += u.tokensIn;
-            tokensOut += u.tokensOut;
-            costUsd += u.costUsd;
-          },
+          onLlmCall,
         });
         return typeof result.finalOutput === 'string' ? result.finalOutput : JSON.stringify(result.finalOutput ?? '');
       };

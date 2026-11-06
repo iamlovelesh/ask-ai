@@ -94,7 +94,7 @@ export type AppEvent =
       scope: ConfirmationScope;
     }
   | { t: 'confirmation.resolved'; seq: number; turnId: string; confirmId: string; approved: boolean }
-  | { t: 'answer.delta'; seq: number; turnId: string; text: string }
+  | { t: 'answer.delta'; seq: number; turnId: string; text: string; reset?: boolean }
   | { t: 'answer.final'; seq: number; turnId: string; text: string }
   | { t: 'turn.completed'; seq: number; turnId: string; status: TurnStatus; metrics: TurnMetrics }
   | { t: 'memory.snapshot'; seq: number; turnId: string; state: unknown };

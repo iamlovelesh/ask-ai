@@ -240,6 +240,10 @@ export function applyEvent(chat: SessionChatState, ev: AppEvent): void {
     }
     case 'answer.delta': {
       const turn = findOrCreateTurn(chat, ev.turnId);
+      // A reset marker (emitted at the start of each answer attempt during
+      // Live+correct streaming) clears the prior draft so a verification
+      // re-run replaces it rather than appending.
+      if (ev.reset) turn.deltaText = '';
       turn.deltaText += ev.text;
       return;
     }
