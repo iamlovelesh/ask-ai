@@ -15,7 +15,7 @@ import { isGpt5Family } from './router.js';
 import { getDefaultSpans, type Spans, type SpanHandle } from '../events/trace.js';
 import type { LlmUsage } from '../events/types.js';
 
-export type Stage = 'plan' | 'repair' | 'replan' | 'compose' | 'baseline' | 'spike';
+export type Stage = 'plan' | 'repair' | 'replan' | 'compose' | 'baseline' | 'spike' | 'extract';
 
 export interface LlmCallOptions<T> {
   stage: Stage;
