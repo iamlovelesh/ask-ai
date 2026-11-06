@@ -225,6 +225,8 @@ const searchContactsInput = z.strictObject({
   owner_id: z.string().optional(),
   company_id: z.string().optional(),
   lifecycle_stage: z.string().optional(),
+  city: z.string().optional(),
+  country: z.string().optional(),
   limit: z.number().int().min(1).max(50).optional(),
 });
 type SearchContactsInput = z.infer<typeof searchContactsInput>;
@@ -265,6 +267,17 @@ const searchContacts: ActionDef<SearchContactsInput, SearchContactsOutput> = {
     if (input.lifecycle_stage) {
       where.push('lifecycle_stage = ?');
       params.push(input.lifecycle_stage);
+    }
+    // Support 7e N14: name-only search over 12 same-named contacts forced
+    // the model to fold the city into the name query (LIKE match failed) and
+    // falsely deny an existing contact. City/country are first-class filters.
+    if (input.city) {
+      where.push('city = ?');
+      params.push(input.city);
+    }
+    if (input.country) {
+      where.push('country = ?');
+      params.push(input.country);
     }
     const limit = input.limit ?? 50;
     const whereSql = where.join(' AND ');
@@ -572,6 +585,10 @@ const timelineEntry = z.object({
   id: z.string(),
   at: z.number(),
   summary: z.string(),
+  // Support 7e N11: a draft (sent_at NULL) must be distinguishable from a
+  // sent message — the model counted a draft as "most recent outreach".
+  status: z.string().nullable().optional(),
+  direction: z.string().nullable().optional(),
 });
 const viewContactActivityTimelineOutput = listOutputSchema(timelineEntry);
 type ViewContactActivityTimelineOutput = ListOrSpill<z.infer<typeof timelineEntry>>;
@@ -627,7 +644,7 @@ const viewContactActivityTimeline: ActionDef<
       [input.id, SOURCE_FETCH_LIMIT],
     );
     const messages = ctx.db.all(
-      `SELECT id, created_at, sent_at, subject, body FROM messages
+      `SELECT id, created_at, sent_at, status, direction, subject, body FROM messages
        WHERE contact_id = ? AND archived = 0
        ORDER BY COALESCE(sent_at, created_at) DESC LIMIT ?`,
       [input.id, SOURCE_FETCH_LIMIT],
@@ -651,6 +668,8 @@ const viewContactActivityTimeline: ActionDef<
         id: r['id'] as string,
         at: (r['sent_at'] as number | null) ?? (r['created_at'] as number),
         summary: String(r['subject'] ?? r['body'] ?? '').slice(0, 80),
+        status: (r['status'] as string | null) ?? null,
+        direction: (r['direction'] as string | null) ?? null,
       })),
     ].sort((a, b) => b.at - a.at);
 

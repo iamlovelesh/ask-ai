@@ -138,6 +138,25 @@ describe('search_contacts — filter discrimination (LLD §9.3 Tier-A)', () => {
     expect((leads as { total: number }).total).not.toBe((customers as { total: number }).total);
   });
 
+  it('support 7e N14: city filter disambiguates same-named contacts across cities', async () => {
+    await crm.tx((db) => {
+      def('contacts.create_contact').handler({ name: 'Liam Volkov', city: 'Madrid' }, ctx(db, 'v-mad'));
+      def('contacts.create_contact').handler({ name: 'Liam Volkov', city: 'London' }, ctx(db, 'v-lon'));
+      def('contacts.create_contact').handler({ name: 'Liam Volkov', city: 'Toronto' }, ctx(db, 'v-tor'));
+      return undefined;
+    });
+    const madrid = await crm.tx((db) =>
+      def('contacts.search_contacts').handler({ query: 'Liam Volkov', city: 'Madrid' }, ctx(db)),
+    );
+    expect((madrid as { total: number }).total).toBe(1);
+    expect((madrid as { items: { city: string }[] }).items[0]?.city).toBe('Madrid');
+    // all three still findable without the city filter
+    const all = await crm.tx((db) =>
+      def('contacts.search_contacts').handler({ query: 'Liam Volkov' }, ctx(db)),
+    );
+    expect((all as { total: number }).total).toBe(3);
+  });
+
   it('owner_id filter is actually applied (not accepted-but-ignored)', async () => {
     await crm.tx((db) => {
       def('contacts.create_contact').handler({ name: 'Owned A', owner_id: 'user_1' }, ctx(db, 'o-1'));
@@ -396,5 +415,32 @@ describe('view_contact_activity_timeline', () => {
     const items = (result as { items: Array<{ id: string }> }).items;
     expect(items[0]?.id).toBe('task_t1');
     expect(items[1]?.id).toBe('note_t1');
+  });
+
+  it('support 7e N11: message entries carry status so a draft is not mistaken for sent outreach', async () => {
+    const created = (await crm.tx((db) =>
+      def('contacts.create_contact').handler({ name: 'Draft Target' }, ctx(db)),
+    )) as { id: string };
+    crm.tx((db) => {
+      db.run(
+        `INSERT INTO messages (id, created_at, updated_at, archived, contact_id, channel, direction, status, sent_at, body)
+         VALUES ('msg_sent', 100, 100, 0, ?, 'email', 'outbound', 'sent', 150, 'real outreach')`,
+        [created.id],
+      );
+      db.run(
+        `INSERT INTO messages (id, created_at, updated_at, archived, contact_id, channel, direction, status, sent_at, body)
+         VALUES ('msg_draft', 300, 300, 0, ?, 'email', 'outbound', 'draft', NULL, 'unsent draft')`,
+        [created.id],
+      );
+      return undefined;
+    });
+    const result = await crm.tx((db) =>
+      def('contacts.view_contact_activity_timeline').handler({ id: created.id }, ctx(db)),
+    );
+    const items = (result as { items: Array<{ id: string; status?: string }> }).items;
+    const draft = items.find((i) => i.id === 'msg_draft');
+    const sent = items.find((i) => i.id === 'msg_sent');
+    expect(draft?.status).toBe('draft');
+    expect(sent?.status).toBe('sent');
   });
 });
