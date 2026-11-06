@@ -41,6 +41,7 @@ import { buildCatalogSummary } from '../baseline/catalog-summary.js';
 import { buildDateAnchors } from './date-rail.js';
 import { renderRecentTurns } from './recent-turns.js';
 import { buildTurnTools, harvestIds, StuckTracker, type LoopExits } from './tools.js';
+import { defaultPrincipal, type Principal } from '../agent/permissions.js';
 import { numberCheck } from './number-check.js';
 import { rescueToolCalls } from './tool-call-rescue.js';
 import { unsanctionedFilters } from './scope-check.js';
@@ -73,6 +74,9 @@ export interface LoopSessionDeps {
   /** OpenRouter model slug for this turn (user model-picker). Defaults to
    * `plannerModel()` when unset. Must be validated upstream (allowlist). */
   model?: string;
+  /** Principal this turn runs as (#1). Only actions this principal may use are
+   * bound/listed, and writes are attributed to it. Defaults to admin. */
+  principal?: Principal;
 }
 
 export interface RunLoopTurnInput {
@@ -291,7 +295,8 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     const cards = pickCards(userText, registry, sessionCtx);
     // Acting-user identity (engine-wave E9 parity): "<id> (<name>)" for the
     // prompt, bare id for the identity-param substitution rail.
-    const demoUserId = process.env['DEMO_USER_ID'] || 'user_1';
+    const principal = sessionDeps.principal ?? { ...defaultPrincipal(), userId: process.env['DEMO_USER_ID'] || 'user_1' };
+    const demoUserId = principal.userId;
     let currentUser = demoUserId;
     try {
       const nameRow = crm.tx((db) => db.get('SELECT name FROM users WHERE id = ?', [demoUserId]));
@@ -321,13 +326,15 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       planHash,
       actingUserId: demoUserId,
       knownIds,
+      principal,
     });
 
     // P1 (pattern): the full catalog rides in the (cacheable) system
     // prompt so the model always knows what exists — retrieval misses can no
     // longer hide capabilities. Only for real-size registries; tiny test
-    // registries already full-bind.
-    const catalogText = registry.all().length > FULL_BIND_THRESHOLD ? buildCatalogSummary(registry) : undefined;
+    // registries already full-bind. Permission-pruned (#1) so a restricted
+    // principal is never told about actions it may not use.
+    const catalogText = registry.all().length > FULL_BIND_THRESHOLD ? buildCatalogSummary(registry, principal) : undefined;
     const agent = new Agent({
       name: 'ask-ai',
       model: turnModel,

@@ -27,6 +27,7 @@ import type { RefStore } from '../agent/refs.js';
 import { retrieve, renderCards, type Card, type SessionCtx } from '../agent/retrieval.js';
 import { shouldGate, type ConfirmBroker } from '../agent/executor.js';
 import { approvalPolicy } from '../agent/approval-policy.js';
+import { canUseAction, defaultPrincipal, type Principal } from '../agent/permissions.js';
 import type { ConfirmationScope, Event } from '../events/types.js';
 import { coerceDateParams, widenForModel } from './date-rail.js';
 import { loadSkills } from './skills/registry.js';
@@ -307,6 +308,10 @@ export interface BuildTurnToolsInput {
    * task id was written to): record ids a WRITE may target — seeded from
    * the user's own text + prior turns, grown with every observation. */
   knownIds: Set<string>;
+  /** Principal-scoped permissions (#1): only actions this principal may use
+   * are bound as tools. Defaults to admin (every action), preserving the
+   * pre-permission single-tenant behavior. */
+  principal?: Principal;
 }
 
 export const RECORD_ID_RE = /\b[a-z][a-z]*(?:_[a-z]+)*_\d+\b/g;
@@ -360,9 +365,14 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   };
   // the acting user's own id is always legitimate evidence/target
   input.knownIds.add(input.actingUserId);
+  const principal = input.principal ?? defaultPrincipal();
   const seenSlugs = new Set<string>();
   const bindAction = (action: ActionDef): boolean => {
     if (seenSlugs.has(action.slug)) return false;
+    // Permission pruning (#1): never bind a tool this principal may not use —
+    // enforced at the single bind choke point, so both the initial shortlist
+    // and dynamic catalog__search_actions binding are covered.
+    if (!canUseAction(principal, action)) return false;
     seenSlugs.add(action.slug);
     tools.push(buildActionTool(action));
     return true;
@@ -708,7 +718,10 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const fromScan = registry
         .all()
         .filter((a) => tokens.some((t) => a.slug.includes(t) || a.name.toLowerCase().includes(t) || a.description.toLowerCase().includes(t)));
-      const found = [...new Map([...fromRetrieval, ...fromScan].map((a) => [a.slug, a])).values()];
+      const found = [...new Map([...fromRetrieval, ...fromScan].map((a) => [a.slug, a])).values()]
+        // Permission pruning (#1): a restricted principal never even sees
+        // actions it may not use in search results.
+        .filter((a) => canUseAction(principal, a));
       if (found.length === 0) return 'No matching actions found in the catalog.';
       const bound: string[] = [];
       for (const a of found) {

@@ -27,6 +27,7 @@ import { runTurn, type SessionDeps } from '../agent/pipeline.js';
 import { runBaselineTurn, type BaselineSessionDeps } from '../baseline/agent.js';
 import { modelStreamsTools, defaultModelId } from '../llm/models.js';
 import { runLoopTurn, type LoopSessionDeps } from '../loop/agent.js';
+import type { Principal } from '../agent/permissions.js';
 import type { Event } from '../events/types.js';
 
 /** 'optimized' = the production tool-loop agent (plan rev 3 pivot);
@@ -98,6 +99,8 @@ interface RunningTurn {
   /** Loop turns only (review I4): aborted by cancel() so the tool loop
    * stops promptly and finalizes 'cancelled' instead of looping on. */
   cancel: AbortController;
+  /** Principal this turn runs as (#1); undefined = admin default. */
+  principal?: Principal;
 }
 
 export interface StartTurnInput {
@@ -107,6 +110,8 @@ export interface StartTurnInput {
   /** Validated (allowlisted) OpenRouter model id for this turn, or undefined
    * for the deployed default. */
   model?: string;
+  /** Principal this turn runs as (#1); undefined = admin default. */
+  principal?: Principal;
 }
 
 export type ConfirmResolution =
@@ -184,6 +189,7 @@ export class SessionRuntime {
       turnId,
       agent: input.agent,
       ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(input.principal !== undefined ? { principal: input.principal } : {}),
       cancel: new AbortController(),
     };
     this.running.set(input.sessionId, state);
@@ -241,6 +247,7 @@ export class SessionRuntime {
                 confirm,
                 cancelSignal: state.cancel.signal,
                 ...(state.model !== undefined ? { model: state.model } : {}),
+                ...(state.principal !== undefined ? { principal: state.principal } : {}),
                 // Live answer-token streaming — only for models whose tool
                 // calls assemble correctly under stream:true (OpenAI yes,
                 // Anthropic-via-OpenRouter no). `streamAnswers` is the

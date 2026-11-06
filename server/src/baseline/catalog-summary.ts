@@ -17,6 +17,7 @@
 
 import type { ActionDef } from '../catalog/types.js';
 import type { Registry } from '../catalog/registry.js';
+import { canUseAction, type Principal } from '../agent/permissions.js';
 
 /**
  * `chars / 4` — the standard rough token-count estimator for English text.
@@ -55,8 +56,13 @@ function groupByModule(actions: readonly ActionDef[]): Map<string, ActionDef[]> 
  * Deterministic for a given `registry` (no randomness, no wall-clock) — safe
  * to snapshot-test byte-for-byte.
  */
-export function buildCatalogSummary(registry: Registry): string {
-  const actions = registry.all().filter((a) => !a.slug.startsWith('core.'));
+export function buildCatalogSummary(registry: Registry, principal?: Principal): string {
+  const actions = registry
+    .all()
+    .filter((a) => !a.slug.startsWith('core.'))
+    // Permission pruning (#1): a restricted principal is not told about
+    // actions it may not use. Undefined principal = admin = everything.
+    .filter((a) => (principal ? canUseAction(principal, a) : true));
   const byModule = groupByModule(actions);
 
   const lines: string[] = [];

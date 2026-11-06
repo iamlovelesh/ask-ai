@@ -13,6 +13,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { openSse } from './sse.js';
 import { sessionExists } from './turn-runtime.js';
 import { listPickerModels, defaultModelId, isSelectableModel, resolveAutoModel, AUTO_MODEL_ID } from '../llm/models.js';
+import { resolvePrincipal } from '../agent/permissions.js';
 import { fetchModelCatalog, catalogHas } from '../llm/model-catalog.js';
 import { llmCall } from '../llm/client.js';
 import { generateTitle, TITLE_MAX_CHARS } from './title.js';
@@ -35,6 +36,9 @@ const messageBodySchema = z.object({
    * in `resolveModelId` (an unknown id silently falls back to the default —
    * never trust a raw client model string). */
   model: z.string().optional(),
+  /** Principal role this turn runs as (#1). An unknown/absent role resolves to
+   * the admin default in `resolvePrincipal`, preserving prior behavior. */
+  role: z.string().optional(),
 });
 
 const confirmBodySchema = z.object({
@@ -217,7 +221,8 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
     });
     conn.onClientGone(unsub);
 
-    turnId = runtime.startTurn({ sessionId, userText: text, agent, model });
+    const principal = resolvePrincipal({ role: parsed.data.role });
+    turnId = runtime.startTurn({ sessionId, userText: text, agent, model, principal });
   });
 
   // --- POST /api/sessions/:id/confirm/:confirmId --------------------------
