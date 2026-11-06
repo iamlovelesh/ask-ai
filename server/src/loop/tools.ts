@@ -176,6 +176,38 @@ function renderDatesForModel(value: unknown, keyOfParent?: string): unknown {
   return value;
 }
 
+// Grammatical/filler words dropped when tokenizing a free-text search query,
+// so "find the ones about login or password" searches for login/password, not
+// the literal phrase (persona finding: a whole-phrase substring match found 0).
+const SEARCH_STOPWORDS = new Set([
+  'the', 'and', 'for', 'ones', 'one', 'about', 'with', 'that', 'those', 'these', 'this',
+  'from', 'any', 'all', 'are', 'not', 'who', 'whose', 'their', 'them', 'mentioning',
+  'mention', 'containing', 'contains', 'within', 'related', 'regarding', 'where', 'which',
+]);
+
+/** Rows in `rows` matching `query` by tokenized free-text: a row matches when
+ * ANY field contains ANY significant word of the query (OR recall). Falls back
+ * to a whole-phrase substring match when the query has no usable words. Shared
+ * by data__search_ref and unit-tested directly. */
+export function searchRefRows(rows: readonly Record<string, unknown>[], query: string): Record<string, unknown>[] {
+  const q = query.trim().toLowerCase();
+  if (q === '') return [];
+  const squash = (s: string): string => s.replace(/\s+/g, '');
+  const tokens = q.split(/[^a-z0-9]+/).filter((t) => t.length > 2 && !SEARCH_STOPWORDS.has(t));
+  const terms = tokens.length > 0 ? tokens : [q];
+  const sqTerms = terms.map(squash);
+  return rows.filter((row) =>
+    Object.values(row).some((v) => {
+      if (v === null || v === undefined) return false;
+      const s = String(v).toLowerCase();
+      const sq = squash(s);
+      // Plain substring OR space-insensitive, so "login" finds "log in" and
+      // "signin" finds "sign in" (the ticket subjects don't use the one-word form).
+      return terms.some((t, i) => s.includes(t) || sq.includes(sqTerms[i] as string));
+    }),
+  );
+}
+
 /** Natural count phrasing: entity nouns are plural table names ("invoices"),
  * so singular counts strip the s and plural counts never double it. */
 /** Kill IEEE-754 summation artifacts (review MED-2: 0.1+0.2 →
@@ -843,6 +875,19 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     exits.toolOutputs.push(obs);
   };
 
+  /** Wrap a ref-tool so its operation shows as a real step in the trace
+   * (search/filter/sort/aggregate were previously invisible — persona finding),
+   * counts as a successful read (grounding), and is observable/verifiable. */
+  const runRefStep = async (action: string, params: Record<string, unknown>, body: () => Promise<string>): Promise<string> => {
+    const stepId = `r${(counters.step += 1)}`;
+    emit({ t: 'step.started', turnId, stepId, action, resolvedParams: [params] });
+    const startedAt = performance.now();
+    const obs = await body();
+    counters.stepsOk += 1;
+    emit({ t: 'step.finished', turnId, stepId, summary: obs.replace(/\s+/g, ' ').trim().slice(0, 160), ms: performance.now() - startedAt });
+    return obs;
+  };
+
   const sortRef = tool({
     name: 'data__sort_ref',
     description:
@@ -956,15 +1001,13 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     description:
       'Free-text search WITHIN the set behind a ref: returns rows where ANY field contains the query (case-insensitive). Use to find specific records in a large result ("the one named Acme", "rows mentioning refund") WITHOUT re-querying. Use data__filter_ref instead when you know the exact field and condition. Returns a NEW ref + count + sample.',
     parameters: z.object({ ref: z.string(), query: z.string() }),
-    execute: async ({ ref, query }): Promise<string> => {
-      const q = query.trim().toLowerCase();
-      if (q === '') return `Provide a non-empty query to search ${ref}.`;
+    execute: async ({ ref, query }): Promise<string> =>
+      runRefStep('data.search_ref', { ref, query }, async () => {
+      if (query.trim() === '') return `Provide a non-empty query to search ${ref}.`;
       const { rows, complete, total } = hydrateRows(ref);
-      const matches = rows.filter((row) =>
-        Object.values(row as Record<string, unknown>).some(
-          (v) => v !== null && v !== undefined && String(v).toLowerCase().includes(q),
-        ),
-      );
+      // Tokenized match: a natural-language query ("login or password problems")
+      // searches for each significant WORD, not the literal phrase.
+      const matches = searchRefRows(rows as Record<string, unknown>[], query);
       const ids = matches.map(rowId).filter((id): id is string => id !== undefined);
       const source = refs.get(ref);
       const handle = refs.put({
@@ -985,7 +1028,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const obs = `Search "${query}" over ${scope}: ${matches.length} matched [ref ${handle.ref}]. Sample: ${renderRefRows(matches.slice(0, 5), [])}`;
       publishObs(obs);
       return obs;
-    },
+      }),
   });
 
   const aggregateRef = tool({

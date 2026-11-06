@@ -77,6 +77,32 @@ describe('renderRecentTurns', () => {
     expect(renderRecentTurns([], 3)).toBe('');
   });
 
+  it('replaces a SPILLED turn\'s sample answer with a ref-tool directive (narrow-follow-up fix)', () => {
+    const spilled: Event[] = turnEvents(
+      1,
+      'list all open support tickets',
+      'Here are the open tickets:\n| TICKET-ROW-1 | Login fails | high |\n…and 75 more.',
+      [
+        { t: 'step.started', turnId: 't_1', stepId: 's1', action: 'support_tickets.search_tickets', resolvedParams: [{ status: 'open' }] } as Event,
+        { t: 'step.finished', turnId: 't_1', stepId: 's1', summary: 'search tickets: 76 tickets [ref r_t1_s1]', resultRef: 'r_t1_s1', ms: 5 } as Event,
+      ],
+    );
+    const out = renderRecentTurns(spilled, 3);
+    expect(out).toContain('r_t1_s1'); // the ref is named
+    expect(out).toMatch(/data__search_ref|data__filter_ref/); // directs to the tools
+    expect(out).toMatch(/SAMPLE|sample/);
+    expect(out).not.toContain('TICKET-ROW-1'); // the filterable sample table is GONE
+  });
+
+  it('keeps a non-spilled turn\'s answer verbatim (small result fully shown)', () => {
+    const inline: Event[] = turnEvents(1, 'who is con_1', 'con_1 is Ada Lovelace, ada@x.com.', [
+      { t: 'step.started', turnId: 't_1', stepId: 's1', action: 'contacts.get_contact_details', resolvedParams: [{ id: 'con_1' }] } as Event,
+      { t: 'step.finished', turnId: 't_1', stepId: 's1', summary: 'contact: Ada Lovelace', ms: 2 } as Event, // no resultRef
+    ]);
+    const out = renderRecentTurns(inline, 3);
+    expect(out).toContain('Ada Lovelace, ada@x.com'); // answer preserved
+  });
+
   it('collapses the oldest kept turns to fit a maxChars budget (context compaction)', () => {
     const big = 'x'.repeat(400);
     const long: Event[] = [

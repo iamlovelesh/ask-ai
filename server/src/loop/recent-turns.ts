@@ -26,7 +26,22 @@ const DEFAULT_KEEP_LAST_N = 3;
 const DEFAULT_MAX_CHARS = 6000;
 
 function fullLines(turn: TurnView): string[] {
-  return [`user: ${turn.userText}`, ...turn.steps, `assistant: ${turn.answer}`, ''];
+  const head = [`user: ${turn.userText}`, ...turn.steps];
+  if (turn.spillRefs.length > 0) {
+    // Narrow-follow-up fix: this turn's result SPILLED — the rows shown to the
+    // user were only a sample of a larger set kept behind a [ref]. Replaying
+    // that sample as the answer tempts the model to filter it for a follow-up
+    // ("find the login ones in that list") and MISS matches in the rest of the
+    // set. Replace the sample with a directive to use the ref-tools instead.
+    const refs = [...new Set(turn.spillRefs)].join(', ');
+    head.push(
+      `assistant: [This turn returned a LARGE result; the rows shown were only a SAMPLE. The COMPLETE set is behind ${refs}. For ANY follow-up that finds, filters, narrows, sorts, counts, or totals this set, you MUST call data__search_ref / data__filter_ref / data__sort_ref / data__aggregate_ref on ${refs} — do NOT answer from the sample.]`,
+      '',
+    );
+  } else {
+    head.push(`assistant: ${turn.answer}`, '');
+  }
+  return head;
 }
 
 interface TurnView {
@@ -34,13 +49,16 @@ interface TurnView {
   steps: string[];
   answer: string;
   completed: boolean;
+  /** Refs for results this turn SPILLED (step.finished.resultRef) — i.e. the
+   * answer only shows a sample; follow-ups must use ref-tools on these. */
+  spillRefs: string[];
 }
 
 function fold(events: readonly Event[]): TurnView[] {
   const byTurn = new Map<string, TurnView>();
   for (const e of events) {
     if (e.t === 'turn.started') {
-      byTurn.set(e.turnId, { userText: e.userText, steps: [], answer: '', completed: false });
+      byTurn.set(e.turnId, { userText: e.userText, steps: [], answer: '', completed: false, spillRefs: [] });
       continue;
     }
     const turn = byTurn.get(e.turnId);
@@ -50,6 +68,7 @@ function fold(events: readonly Event[]): TurnView[] {
       turn.steps.push(`- ran ${e.action}${scope}`);
     } else if (e.t === 'step.finished') {
       turn.steps.push(`  result: ${e.summary}`);
+      if (e.resultRef !== undefined) turn.spillRefs.push(e.resultRef);
     } else if (e.t === 'step.failed') {
       turn.steps.push(`  failed: ${e.error.code}`);
     } else if (e.t === 'answer.final') {
