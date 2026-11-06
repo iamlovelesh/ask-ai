@@ -13,6 +13,7 @@ import { registerSessionsRoutes } from './api/sessions.js';
 import { registerStreamRoutes } from './api/stream.js';
 import { registerAdminRoutes } from './api/admin.js';
 import { registerMetricsRoutes } from './api/metrics.js';
+import { registerMemoryRoutes } from './api/memory.js';
 import type { AppDeps } from './api/types.js';
 
 const PORT = Number(process.env['PORT'] ?? 3000);
@@ -66,6 +67,7 @@ async function start(): Promise<void> {
     registerStreamRoutes(app, deps);
     registerAdminRoutes(app, deps);
     registerMetricsRoutes(app, deps);
+    registerMemoryRoutes(app, deps);
 
     app.addHook('onClose', async () => {
       eventLog.close();
