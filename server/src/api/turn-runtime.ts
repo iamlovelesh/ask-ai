@@ -21,6 +21,7 @@ import type { Crm } from '../store/db.js';
 import type { SessionsDb } from '../store/sessions-db.js';
 import type { EventLog } from '../events/log.js';
 import { createRefStore, type RefStore } from '../agent/refs.js';
+import { createMemoryStore, type MemoryStore } from '../memory/store.js';
 import type { ConfirmBroker, ConfirmRequest } from '../agent/executor.js';
 import type { Playbook } from '../playbooks/loader.js';
 import { runTurn, type SessionDeps } from '../agent/pipeline.js';
@@ -148,6 +149,14 @@ export class SessionRuntime {
     return r;
   }
 
+  /** One user-scoped MemoryStore over the shared sessions.db handle (keyed by
+   * user_id at query time, so a single instance serves every session). */
+  private memoryStore?: MemoryStore;
+  private memoryFor(): MemoryStore {
+    if (!this.memoryStore) this.memoryStore = createMemoryStore(this.sessionsDb);
+    return this.memoryStore;
+  }
+
   private brokerFor(sessionId: string): HttpConfirmBroker {
     let b = this.brokers.get(sessionId);
     if (!b) {
@@ -200,6 +209,12 @@ export class SessionRuntime {
     const confirm = this.brokerFor(sessionId);
     const refs = this.refsFor(sessionId);
     const crm = this.getCrm();
+    // Memory (design §4): recall is on unless globally off; writes additionally
+    // require not-incognito. `memoryWritable = enabled && !incognito`.
+    const memoryUserId = process.env['DEMO_USER_ID'] || 'user_1';
+    const memory = this.memoryFor();
+    const memoryEnabled = memory.isEnabled(memoryUserId);
+    const memoryWritable = memoryEnabled && !memory.isIncognito(sessionId);
 
     const gen =
       state.agent === 'baseline'
@@ -246,6 +261,12 @@ export class SessionRuntime {
                 // Anthropic-via-OpenRouter no). `streamAnswers` is the
                 // master test/prod gate; the model capability narrows it.
                 stream: this.streamAnswers && modelStreamsTools(state.model ?? defaultModelId()),
+                // Durable user memory (design §4): recall + tools + post-turn
+                // extraction. extractModel is a cheap default tier.
+                memory,
+                memoryEnabled,
+                memoryWritable,
+                extractModel: defaultModelId(),
               } satisfies LoopSessionDeps,
             });
 
