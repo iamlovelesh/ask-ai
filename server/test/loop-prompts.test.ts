@@ -4,6 +4,16 @@ import { buildLoopSystemPrompt, buildLoopUserPrompt } from '../src/loop/prompts'
 describe('buildLoopSystemPrompt', () => {
   const system = buildLoopSystemPrompt();
 
+  it('P1: embeds a full action catalog section when provided (pattern)', () => {
+    const withCatalog = buildLoopSystemPrompt('leads.search_leads: Search leads\ninvoices.send_reminder: Send a reminder');
+    expect(withCatalog).toContain('<action_catalog>');
+    expect(withCatalog).toContain('leads.search_leads: Search leads');
+    expect(withCatalog).toMatch(/complete list|every action that exists/i);
+    expect(withCatalog).toMatch(/catalog__search_actions/);
+    // without catalog arg, prompt stays as before
+    expect(system).not.toContain('<action_catalog>');
+  });
+
   it('is static and byte-stable across calls', () => {
     expect(buildLoopSystemPrompt()).toBe(system);
   });

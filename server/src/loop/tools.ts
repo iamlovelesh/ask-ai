@@ -64,6 +64,9 @@ export interface LoopExits {
   /** Human-readable action name -> write count (the deterministic actions
    * ledger appended to write-turn answers; round-6 support F1). */
   writeActions: Map<string, number>;
+  /** Every observation string fed to the model this turn — the evidence
+   * pool NumberCheck verifies draft answers against (P2). */
+  toolOutputs: string[];
   /** Aborts the in-flight run immediately (exit tools, stuck-stop). */
   stop: () => void;
 }
@@ -354,6 +357,25 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
             targetSample,
             description: `${action.name} — ${affectedCount} ${pluralNoun(noun, affectedCount)}.`,
           };
+          // P3 (snapshot-and-recheck): freeze the targeted records'
+          // CURRENT values at proposal time; after approval, re-read and
+          // refuse on drift — the human approves an exact state, not an
+          // intention. Fail-open when the entity table can't be read
+          // (unknown table/no ids): behaves as before.
+          const snapshotTable = /^[a-z_]+$/.test(noun) ? noun : undefined;
+          const snapshotIds = targetSample.slice(0, 25);
+          const takeSnapshot = (): string | undefined => {
+            if (!snapshotTable || snapshotIds.length === 0) return undefined;
+            try {
+              const placeholders = snapshotIds.map(() => '?').join(',');
+              const rows = crm.tx((db) => db.all(`SELECT * FROM ${snapshotTable} WHERE id IN (${placeholders}) ORDER BY id`, [...snapshotIds]));
+              return JSON.stringify(rows);
+            } catch {
+              return undefined;
+            }
+          };
+          const snapshotBefore = takeSnapshot();
+
           markTtfur();
           emit({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
           const gateStartedAt = performance.now();
@@ -363,6 +385,15 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           if (!approved) {
             exits.denied = true;
             return `DENIED by the user — "${action.name}" was NOT executed. Do not claim it happened; tell the user plainly that nothing was changed, or ask how to narrow the request.`;
+          }
+          if (snapshotBefore !== undefined) {
+            const snapshotAfter = takeSnapshot();
+            if (snapshotAfter !== snapshotBefore) {
+              counters.stepsFailed += 1;
+              counters.step += 1;
+              emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'CONFLICT', message: `${action.slug} target(s) changed between proposal and approval` }, ms: 0 });
+              return `CONFLICT: the targeted record(s) changed while awaiting approval — "${action.name}" was NOT executed (the user approved the OLD state). Re-read the record and, if the action still applies, propose it again.`;
+            }
           }
         }
 
@@ -466,7 +497,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           }
           const body = renderObservationBody(finalResult, refNote);
           harvestIds(JSON.stringify(finalResult ?? ''), input.knownIds);
-          return `${summary}.${echo}${windowNote} result=${body}`;
+          const observation = `${summary}.${echo}${windowNote} result=${body}`;
+          exits.toolOutputs.push(observation);
+          return observation;
         } catch (err) {
           const ms = performance.now() - startedAt;
           const error = describeError(err);
@@ -565,7 +598,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         return direction === 'asc' ? cmp : -cmp;
       });
       const top = sorted.slice(0, limit);
-      return `Sorted ${total} records by ${field} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length}: ${JSON.stringify(renderDatesForModel(top)).slice(0, OBSERVATION_CAP)}`;
+      const obs = `Sorted ${total} records by ${field} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length}: ${JSON.stringify(renderDatesForModel(top)).slice(0, OBSERVATION_CAP)}`;
+      exits.toolOutputs.push(obs);
+      return obs;
     },
   });
 
@@ -611,7 +646,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         idList: ids,
         sample: matches.slice(0, SPILL_SAMPLE_ROWS),
       });
-      return `Filter ${field} ${op} ${JSON.stringify(value ?? null)} over ${total} records: ${matches.length} matched [ref ${handle.ref}]. Sample: ${JSON.stringify(renderDatesForModel(matches.slice(0, 5))).slice(0, OBSERVATION_CAP)}`;
+      const obs = `Filter ${field} ${op} ${JSON.stringify(value ?? null)} over ${total} records: ${matches.length} matched [ref ${handle.ref}]. Sample: ${JSON.stringify(renderDatesForModel(matches.slice(0, 5))).slice(0, OBSERVATION_CAP)}`;
+      exits.toolOutputs.push(obs);
+      return obs;
     },
   });
 
@@ -638,7 +675,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const sum = values.reduce((a, b) => a + b, 0);
       const value = op === 'sum' ? sum : op === 'avg' ? sum / values.length : op === 'min' ? Math.min(...values) : Math.max(...values);
       const label = subtract_field ? `${field} - ${subtract_field}` : field;
-      return `${op} of ${label} over ${values.length} records: ${value}`;
+      const obs = `${op} of ${label} over ${values.length} records: ${value}`;
+      exits.toolOutputs.push(obs);
+      return obs;
     },
   });
 
@@ -726,7 +765,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       }
       if (failed > 0 && ok === 0) counters.stepsFailed += 1;
       emit({ t: 'step.finished', turnId, stepId, summary: `${target.name}: ${ok}/${ids.length} ${pluralNoun(noun, ids.length)} processed`, ms });
-      return `Applied "${target.name}" to ${ids.length} ${pluralNoun(noun, ids.length)}: ${ok} succeeded, ${failed} failed${errors.length > 0 ? ` (examples: ${errors.join('; ')})` : ''}.`;
+      const obs = `Applied "${target.name}" to ${ids.length} ${pluralNoun(noun, ids.length)}: ${ok} succeeded, ${failed} failed${errors.length > 0 ? ` (examples: ${errors.join('; ')})` : ''}.`;
+      exits.toolOutputs.push(obs);
+      return obs;
     },
   });
 

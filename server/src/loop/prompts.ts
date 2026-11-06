@@ -100,8 +100,23 @@ Answer style:
   — translate them ("that list", "the search I just ran").
 - Money values are in cents in the data; present them as dollars.`;
 
-export function buildLoopSystemPrompt(): string {
-  return SYSTEM_PROMPT;
+/** `catalog`: the FULL action catalog as "slug: description" lines (
+ * pattern — the model always KNOWS every capability; schemas load on demand
+ * via catalog__search_actions). Deterministic per registry, so the prompt
+ * prefix stays provider-cacheable across turns. */
+export function buildLoopSystemPrompt(catalog?: string): string {
+  if (catalog === undefined || catalog === '') return SYSTEM_PROMPT;
+  return [
+    SYSTEM_PROMPT,
+    '',
+    '<action_catalog>',
+    'This is the complete list of every action that exists in this CRM —',
+    'nothing outside it is possible. Actions not currently among your tools',
+    'become callable by requesting them via catalog__search_actions.',
+    '',
+    catalog,
+    '</action_catalog>',
+  ].join('\n');
 }
 
 export interface LoopUserPromptInput {

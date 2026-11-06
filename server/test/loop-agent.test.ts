@@ -430,6 +430,71 @@ describe('runLoopTurn — confirmation gate', () => {
   });
 });
 
+describe('runLoopTurn — snapshot-and-recheck approvals (P3, pattern)', () => {
+  function driftingCrm(before: Record<string, unknown>[], after: Record<string, unknown>[]): Crm {
+    let selects = 0;
+    const tx: StoreTx = {
+      all: (sql: string) => {
+        if (/^SELECT \* FROM invoices/.test(sql)) {
+          selects += 1;
+          return (selects === 1 ? before : after) as Record<string, unknown>[];
+        }
+        return [];
+      },
+      get: () => undefined,
+      run: () => ({ changes: 0 }),
+    };
+    return { tx: (fn) => fn(tx), close: () => {} };
+  }
+
+  it('refuses to execute an approved write when the target drifted between gate and approval', async () => {
+    let invoked = 0;
+    const act = { ...action('invoices.void_invoice', 'destructive', async () => { invoked += 1; return {}; }, z.object({ id: z.string() })), entities: ['invoices'] };
+    const registry = buildRegistry([[act]], []);
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'void invoice inv_9',
+      sessionDeps: {
+        registry,
+        crm: driftingCrm([{ id: 'inv_9', status: 'issued', total_cents: 100 }], [{ id: 'inv_9', status: 'paid', total_cents: 100 }]),
+        refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('invoices__void_invoice', { id: 'inv_9' }),
+          textResponse('I could not void it — the invoice changed while awaiting approval.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(invoked).toBe(0);
+    const failed = events.filter((e) => e.t === 'step.failed');
+    expect(failed.some((e) => e.t === 'step.failed' && e.error.code === 'CONFLICT')).toBe(true);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).toMatch(/changed while awaiting approval|CONFLICT/i);
+  });
+
+  it('executes normally when the snapshot matches at approval time', async () => {
+    let invoked = 0;
+    const rows = [{ id: 'inv_9', status: 'issued', total_cents: 100 }];
+    const act = { ...action('invoices.void_invoice', 'destructive', async () => { invoked += 1; return {}; }, z.object({ id: z.string() })), entities: ['invoices'] };
+    const registry = buildRegistry([[act]], []);
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'void invoice inv_9',
+      sessionDeps: {
+        registry, crm: driftingCrm(rows, rows), refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('invoices__void_invoice', { id: 'inv_9' }),
+          textResponse('Voided.'),
+        ]),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(invoked).toBe(1);
+    expect(completedOf(events).status).toBe('done');
+  });
+});
+
 describe('runLoopTurn — honest exits', () => {
   const registry = () => buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
 
@@ -1048,6 +1113,62 @@ describe('runLoopTurn — zero-step grounding check (round-6 billing G1)', () =>
     for await (const ev of runLoopTurn(input)) events.push(ev);
     expect(seen.bodies.length).toBe(1);
     expect(finalOf(events)).toBe('Happy to help! Anything else?');
+  });
+});
+
+describe('runLoopTurn — NumberCheck on stepped turns (P2, Chatwoot pattern)', () => {
+  it('a stepped answer with an unsupported figure triggers one forced re-run', async () => {
+    const registry = buildRegistry(
+      [[action('invoices.search', 'read', async () => ({ items: [{ id: 'inv_1', total_cents: 955865 }], total: 14 }))]],
+      [],
+    );
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'how much is owed',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('invoices__search', {}),
+          textResponse('You are owed $6,842.02 in total.'), // fabricated
+          toolCallResponse('invoices__search', {}),
+          textResponse('The largest invoice is $9,558.65.'), // supported (955865 cents)
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(finalOf(events)).toContain('9,558.65');
+    expect(finalOf(events)).not.toContain('6,842.02');
+    const retryBody = seen.bodies[2] ?? '';
+    expect(retryBody).toContain('"tool_choice":"required"');
+  });
+
+  it('a persistently unsupported figure gets an explicit verification caution appended', async () => {
+    const registry = buildRegistry(
+      [[action('invoices.search', 'read', async () => ({ items: [{ id: 'inv_1', total_cents: 955865 }], total: 14 }))]],
+      [],
+    );
+    const events = await drive(registry, 'how much is owed', [
+      toolCallResponse('invoices__search', {}),
+      textResponse('You are owed $6,842.02 in total.'),
+      toolCallResponse('invoices__search', {}),
+      textResponse('Confirmed: you are owed $6,842.02.'),
+    ]);
+    const final = finalOf(events);
+    expect(final).toMatch(/could not verify|double-check/i);
+    expect(final).toContain('6,842.02');
+  });
+
+  it('a stepped answer whose figures all come from outputs passes untouched', async () => {
+    const registry = buildRegistry(
+      [[action('invoices.search', 'read', async () => ({ items: [{ id: 'inv_1', total_cents: 955865 }], total: 14 }))]],
+      [],
+    );
+    const events = await drive(registry, 'how much', [
+      toolCallResponse('invoices__search', {}),
+      textResponse('You have 14 invoices; the largest is $9,558.65.'),
+    ]);
+    expect(finalOf(events)).toBe('You have 14 invoices; the largest is $9,558.65.');
   });
 });
 

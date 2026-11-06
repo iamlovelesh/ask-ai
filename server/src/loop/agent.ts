@@ -36,9 +36,11 @@ import {
 } from '../llm/agents-runtime.js';
 import { BudgetExceededError } from '../llm/client.js';
 import { buildLoopSystemPrompt, buildLoopUserPrompt } from './prompts.js';
+import { buildCatalogSummary } from '../baseline/catalog-summary.js';
 import { buildDateAnchors } from './date-rail.js';
 import { renderRecentTurns } from './recent-turns.js';
 import { buildTurnTools, harvestIds, StuckTracker, type LoopExits } from './tools.js';
+import { numberCheck } from './number-check.js';
 
 export interface LoopSessionDeps {
   registry: Registry;
@@ -155,6 +157,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     denied: false,
     writesLanded: 0,
     writeActions: new Map(),
+    toolOutputs: [],
     stop: () => stopController.abort(),
   };
   const cancelSignal = sessionDeps.cancelSignal;
@@ -242,10 +245,15 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       knownIds,
     });
 
+    // P1 (pattern): the full catalog rides in the (cacheable) system
+    // prompt so the model always knows what exists — retrieval misses can no
+    // longer hide capabilities. Only for real-size registries; tiny test
+    // registries already full-bind.
+    const catalogText = registry.all().length > FULL_BIND_THRESHOLD ? buildCatalogSummary(registry) : undefined;
     const agent = new Agent({
       name: 'ask-ai',
       model: plannerModel(),
-      instructions: buildLoopSystemPrompt(),
+      instructions: buildLoopSystemPrompt(catalogText),
       tools,
       // timeoutMs: per-model-call cap (review I9) so one hung provider call
       // cannot eat the whole 90s turn deadline.
@@ -258,7 +266,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     const groundedAgent = new Agent({
       name: 'ask-ai',
       model: plannerModel(),
-      instructions: buildLoopSystemPrompt(),
+      instructions: buildLoopSystemPrompt(catalogText),
       tools,
       modelSettings: { parallelToolCalls: false, maxTokens: MAX_OUTPUT_TOKENS, timeoutMs: 60_000, toolChoice: 'required' },
     });
@@ -294,8 +302,30 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
         return typeof result.finalOutput === 'string' ? result.finalOutput : JSON.stringify(result.finalOutput ?? '');
       };
       finalText = await runOnce(prompt);
-      if (finalText !== MAX_TURNS_FALLBACK && exits.clarify === undefined && exits.refused === undefined && needsGrounding(finalText, counters.step + counters.virtualReads)) {
-        finalText = await runOnce(`${prompt}\n\n${GROUNDING_NOTE}`, groundedAgent);
+      // ONE verification re-run budget, shared by both checks:
+      //  - zero-step grounding (no data read at all), or
+      //  - NumberCheck (P2, Chatwoot pattern): figures/dates in the draft
+      //    must exist in or derive from this turn's tool outputs.
+      const canRetry = finalText !== MAX_TURNS_FALLBACK && exits.clarify === undefined && exits.refused === undefined;
+      if (canRetry) {
+        if (needsGrounding(finalText, counters.step + counters.virtualReads)) {
+          finalText = await runOnce(`${prompt}\n\n${GROUNDING_NOTE}`, groundedAgent);
+        } else {
+          const check = numberCheck(finalText, exits.toolOutputs);
+          if (!check.ok) {
+            finalText = await runOnce(
+              `${prompt}\n\nIMPORTANT: your previous draft stated figures I could not find in any tool result this turn: ${check.unsupported.join(', ')}. Re-read the data with tools and answer using ONLY figures that appear in tool results.`,
+              groundedAgent,
+            );
+          }
+        }
+        // Persistent unsupported figures get an explicit, honest caution.
+        if (exits.clarify === undefined && exits.refused === undefined && finalText !== MAX_TURNS_FALLBACK) {
+          const finalCheck = numberCheck(finalText, exits.toolOutputs);
+          if (!finalCheck.ok) {
+            finalText += `\n\n⚠ Please double-check these figures against the records — I could not verify them: ${finalCheck.unsupported.join(', ')}`;
+          }
+        }
       }
     } catch (err) {
       if (err instanceof LoopStoppedError) {
