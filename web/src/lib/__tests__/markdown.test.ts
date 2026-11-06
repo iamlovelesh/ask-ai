@@ -44,4 +44,18 @@ describe('renderMarkdown', () => {
   it('plain text passes through wrapped in a paragraph', () => {
     expect(renderMarkdown('All done.')).toBe('<p>All done.</p>');
   });
+
+  it('renders [[record:entity:id:Name]] tokens as record chips (pattern)', () => {
+    const html = renderMarkdown('The oldest is [[record:invoices:inv_55:INV-2667]] from May.');
+    expect(html).toContain('class="record-chip"');
+    expect(html).toContain('INV-2667');
+    expect(html).toContain('data-record="invoices/inv_55"');
+    expect(html).not.toContain('[[record:');
+  });
+
+  it('record chips escape malicious display names', () => {
+    const html = renderMarkdown('[[record:leads:lead_1:<img src=x onerror=1>]]');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img');
+  });
 });

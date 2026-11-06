@@ -81,6 +81,13 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toContain('data__apply_to_ref');
   });
 
+  it('routes grouping questions to group_by and mandates record reference tokens (patterns)', () => {
+    expect(system).toContain('data__group_by_ref');
+    expect(system).toMatch(/by\/per\/top|per owner|breakdown/i);
+    expect(system).toContain('[[record:');
+    expect(system).toMatch(/copied verbatim|exactly as .*appears|never invent .*reference/i);
+  });
+
   it('bans invented filter values and self-done arithmetic', () => {
     expect(system).toMatch(/never (add|invent) filters?/i);
     expect(system).toMatch(/never do arithmetic|never (sum|add up) .*yourself/i);

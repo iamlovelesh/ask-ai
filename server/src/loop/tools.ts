@@ -681,6 +681,54 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
+  const groupByRef = tool({
+    name: 'data__group_by_ref',
+    description:
+      'Group the COMPLETE result set behind a ref by one or two fields and aggregate a measure per group (count/sum/avg/min/max), server-side. Use for every "by/per/top/most/breakdown" question — revenue by stage, deals per owner, tickets by priority — instead of fetching rows and counting yourself.',
+    parameters: z.object({
+      ref: z.string(),
+      group_by: z.string().describe('field to group by'),
+      group_by_2: z.string().nullable().optional().describe('optional second dimension'),
+      measure: z.string().nullable().optional().describe('numeric field to aggregate; omit for op=count'),
+      op: z.enum(['count', 'sum', 'avg', 'min', 'max']),
+      subtract_field: z.string().nullable().optional().describe('optional field subtracted from measure per record (e.g. amount_paid_cents for owed)'),
+    }),
+    execute: async ({ ref, group_by, group_by_2, measure, op, subtract_field }): Promise<string> => {
+      const { rows, complete, total } = hydrateRows(ref);
+      if (!complete) {
+        return `The set behind ${ref} is incomplete on the server, so an exact breakdown is not possible. Narrow the original search instead.`;
+      }
+      if (op !== 'count' && (measure === undefined || measure === null)) {
+        return `op=${op} needs a numeric "measure" field (or use op=count).`;
+      }
+      const groups = new Map<string, { count: number; values: number[] }>();
+      for (const row of rows) {
+        const key = group_by_2 ? `${String(row[group_by] ?? '(none)')} / ${String(row[group_by_2] ?? '(none)')}` : String(row[group_by] ?? '(none)');
+        const g = groups.get(key) ?? { count: 0, values: [] };
+        g.count += 1;
+        if (measure) {
+          const v = Number(row[measure]) - (subtract_field ? Number(row[subtract_field] ?? 0) : 0);
+          if (Number.isFinite(v)) g.values.push(v);
+        }
+        groups.set(key, g);
+      }
+      const result = [...groups.entries()].map(([key, g]) => {
+        const sum = g.values.reduce((a, b) => a + b, 0);
+        const agg =
+          op === 'count' ? g.count
+          : op === 'sum' ? sum
+          : op === 'avg' ? (g.values.length > 0 ? sum / g.values.length : 0)
+          : op === 'min' ? (g.values.length > 0 ? Math.min(...g.values) : 0)
+          : g.values.length > 0 ? Math.max(...g.values) : 0;
+        return { group: key, count: g.count, [op === 'count' ? 'value' : op]: agg };
+      });
+      result.sort((a, b) => Number(Object.values(b)[2]) - Number(Object.values(a)[2]));
+      const obs = `Breakdown of ${total} records by ${group_by}${group_by_2 ? ` and ${group_by_2}` : ''} (${op}${measure ? ` of ${measure}${subtract_field ? ` - ${subtract_field}` : ''}` : ''}): ${JSON.stringify(result).slice(0, OBSERVATION_CAP)}`;
+      exits.toolOutputs.push(obs);
+      return obs;
+    },
+  });
+
   const applyToRef = tool({
     name: 'data__apply_to_ref',
     description:
@@ -690,8 +738,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       action: z.string().describe('tool name of the write action, e.g. invoices__send_invoice_reminder'),
       id_param: z.string().describe('the action param that takes each record id, e.g. "id"'),
       params_json: z.string().optional().describe('JSON object of extra params shared by every call'),
+      dry_run: z.boolean().nullable().optional().describe('true = preview only: report what WOULD be affected, no confirmation, no writes'),
     }),
-    execute: async ({ ref, action: actionName, id_param, params_json }): Promise<string> => {
+    execute: async ({ ref, action: actionName, id_param, params_json, dry_run }): Promise<string> => {
       const slug = actionName.replace('__', '.');
       const target = registry.get(slug);
       if (!target) return `Unknown action "${actionName}" — check the tool name.`;
@@ -713,6 +762,11 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         return `That would affect ${total} records — more than the ${APPLY_MAX_RECORDS}-record limit for one bulk action. Ask the user to narrow the set.`;
       }
       const ids = rows.map(rowId).filter((id): id is string => id !== undefined);
+      if (dry_run === true) {
+        const obs = `DRY RUN — "${target.name}" would apply to ${ids.length} record(s) (e.g. ${ids.slice(0, 5).join(', ')}). Nothing was changed; call again without dry_run to execute (a confirmation will be requested).`;
+        exits.toolOutputs.push(obs);
+        return obs;
+      }
 
       counters.step += 1;
       const stepId = `s${counters.step}`;
@@ -793,6 +847,6 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
-  tools.push(searchActions, sortRef, filterRef, aggregateRef, applyToRef, askUser, refuse);
+  tools.push(searchActions, sortRef, filterRef, aggregateRef, groupByRef, applyToRef, askUser, refuse);
   return tools;
 }

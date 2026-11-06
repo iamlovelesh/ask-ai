@@ -19,9 +19,22 @@ function escapeHtml(s: string): string {
     .replaceAll("'", '&#39;');
 }
 
-/** Inline transforms on already-escaped text: `code`, **bold**, *em*. */
+/** `[[record:entity:id:Display Name]]` → chip (reference-token
+ * pattern: the agent cites records with verbatim tokens; the UI renders
+ * them as identifiable chips, so invented references become visible).
+ * Operates on ALREADY-ESCAPED text; entity/id are restricted to a safe
+ * charset, the display name is already HTML-escaped. */
+function renderRecordChips(escaped: string): string {
+  return escaped.replace(
+    /\[\[record:([a-z_]+):([a-z_]+_\d+):((?:(?!\]\])[^\n])+)\]\]/g,
+    (_m, entity: string, id: string, name: string) =>
+      `<span class="record-chip" data-record="${entity}/${id}" title="${id}">${name}</span>`,
+  );
+}
+
+/** Inline transforms on already-escaped text: chips, `code`, **bold**, *em*. */
 function renderInline(escaped: string): string {
-  return escaped
+  return renderRecordChips(escaped)
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, '$1<em>$2</em>');

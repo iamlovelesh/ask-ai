@@ -504,6 +504,17 @@ button {
 .said-agent li::marker {
   color: var(--petrol);
 }
+.said-agent .record-chip {
+  display: inline-block;
+  padding: 0 7px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--petrol) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--petrol) 35%, transparent);
+  font-weight: 500;
+  line-height: 1.5;
+  cursor: default;
+}
+
 .said-agent code {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.9em;

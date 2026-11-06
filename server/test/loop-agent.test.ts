@@ -853,6 +853,100 @@ describe('runLoopTurn — data__apply_to_ref bulk writes (round-4 billing)', () 
   });
 });
 
+describe('runLoopTurn — data__group_by_ref ( group_by pattern)', () => {
+  const rows = [
+    { id: 'o1', stage: 'won', owner_id: 'u1', value_cents: 1000 },
+    { id: 'o2', stage: 'won', owner_id: 'u2', value_cents: 3000 },
+    { id: 'o3', stage: 'lost', owner_id: 'u1', value_cents: 500 },
+    { id: 'o4', stage: 'won', owner_id: 'u1', value_cents: 2000 },
+  ];
+  function refsWith(): RefStore {
+    return {
+      put: refs.put.bind(refs), get: refs.get.bind(refs),
+      resolve: () => ({ ids: rows.map((r) => r.id), missing: 0, total: rows.length }),
+      hydrate: (): HydrateResult => ({ rows, complete: true, total: rows.length }),
+      markAllStale: () => {},
+    };
+  }
+
+  it('groups the complete set by a dimension and aggregates a measure server-side', async () => {
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'revenue by stage',
+      sessionDeps: {
+        registry: buildRegistry([[action('opportunities.search', 'read', async () => ({ items: [], total: 4 }))]], []),
+        crm: fakeCrm, refs: refsWith(), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__group_by_ref', { ref: 'r_t1_s1', group_by: 'stage', measure: 'value_cents', op: 'sum' }),
+          textResponse('Won: $60.00, lost: $5.00'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).toMatch(/\\?"won\\?"/);
+    expect(obs).toContain('6000');
+    expect(obs).toMatch(/\\?"lost\\?"/);
+    expect(obs).toContain('500');
+    expect(obs).toMatch(/count\\?":3/);
+  });
+
+  it('op count needs no measure and groups correctly', async () => {
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'deals per owner',
+      sessionDeps: {
+        registry: buildRegistry([[action('opportunities.search', 'read', async () => ({ items: [], total: 4 }))]], []),
+        crm: fakeCrm, refs: refsWith(), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__group_by_ref', { ref: 'r_t1_s1', group_by: 'owner_id', op: 'count' }),
+          textResponse('u1 has 3, u2 has 1.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).toMatch(/\\?"u1\\?"/);
+    expect(obs).toMatch(/count\\?":3/);
+    expect(obs).toMatch(/\\?"u2\\?"/);
+  });
+});
+
+describe('runLoopTurn — apply_to_ref dry_run preview ( merge_many pattern)', () => {
+  it('dry_run reports what WOULD happen without gating or writing', async () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({ id: `inv_${i}` }));
+    let handlerCalls = 0;
+    const sendAction = action('invoices.send_invoice_reminder', 'write', async () => { handlerCalls += 1; return {}; }, z.object({ id: z.string() }));
+    const registry = buildRegistry([[sendAction]], []);
+    const refsWith: RefStore = {
+      put: refs.put.bind(refs), get: refs.get.bind(refs),
+      resolve: () => ({ ids: rows.map((r) => r.id), missing: 0, total: rows.length }),
+      hydrate: (): HydrateResult => ({ rows, complete: true, total: rows.length }),
+      markAllStale: () => {},
+    };
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'what would sending reminders affect?',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs: refsWith, eventLog, confirm: denyAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__apply_to_ref', { ref: 'r_t1_s1', action: 'invoices__send_invoice_reminder', id_param: 'id', dry_run: true }),
+          textResponse('That would send 10 reminders.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(handlerCalls).toBe(0);
+    expect(typesOf(events)).not.toContain('confirmation.required');
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).toMatch(/DRY RUN|would apply/i);
+    expect(obs).toContain('10');
+  });
+});
+
 describe('runLoopTurn — catalog search escape hatch', () => {
   it('BINDS discovered actions mid-run so the model can call them on the next step', async () => {
     // >24 actions (no full-bind); the needed action is neither session-used
