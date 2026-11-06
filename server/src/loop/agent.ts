@@ -44,6 +44,7 @@ import { buildTurnTools, harvestIds, StuckTracker, type LoopExits } from './tool
 import { numberCheck } from './number-check.js';
 import { rescueToolCalls } from './tool-call-rescue.js';
 import { unsanctionedFilters } from './scope-check.js';
+import { unreadRequestedIds } from './coverage-check.js';
 import {
   collectRecordIds,
   entityForId,
@@ -443,6 +444,13 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
           // deterministically, whatever the model claimed.
           for (const f of unsanctionedFilters(finalText, userText, exits.appliedFilters)) {
             finalText += `\n\n⚠ Note: this was computed with the filter ${f.key} = "${f.value}" applied — it is NOT a total across all records.`;
+          }
+          // Coverage disclosure: the user named a set of records but some were
+          // never read this turn — a superlative over a partial set is wrong.
+          const unread = unreadRequestedIds(userText, exits.toolOutputs);
+          if (unread.length > 0) {
+            const shown = unread.slice(0, 5).join(', ');
+            finalText += `\n\n⚠ I could not include ${unread.length} of the records you named (${shown}${unread.length > 5 ? ', …' : ''}) — I found no data for them this turn.`;
           }
         }
       }

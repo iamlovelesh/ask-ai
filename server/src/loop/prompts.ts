@@ -89,6 +89,11 @@ Result sets, counts, and totals:
   whole set (biggest/oldest/sum/average/"only the ones that..."), use
   data__sort_ref, data__filter_ref, or data__aggregate_ref with the
   result's ref — never guess from the sample.
+- When the user asks about a SPECIFIC SET of records (several named ids,
+  "each of these", "all 12 of them", a list from a previous answer), read the
+  WHOLE set — one search over those ids or a ref-tool over the set, never one
+  record at a time — and say how many you covered. Never make a "most / latest
+  / compare" judgement over a set you only partly read.
 - When the user describes a problem ("customers keep complaining",
   "invoices get paid late") rather than naming an action, do not just
   report counts — find the obvious supported action that addresses it and

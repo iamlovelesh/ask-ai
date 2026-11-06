@@ -119,6 +119,11 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/notes|emails|record (field|content)/i);
   });
 
+  it('has a set-coverage rule: read the whole named set, not one at a time', () => {
+    expect(system).toMatch(/whole set|each of these|all .* of them/i);
+    expect(system).toMatch(/one (record )?at a time|partly|covered/i);
+  });
+
   it('includes the available-skills catalog and the Plan→Skill→Execute contract line', () => {
     expect(system).toMatch(/<available_skills>/);
     expect(system).toContain('overdue-invoice-reminders'); // a skill name
