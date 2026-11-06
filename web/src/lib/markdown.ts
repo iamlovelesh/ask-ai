@@ -1,0 +1,62 @@
+/**
+ * Minimal, XSS-safe markdown renderer for agent answers.
+ *
+ * The loop model writes light markdown (bold, inline code, numbered/bullet
+ * lists, occasional ### headings); the chat view used to interpolate it as
+ * plain text, showing literal `**` to users. This renders exactly that
+ * subset and nothing more — input is HTML-escaped FIRST, and the only tags
+ * this module can emit are <p> <br> <strong> <em> <code> <ol> <ul> <li>,
+ * so no model output can smuggle markup through. No dependency: a full
+ * markdown library is a bigger surface than the answers need.
+ */
+
+function escapeHtml(s: string): string {
+  return s
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+/** Inline transforms on already-escaped text: `code`, **bold**, *em*. */
+function renderInline(escaped: string): string {
+  return escaped
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, '$1<em>$2</em>');
+}
+
+const ORDERED_RE = /^\s*\d+[.)]\s+/;
+const BULLET_RE = /^\s*[-*•]\s+/;
+const HEADING_RE = /^\s*#{1,6}\s+/;
+
+function renderBlock(block: string): string {
+  const lines = block.split('\n').filter((l) => l.trim() !== '');
+  if (lines.length === 0) return '';
+
+  if (lines.every((l) => ORDERED_RE.test(l))) {
+    const items = lines.map((l) => `<li>${renderInline(l.replace(ORDERED_RE, ''))}</li>`).join('');
+    return `<ol>${items}</ol>`;
+  }
+  if (lines.every((l) => BULLET_RE.test(l))) {
+    const items = lines.map((l) => `<li>${renderInline(l.replace(BULLET_RE, ''))}</li>`).join('');
+    return `<ul>${items}</ul>`;
+  }
+  // Headings render as a bold paragraph — chat answers shouldn't shout in h-tags.
+  const rendered = lines.map((l) => {
+    if (HEADING_RE.test(l)) return `<strong>${renderInline(l.replace(HEADING_RE, '').trim())}</strong>`;
+    return renderInline(l);
+  });
+  return `<p>${rendered.join('<br>')}</p>`;
+}
+
+/** Render an agent answer to safe HTML. */
+export function renderMarkdown(text: string): string {
+  const escaped = escapeHtml(text.trim());
+  return escaped
+    .split(/\n\s*\n/)
+    .map(renderBlock)
+    .filter((b) => b !== '')
+    .join('');
+}

@@ -9,6 +9,7 @@ import TraceView from './TraceView.vue';
 import AuditFeed from './AuditFeed.vue';
 import type { TurnView } from '../lib/fold.js';
 import { formatSessionLedger, sumSessionMetrics } from '../lib/ledger.js';
+import { renderMarkdown } from '../lib/markdown.js';
 
 const props = defineProps<{ sessionId: string }>();
 defineEmits<{ 'toggle-nav': [] }>();
@@ -328,12 +329,14 @@ async function onCopyLink(): Promise<void> {
               @resolve="onResolveConfirm"
             />
 
+            <!-- eslint-disable-next-line vue/no-v-html — renderMarkdown
+                 escapes ALL input before emitting its fixed tag set, so no
+                 model output can inject markup. -->
             <div
               v-if="turn.finalText || turn.deltaText || turn.unsupportedReason"
               :class="['said', 'said-agent', 'agent-section', { 'is-fail': isFailStatus(turn.status) }]"
-            >
-              {{ turn.finalText || turn.deltaText || turn.unsupportedReason }}
-            </div>
+              v-html="renderMarkdown(turn.finalText || turn.deltaText || turn.unsupportedReason || '')"
+            ></div>
           </div>
 
           <div v-if="turn.status" class="turn-foot">

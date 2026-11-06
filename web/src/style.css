@@ -480,6 +480,38 @@ button {
   color: var(--red);
 }
 
+/* Rendered-markdown answers (lib/markdown.ts emits p/br/strong/em/code/ol/ul/li) */
+.said-agent p {
+  margin: 0;
+}
+.said-agent p + p,
+.said-agent p + ol,
+.said-agent p + ul,
+.said-agent ol + p,
+.said-agent ul + p,
+.said-agent ol + ol,
+.said-agent ul + ul {
+  margin-top: 10px;
+}
+.said-agent ol,
+.said-agent ul {
+  margin: 0;
+  padding-left: 22px;
+}
+.said-agent li {
+  margin: 3px 0;
+}
+.said-agent li::marker {
+  color: var(--petrol);
+}
+.said-agent code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.9em;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
 /* --- task tracker: vertical timeline spine --------------------------- */
 
 .tracker {
