@@ -512,7 +512,80 @@ button {
   border: 1px solid color-mix(in srgb, var(--petrol) 35%, transparent);
   font-weight: 500;
   line-height: 1.5;
-  cursor: default;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.said-agent .record-chip:hover {
+  background: color-mix(in srgb, var(--petrol) 22%, transparent);
+  border-color: color-mix(in srgb, var(--petrol) 55%, transparent);
+}
+
+/* Record detail popover (#14) */
+.rp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+.rp-card {
+  position: fixed;
+  z-index: 61;
+  width: 300px;
+  max-height: 60vh;
+  overflow: auto;
+  background: var(--surface, #16161c);
+  border: 1px solid var(--border, #2a2a33);
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+  padding: 12px 14px;
+  font-size: 12px;
+}
+.rp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border, #2a2a33);
+}
+.rp-entity {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.rp-id {
+  font-family: 'IBM Plex Mono', monospace;
+  opacity: 0.6;
+  flex: 1;
+  font-size: 11px;
+}
+.rp-close {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.6;
+}
+.rp-close:hover {
+  opacity: 1;
+}
+.rp-note {
+  opacity: 0.7;
+  padding: 6px 0;
+}
+.rp-fields {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) 1fr;
+  gap: 4px 10px;
+  margin: 0;
+}
+.rp-fields dt {
+  opacity: 0.55;
+  font-weight: 500;
+}
+.rp-fields dd {
+  margin: 0;
+  word-break: break-word;
 }
 
 .said-agent code {
