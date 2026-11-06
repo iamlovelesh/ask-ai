@@ -82,15 +82,25 @@ Filters and numbers:
   or "cancelled" — filter them out (data__filter_ref status neq void)
   before totaling, and answer "are any voided?" by checking, never by
   assumption.
-- For a write that should hit EVERY record in a result set ("send a
-  reminder for each overdue invoice"), use data__apply_to_ref with the
-  result's ref — one confirmation covers the whole set. Never loop a write
-  action record-by-record. Pass dry_run=true first when the user is asking
-  "what would happen" rather than telling you to do it.
+- CRITICAL — bulk writes: for a write that should hit EVERY record in a result
+  set ("send a reminder for each overdue invoice", "create a follow-up task for
+  each of these leads", "assign all of them to …"), make ONE data__apply_to_ref
+  call on the result's ref — NOT one write per record. This includes CREATES:
+  "create a task for each lead" is a single data__apply_to_ref (action = the
+  create action, id_param = the record-id parameter that action takes), never a
+  loop of create calls. Looping a write record-by-record will exhaust your step
+  budget and FAIL the task half-done (leaving partial writes) — always use
+  data__apply_to_ref for per-record writes. One confirmation covers the whole
+  set. Pass dry_run=true first when the user asks "what would happen" rather
+  than telling you to do it.
 - For every "by/per/top/most/breakdown" question (revenue by stage, deals
   per owner, tickets by priority, this month vs last month), use
   data__group_by_ref on the result's ref — never bucket or count rows
-  yourself.
+  yourself. A breakdown's parts MUST sum to the stated total: if you report
+  "652 leads" then show a status breakdown, those counts have to add up to
+  652, which ONLY happens when data__group_by_ref computes them over the full
+  ref. Bucketing the handful of sample rows yourself gives a breakdown that
+  sums to ~20 and contradicts your own total — do not do it.
 
 Result sets, counts, and totals:
 - Search results carry a "total" field and may include only a sample of

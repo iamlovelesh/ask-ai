@@ -98,6 +98,12 @@ describe('buildLoopSystemPrompt', () => {
     expect(buildLoopSystemPrompt()).toBe(system);
   });
 
+  it('directs per-record writes (incl. creates) to ONE data__apply_to_ref, warning about step exhaustion', () => {
+    expect(system).toMatch(/data__apply_to_ref/);
+    expect(system).toMatch(/create a task for each|includes CREATES/i);
+    expect(system).toMatch(/exhaust your step budget|partial writes/i);
+  });
+
   it('names the bulk apply tool', () => {
     expect(system).toContain('data__apply_to_ref');
   });

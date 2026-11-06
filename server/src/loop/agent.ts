@@ -108,9 +108,12 @@ export interface RunLoopTurnInput {
   budget?: { maxTurns?: number; deadlineMs?: number };
 }
 
-// 20, not 12: round-4 marketing killed a legitimate 10-campaign rundown at
-// the 12-step cap. Cost stays bounded by the deadline + per-call maxTokens.
-const MAX_LOOP_STEPS = 20;
+// 30, not 20 (persona eval: 3+ module workflows fanning out per-record writes
+// hit the 20-step ceiling and failed AFTER partial writes). Headroom lets a
+// legitimate multi-module workflow finish; cost/latency stay bounded by the
+// 90s deadline + per-call maxTokens, and the bulk data__apply_to_ref rule is
+// what keeps fan-out to ONE step instead of N in the first place.
+const MAX_LOOP_STEPS = 30;
 const LOOP_DEADLINE_MS = 90_000;
 /** Providers pre-authorize max_tokens against remaining account credit —
  * the SDK's unlimited default turned a low OpenRouter balance into 402s on
@@ -153,6 +156,25 @@ const AUDIT_CLAIM_RE =
 
 function needsGrounding(finalText: string, stepsRun: number): boolean {
   return stepsRun === 0 && (DATA_CLAIM_RE.test(finalText) || AUDIT_CLAIM_RE.test(finalText));
+}
+
+// Narrow-follow-up backstop (persona eval: "just the negotiation ones" → "none",
+// contradicting the prior turn's own list). A follow-up that REFERS to a prior
+// result AND asks to find/narrow it, done with ZERO reads, is confabulating —
+// it must re-read the full set behind the prior [ref] instead of inventing.
+const NARROW_ANAPHORA_RE =
+  /\b(those|these|that list|the list|of them|of these|of those|from that|from the list|in that list|among (them|those|these)|just the|only the|out of (them|those|these))\b/i;
+const NARROW_INTENT_RE =
+  /\b(find|which|filter|narrow|only|just|the ones|that (are|have|has|mention|contain|match|include)|about|with|in the|at the|stage|status|priority|source|type)\b/i;
+
+/** The most recent result a prior turn SPILLED behind a ref (step.finished.
+ * resultRef) — the full set a narrowing follow-up must re-read. */
+function lastSpilledRef(events: readonly Event[]): string | undefined {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const e = events[i];
+    if (e && e.t === 'step.finished' && e.resultRef !== undefined) return e.resultRef;
+  }
+  return undefined;
 }
 
 /** Resolve cited record ids in a final answer to display names (named chips),
@@ -496,8 +518,19 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
         // by memory (they are CRM-scope assertions), so they still re-run.
         const groundedByMemory =
           recalled !== '' && !AUDIT_CLAIM_RE.test(finalText) && numberCheck(finalText, [], userText, recalledEvidence).ok;
-        if (needsGrounding(finalText, counters.step + counters.virtualReads) && !groundedByMemory) {
-          finalText = await runOnce(`${prompt}\n\n${GROUNDING_NOTE}`, groundedAgent);
+        // Did the user ask to narrow a PRIOR spilled result, but we read nothing
+        // this turn? Then the draft is confabulated — force a ref-tool re-read.
+        const narrowRef = lastSpilledRef(priorEvents);
+        const narrowFollowUp =
+          counters.step + counters.virtualReads === 0 &&
+          narrowRef !== undefined &&
+          NARROW_ANAPHORA_RE.test(userText) &&
+          NARROW_INTENT_RE.test(userText);
+        if ((needsGrounding(finalText, counters.step + counters.virtualReads) || narrowFollowUp) && !groundedByMemory) {
+          const note = narrowFollowUp
+            ? `The records the user is narrowing are the COMPLETE set behind ref ${narrowRef}. The list in your previous message was only a sample. You MUST call data__filter_ref (a field condition, e.g. stage/status/priority) or data__search_ref (free text) on ${narrowRef} to answer — do NOT answer from memory or claim an empty result without checking.`
+            : GROUNDING_NOTE;
+          finalText = await runOnce(`${prompt}\n\n${note}`, groundedAgent);
         } else if (!groundedByMemory) {
           const check = numberCheck(finalText, exits.toolOutputs, userText, recalledEvidence);
           if (!check.ok) {
