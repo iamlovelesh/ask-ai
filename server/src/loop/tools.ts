@@ -28,6 +28,7 @@ import { retrieve, renderCards, type Card, type SessionCtx } from '../agent/retr
 import { shouldGate, type ConfirmBroker } from '../agent/executor.js';
 import type { ConfirmationScope, Event } from '../events/types.js';
 import { coerceDateParams, widenForModel } from './date-rail.js';
+import { loadSkills } from './skills/registry.js';
 import { DATE_FIELD_RE } from '../agent/date-expr.js';
 
 // --- stuck detection (OpenHands StuckDetector-lite) ---------------------------
@@ -1018,6 +1019,22 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
-  tools.push(searchActions, sortRef, filterRef, aggregateRef, groupByRef, applyToRef, askUser, refuse);
+  const loadSkillsTool = tool({
+    name: 'session__load_skills',
+    description:
+      'Load one or more task playbooks (skills) by name for a multi-step task. Returns their step-by-step instructions. Call this BEFORE starting a review, cleanup, follow-up/reminder campaign, or meeting brief — the available skill names are listed in <available_skills>.',
+    parameters: z.object({ skill_names: z.array(z.string()) }),
+    execute: async ({ skill_names }): Promise<string> => {
+      const loaded = loadSkills(skill_names);
+      if (loaded.length === 0) {
+        return `No known skill matched ${JSON.stringify(skill_names)}. Check the names in <available_skills>, or proceed without a skill.`;
+      }
+      // Skills are INSTRUCTIONS, not data — do not push into toolOutputs (the
+      // NumberCheck evidence pool); return them straight to the model.
+      return loaded.map((s) => `# Skill: ${s.name}\n${s.content}`).join('\n\n---\n\n');
+    },
+  });
+
+  tools.push(searchActions, sortRef, filterRef, aggregateRef, groupByRef, applyToRef, loadSkillsTool, askUser, refuse);
   return tools;
 }

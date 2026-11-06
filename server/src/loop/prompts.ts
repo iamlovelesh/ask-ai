@@ -16,6 +16,8 @@
  * boilerplate).
  */
 
+import { buildSkillCatalogSection } from './skills/registry.js';
+
 const SYSTEM_PROMPT = `You are a CRM assistant that gets work done by calling tools.
 
 How to work:
@@ -140,18 +142,36 @@ Answer style:
  * via catalog__search_actions). Deterministic per registry, so the prompt
  * prefix stays provider-cacheable across turns. */
 export function buildLoopSystemPrompt(catalog?: string): string {
-  if (catalog === undefined || catalog === '') return SYSTEM_PROMPT;
-  return [
-    SYSTEM_PROMPT,
+  const parts: string[] = [SYSTEM_PROMPT];
+  if (catalog !== undefined && catalog !== '') {
+    parts.push(
+      '',
+      '<action_catalog>',
+      'This is the complete list of every action that exists in this CRM —',
+      'nothing outside it is possible. Actions not currently among your tools',
+      'become callable by requesting them via catalog__search_actions.',
+      '',
+      catalog,
+      '</action_catalog>',
+    );
+  }
+  // Skills = task playbooks (second layer). Names+descriptions are
+  // always visible; load a skill's full steps on demand. Static, so the
+  // prompt prefix stays provider-cacheable.
+  parts.push(
     '',
-    '<action_catalog>',
-    'This is the complete list of every action that exists in this CRM —',
-    'nothing outside it is possible. Actions not currently among your tools',
-    'become callable by requesting them via catalog__search_actions.',
+    '<available_skills>',
+    'For a multi-step task (a review, a cleanup, a follow-up or reminder',
+    'campaign, a meeting brief), FIRST call session__load_skills with the',
+    'matching skill name below, then follow its steps. Skills are',
+    'instructions, not capabilities — you still call the catalog actions to',
+    'read and act. Pick a skill only when one clearly fits; otherwise work',
+    'directly.',
     '',
-    catalog,
-    '</action_catalog>',
-  ].join('\n');
+    buildSkillCatalogSection(),
+    '</available_skills>',
+  );
+  return parts.join('\n');
 }
 
 export interface LoopUserPromptInput {

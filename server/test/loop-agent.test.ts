@@ -1591,6 +1591,49 @@ describe('runLoopTurn — unknown-tool rescue (round-7b N1)', () => {
   });
 });
 
+describe('runLoopTurn — skills layer ( second-layer playbooks)', () => {
+  it('session__load_skills returns the requested skill body to the model', async () => {
+    const registry = buildRegistry([[action('invoices.search_invoices', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'chase overdue invoices',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('session__load_skills', { skill_names: ['overdue-invoice-reminders'] }),
+          textResponse('Loaded; here is what I will do.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    // the skill body (naming our ref-tools + receivables rule) reaches the model
+    const followUp = seen.bodies[1] ?? '';
+    expect(followUp).toContain('data__aggregate_ref');
+    expect(followUp).toMatch(/void|cancelled/);
+    expect(completedOf(events).status).toBe('done');
+  });
+
+  it('session__load_skills reports unknown skill names without failing the turn', async () => {
+    const registry = buildRegistry([[action('x.search', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'do a thing',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('session__load_skills', { skill_names: ['not-a-skill'] }),
+          textResponse('No such skill.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(seen.bodies[1] ?? '').toMatch(/no (matching |known )?skill|not found/i);
+    expect(completedOf(events).status).not.toBe('failed');
+  });
+});
+
 describe('runLoopTurn — support round-7b rails (denied-cache, scope disclosure, mutation gating)', () => {
   it('N3: a denied action cannot re-request confirmation in the same turn', async () => {
     const calls: string[] = [];

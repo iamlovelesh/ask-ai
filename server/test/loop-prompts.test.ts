@@ -114,6 +114,15 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/table/i);
   });
 
+  it('includes the available-skills catalog and the Plan→Skill→Execute contract line', () => {
+    expect(system).toMatch(/<available_skills>/);
+    expect(system).toContain('overdue-invoice-reminders'); // a skill name
+    expect(system).toMatch(/session__load_skills/); // the load tool is named
+    expect(system).toMatch(/instructions, not capabilities|still call the|skills are instructions/i);
+    // bodies must NOT be inlined in the always-on prompt
+    expect(system).not.toContain('## Overdue invoice reminders');
+  });
+
   it('the OSS reference CRM output rules: chip placement, fabricated-id negatives, gap disclosure, relevance ordering', () => {
     expect(system).toMatch(/never inside a heading/i); // chip placement
     expect(system).toMatch(/rec-person-1|inv-123|placeholder id/i); // concrete negatives
