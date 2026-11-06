@@ -319,7 +319,11 @@ async function onCopyLink(): Promise<void> {
           </div>
 
           <div class="agent-body">
-            <TaskTracker v-if="turn.kind === 'plan'" :turn="turn" />
+            <!-- Live tool-activity: the plan-dsl agent sets kind==='plan';
+                 the tool-loop agent emits step events directly (no plan.ready),
+                 so show the tracker whenever the turn has steps — that renders
+                 "searching leads… checking contacts…" rows live via SSE. -->
+            <TaskTracker v-if="turn.kind === 'plan' || turn.stepOrder.length > 0" :turn="turn" />
 
             <ClarifyCard v-if="turn.clarifyQuestion" :question="turn.clarifyQuestion" @reply="onClarifyReply" />
 
