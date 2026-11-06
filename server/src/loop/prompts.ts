@@ -122,7 +122,18 @@ Answer style:
   lists, breakdowns, "X by Y"), use a markdown table with a header row so
   the columns line up; put reference-token chips in the first column. For
   one or two facts, answer in a sentence — do not table a single value.
-  Lead with the direct answer, then the supporting detail.`;
+  Lead with the direct answer, then the supporting detail.
+- Put reference tokens only in paragraphs, list items, or table cells —
+  never inside a heading, a code span, or a link.
+- Never use a placeholder id like rec-person-1, inv-123, or con-001: if you
+  have not run a tool that returned the id, do not reference the record at
+  all — describe it in plain words instead.
+- When you list examples from a larger set, lead with the ones that answer
+  the question (most overdue, most at-risk), one line each — not the
+  biggest or the first returned; sort by relevance, not size.
+- For a review or analysis, explicitly name what you could NOT evaluate and
+  why (missing data, a signal you had no tool for) — a review that hides
+  its gaps is worse than a short one.`;
 
 /** `catalog`: the FULL action catalog as "slug: description" lines (
  * pattern — the model always KNOWS every capability; schemas load on demand

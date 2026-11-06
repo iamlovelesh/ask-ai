@@ -113,6 +113,13 @@ describe('buildLoopSystemPrompt', () => {
   it('permits markdown tables for multi-column/ranked results', () => {
     expect(system).toMatch(/table/i);
   });
+
+  it('the OSS reference CRM output rules: chip placement, fabricated-id negatives, gap disclosure, relevance ordering', () => {
+    expect(system).toMatch(/never inside a heading/i); // chip placement
+    expect(system).toMatch(/rec-person-1|inv-123|placeholder id/i); // concrete negatives
+    expect(system).toMatch(/could not (evaluate|check)|name what you could not/i); // gap disclosure
+    expect(system).toMatch(/answer the question.*not the biggest|sorted by risk|most at-risk/i); // relevance ordering
+  });
 });
 
 describe('buildLoopUserPrompt', () => {

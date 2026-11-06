@@ -25,11 +25,24 @@ function escapeHtml(s: string): string {
  * Operates on ALREADY-ESCAPED text; entity/id are restricted to a safe
  * charset, the display name is already HTML-escaped. */
 function renderRecordChips(escaped: string): string {
-  return escaped.replace(
-    /\[\[record:([a-z_]+):([a-z_]+_\d+):((?:(?!\]\])[^\n])+)\]\]/g,
-    (_m, entity: string, id: string, name: string) =>
-      `<span class="record-chip" data-record="${entity}/${id}" title="${id}">${name}</span>`,
-  );
+  return escaped
+    // Well-formed tokens → clickable chip.
+    .replace(
+      /\[\[record:([a-z_]+):([a-z_]+_\d+):((?:(?!\]\])[^\n])+)\]\]/g,
+      (_m, entity: string, id: string, name: string) =>
+        `<span class="record-chip" data-record="${entity}/${id}" title="${id}">${name}</span>`,
+    )
+    // Graceful degradation (ChatReferenceChip): any record token
+    // that did NOT match the strict form (malformed entity/id) renders as
+    // its plain display name — the last colon-segment — never a broken span
+    // or a raw [[record:…]] leak to the user.
+    .replace(
+      /\[\[record:((?:(?!\]\])[^\n])+)\]\]/g,
+      (_m, inner: string) => {
+        const parts = inner.split(':');
+        return (parts[parts.length - 1] ?? '').trim();
+      },
+    );
 }
 
 /** Inline transforms on already-escaped text: chips, `code`, **bold**, *em*. */

@@ -80,6 +80,14 @@ describe('renderMarkdown', () => {
     expect(html).toContain('<p>');
   });
 
+  it('degrades a malformed record token to plain display-name text, not a broken span', () => {
+    // entity/id that do not fit the safe charset must not emit a chip span
+    const html = renderMarkdown('See [[record:Bad Entity:not an id:Ada Lovelace]] for details.');
+    expect(html).not.toContain('record-chip');
+    expect(html).toContain('Ada Lovelace');
+    expect(html).not.toContain('[[record');
+  });
+
   it('record chips escape malicious display names', () => {
     const html = renderMarkdown('[[record:leads:lead_1:<img src=x onerror=1>]]');
     expect(html).not.toContain('<img');
