@@ -138,7 +138,10 @@ describe('SessionRuntime agent routing', () => {
 
   it('cancel during a loop gate denies the confirmation and finalizes cancelled with zero writes', async () => {
     let invocations = 0;
-    __setLoopTestFetch(loopFetch([toolCallResponse('invoices__send_reminders', { ids: ['a', 'b'] }), textResponse('Nothing sent.')]));
+    // The model stubbornly keeps calling the tool after the denial — cancel
+    // must still end the turn promptly as 'cancelled' (review I4), not let
+    // it loop or re-gate.
+    __setLoopTestFetch(loopFetch([toolCallResponse('invoices__send_reminders', { ids: ['a', 'b'] })]));
     const runtime = makeRuntime([action('invoices.send_reminders', 'bulk', async () => { invocations += 1; return {}; })]);
     const sessionId = eventLog.createSession('t');
     runtime.startTurn({ sessionId, userText: 'send reminders', agent: 'optimized' });

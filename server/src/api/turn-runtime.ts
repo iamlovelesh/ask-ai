@@ -91,6 +91,9 @@ class HttpConfirmBroker implements ConfirmBroker {
 interface RunningTurn {
   turnId: string;
   agent: AgentKind;
+  /** Loop turns only (review I4): aborted by cancel() so the tool loop
+   * stops promptly and finalizes 'cancelled' instead of looping on. */
+  cancel: AbortController;
 }
 
 export interface StartTurnInput {
@@ -163,7 +166,7 @@ export class SessionRuntime {
       throw new Error('ALREADY_RUNNING');
     }
     const turnId = `t_${randomUUID()}`;
-    const state: RunningTurn = { turnId, agent: input.agent };
+    const state: RunningTurn = { turnId, agent: input.agent, cancel: new AbortController() };
     this.running.set(input.sessionId, state);
     this.turnAgent.set(turnId, input.agent);
 
@@ -217,6 +220,7 @@ export class SessionRuntime {
                 refs,
                 eventLog: this.eventLog,
                 confirm,
+                cancelSignal: state.cancel.signal,
               } satisfies LoopSessionDeps,
             });
 
@@ -277,6 +281,9 @@ export class SessionRuntime {
   cancel(sessionId: string): boolean {
     const state = this.running.get(sessionId);
     if (!state) return false;
+    // Loop turns: abort first, so the turn finalizes 'cancelled' and never
+    // makes another model call or re-gates after the denial below (I4).
+    state.cancel.abort();
     const broker = this.brokers.get(sessionId);
     if (broker) {
       for (const confirmId of broker.pendingIds()) {

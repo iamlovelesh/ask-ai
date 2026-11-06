@@ -393,6 +393,103 @@ describe('runLoopTurn — ref data tools', () => {
   });
 });
 
+describe('runLoopTurn — spill-to-ref full-set hydration (C1)', () => {
+  it('a spill carrying idList hydrates complete through the REAL ref store and sort_ref answers exactly', async () => {
+    const rows = Array.from({ length: 60 }, (_, i) => ({ id: `opp_${i}`, value_cents: (i + 1) * 100 }));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const realTx: StoreTx = {
+      all: (sql: string, params?: unknown[]) =>
+        (params ?? []).map((id) => byId.get(String(id))).filter((r): r is { id: string; value_cents: number } => r !== undefined),
+      get: () => undefined,
+      run: () => ({ changes: 0 }),
+    };
+    const crmWithRows: Crm = { tx: (fn) => fn(realTx), close: () => {} };
+    const spillAction = {
+      ...action('opportunities.search_opportunities', 'read', async () => ({
+        __spill: true,
+        total: 60,
+        sample: rows.slice(0, 20),
+        idList: rows.map((r) => r.id),
+      })),
+      entities: ['opportunities'],
+    };
+    const registry = buildRegistry([[spillAction]], []);
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: 't_1', userText: 'which opportunity is biggest',
+      sessionDeps: {
+        registry, crm: crmWithRows, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('opportunities__search_opportunities', {}),
+          toolCallResponse('data__sort_ref', { ref: 'r_t1_s1', field: 'value_cents', direction: 'desc', limit: 1 }),
+          textResponse('The biggest is opp_59 at $60.00.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const sortObservation = seen.bodies[2] ?? '';
+    expect(sortObservation).toContain('opp_59');
+    expect(sortObservation).toContain('6000');
+    expect(sortObservation).not.toMatch(/incomplete/i);
+    expect(completedOf(events).status).toBe('done');
+  });
+});
+
+describe('runLoopTurn — sort_ref typed ordering (I8)', () => {
+  const stringRows = [
+    { id: 'a', name: 'Zoe' }, { id: 'b', name: 'Anna' }, { id: 'c', name: 'Mia' },
+  ];
+  function refsWith(rows: Record<string, unknown>[]): RefStore {
+    return {
+      put: refs.put.bind(refs), get: refs.get.bind(refs),
+      resolve: () => ({ ids: rows.map((r) => String(r['id'])), missing: 0, total: rows.length }),
+      hydrate: (): HydrateResult => ({ rows, complete: true, total: rows.length }),
+      markAllStale: () => {},
+    };
+  }
+
+  it('sorts string fields lexicographically instead of returning NaN order', async () => {
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'first contact alphabetically',
+      sessionDeps: {
+        registry: buildRegistry([[action('contacts.search', 'read', async () => ({ items: [], total: 3 }))]], []),
+        crm: fakeCrm, refs: refsWith(stringRows), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__sort_ref', { ref: 'r_t1_s1', field: 'name', direction: 'asc', limit: 1 }),
+          textResponse('Anna.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).toContain('Anna');
+    expect(obs).not.toContain('Zoe');
+  });
+
+  it('a field absent from every row gets an honest error, not a confident sort', async () => {
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'sort by ghost field',
+      sessionDeps: {
+        registry: buildRegistry([[action('contacts.search', 'read', async () => ({ items: [], total: 3 }))]], []),
+        crm: fakeCrm, refs: refsWith(stringRows), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__sort_ref', { ref: 'r_t1_s1', field: 'value_cents', direction: 'desc', limit: 1 }),
+          textResponse('ok'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).not.toMatch(/Sorted 3 records/);
+    expect(obs).toMatch(/no .*values|not present|missing/i);
+  });
+});
+
 describe('runLoopTurn — catalog search escape hatch', () => {
   it('returns rendered cards without any registry dispatch', async () => {
     const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
@@ -450,20 +547,109 @@ describe('runLoopTurn — transient retry rail', () => {
   });
 });
 
+describe('runLoopTurn — follow-up tool binding (I10)', () => {
+  it('binds actions used earlier in the session even when retrieval misses on terse follow-ups', async () => {
+    // >24 actions so the full-bind shortcut does not apply; the needed
+    // action sorts LAST alphabetically so a naive first-24 fallback drops it.
+    const filler = Array.from({ length: 28 }, (_, i) =>
+      action(`aa_mod${String(i).padStart(2, '0')}.noop`, 'read', async () => ({ items: [], total: 0 })));
+    const reassign = action('zz_tickets.reassign_ticket', 'write', async () => ({ ok: true }));
+    const registry = buildRegistry([[...filler, reassign]], []);
+    // seed a prior completed turn that used the action
+    const prior = `t_prior`;
+    eventLog.append(sessionId, { t: 'turn.started', turnId: prior, sessionId, userText: 'reassign ticket 1 to Hana', ts: 1 } as Event);
+    eventLog.append(sessionId, { t: 'step.started', turnId: prior, stepId: 's1', action: 'zz_tickets.reassign_ticket', resolvedParams: [{ id: 't1' }] } as Event);
+    eventLog.append(sessionId, { t: 'answer.final', turnId: prior, text: 'Done.' } as Event);
+    eventLog.append(sessionId, { t: 'turn.completed', turnId: prior, status: 'done', metrics: { ttfurMs: 1, totalMs: 1, llmCalls: 1, repairs: 0, replans: 0, searchRounds: 0, tokensIn: 1, tokensOut: 1, costUsd: 0, stepsOk: 1, stepsFailed: 0 } } as Event);
+
+    const events = await drive(registry, 'now the oldest one too', [
+      toolCallResponse('zz_tickets__reassign_ticket', { id: 't2' }),
+      textResponse('Reassigned.'),
+    ]);
+    expect(completedOf(events).status).toBe('done');
+    const started = events.filter((e) => e.t === 'step.started');
+    expect(started.some((e) => e.t === 'step.started' && e.action === 'zz_tickets.reassign_ticket')).toBe(true);
+  });
+});
+
 describe('StuckTracker', () => {
-  it('escalates ok -> ok -> hint -> stop for identical action+error', () => {
+  it('escalates ok -> ok -> hint -> stop for identical action+error+params', () => {
     const tracker = new StuckTracker();
-    expect(tracker.record('leads.update', 'VALIDATION')).toBe('ok');
-    expect(tracker.record('leads.update', 'VALIDATION')).toBe('ok');
-    expect(tracker.record('leads.update', 'VALIDATION')).toBe('hint');
-    expect(tracker.record('leads.update', 'VALIDATION')).toBe('stop');
+    expect(tracker.record('leads.update', 'VALIDATION', '{"id":"l1"}')).toBe('ok');
+    expect(tracker.record('leads.update', 'VALIDATION', '{"id":"l1"}')).toBe('ok');
+    expect(tracker.record('leads.update', 'VALIDATION', '{"id":"l1"}')).toBe('hint');
+    expect(tracker.record('leads.update', 'VALIDATION', '{"id":"l1"}')).toBe('stop');
   });
 
   it('different error codes track separately', () => {
     const tracker = new StuckTracker();
-    tracker.record('leads.update', 'VALIDATION');
-    tracker.record('leads.update', 'VALIDATION');
-    expect(tracker.record('leads.update', 'NOT_FOUND')).toBe('ok');
+    tracker.record('leads.update', 'VALIDATION', '{}');
+    tracker.record('leads.update', 'VALIDATION', '{}');
+    expect(tracker.record('leads.update', 'NOT_FOUND', '{}')).toBe('ok');
+  });
+
+  it('I7: DIFFERENT params on the same action+error are separate attempts, not a stuck loop', () => {
+    const tracker = new StuckTracker();
+    expect(tracker.record('leads.update', 'VALIDATION', '{"id":"l1"}')).toBe('ok');
+    expect(tracker.record('leads.update', 'VALIDATION', '{"id":"l2"}')).toBe('ok');
+    expect(tracker.record('leads.update', 'VALIDATION', '{"id":"l3"}')).toBe('ok');
+    expect(tracker.record('leads.update', 'VALIDATION', '{"id":"l4"}')).toBe('ok');
+  });
+});
+
+describe('runLoopTurn — finalize honesty (I1, I2)', () => {
+  it('I1: budget exhaustion mid-turn reports progress, never claims nothing was requested', async () => {
+    process.env['EVAL_BUDGET_USD'] = '0.000001'; // first metered call trips the cap on the SECOND call
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const events = await drive(registry, 'find leads', [
+      toolCallResponse('leads__search_leads', { query: 'x' }),
+      textResponse('never reached'),
+    ]);
+    delete process.env['EVAL_BUDGET_USD'];
+    expect(completedOf(events).status).toBe('failed');
+    const final = finalOf(events);
+    expect(final).not.toMatch(/no request was made/i);
+    expect(final).toMatch(/1 step|completed .*step|budget/i);
+  });
+
+  it('I2: unexpected internal errors never leak raw messages to the user', async () => {
+    // a fetch that throws a non-retryable error with internal detail
+    const explodingFetch: typeof fetch = (async () => {
+      const err = new Error('sqlite I/O catastrophe at /private/db row 42 req_abc123') as Error & { status?: number };
+      err.status = 400; // non-retryable
+      throw err;
+    }) as typeof fetch;
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'find leads',
+      sessionDeps: { registry, crm: fakeCrm, refs, eventLog, confirm: approveAll, testFetch: explodingFetch },
+      budget: { maxTurns: 2, deadlineMs: 10_000 },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(completedOf(events).status).toBe('failed');
+    const final = finalOf(events);
+    expect(final).not.toContain('sqlite');
+    expect(final).not.toContain('req_abc123');
+    expect(final).toMatch(/something went wrong|could not complete/i);
+  });
+});
+
+describe('runLoopTurn — cancellation (I4)', () => {
+  it('an aborted cancelSignal stops the loop and finalizes cancelled', async () => {
+    const cancel = new AbortController();
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => {
+      cancel.abort(); // user cancels while a step is executing
+      return { items: [], total: 0 };
+    })]], []);
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'find leads',
+      sessionDeps: { registry, crm: fakeCrm, refs, eventLog, confirm: approveAll, testFetch: scriptedFetch([toolCallResponse('leads__search_leads', {}), textResponse('never')]), cancelSignal: cancel.signal },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(completedOf(events).status).toBe('cancelled');
+    expect(finalOf(events)).toMatch(/stopped|cancel/i);
   });
 });
 

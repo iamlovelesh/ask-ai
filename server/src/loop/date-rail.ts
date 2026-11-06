@@ -37,7 +37,15 @@ function coerceValue(key: string, value: string, nowMs: number, resolved: string
 }
 
 function walk(value: unknown, keyOfParent: string | undefined, nowMs: number, resolved: string[]): unknown {
-  if (Array.isArray(value)) return value.map((v) => walk(v, keyOfParent, nowMs, resolved));
+  if (Array.isArray(value)) {
+    // String ELEMENTS of an array under a date-shaped key are dates too
+    // (review I5): `reminder_at: ['2026-11-04T00:00:00Z', '@today']`.
+    return value.map((v) =>
+      typeof v === 'string' && keyOfParent !== undefined && DATE_FIELD_RE.test(keyOfParent)
+        ? coerceValue(keyOfParent, v, nowMs, resolved)
+        : walk(v, keyOfParent, nowMs, resolved),
+    );
+  }
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
@@ -94,11 +102,29 @@ export function buildDateAnchors(nowMs: number): string {
  * strings (ISO/@-relative) — what the model sees as the tool's parameters.
  * Coerced params are always re-validated against the ORIGINAL schema
  * before dispatch (Task 5), so this widening never reaches a handler. */
+/** Widens one field: date-shaped keys accept strings; objects/arrays/
+ * optionals are recursed so NESTED date fields widen too (review I5 — a
+ * nested ISO string must not be rejected by the SDK's strict validation
+ * before our coercion ever runs). */
+function widenField(key: string, field: z.ZodType): z.ZodType {
+  if (DATE_FIELD_RE.test(key)) return z.union([field, z.string(), z.array(z.string())]);
+  if (field instanceof z.ZodOptional) return widenField(key, (field.def as { innerType: z.ZodType }).innerType).optional();
+  if (field instanceof z.ZodNullable) return widenField(key, (field.def as { innerType: z.ZodType }).innerType).nullable();
+  if (field instanceof z.ZodDefault) return field; // default wrapper: leave as-is (rare in params)
+  if (field instanceof z.ZodObject) return widenDateFields(field as z.ZodObject<z.ZodRawShape>);
+  if (field instanceof z.ZodArray) {
+    const element = (field.def as { element: z.ZodType }).element;
+    if (element instanceof z.ZodObject) return z.array(widenDateFields(element as z.ZodObject<z.ZodRawShape>));
+    return field;
+  }
+  return field;
+}
+
 export function widenDateFields<T extends z.ZodRawShape>(schema: z.ZodObject<T>): z.ZodObject<z.ZodRawShape> {
   const shape = schema.shape as z.ZodRawShape;
   const widened: z.ZodRawShape = {};
   for (const [key, field] of Object.entries(shape)) {
-    widened[key] = DATE_FIELD_RE.test(key) ? z.union([field as z.ZodType, z.string()]) : (field as z.ZodType);
+    widened[key] = widenField(key, field as z.ZodType);
   }
   // Preserve a catchall — dropping it would silently strip unknown keys at
   // the SDK's strict validation layer before our own schema ever sees them.

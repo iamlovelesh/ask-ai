@@ -194,6 +194,9 @@ export async function runLoopOnce(opts: RunLoopOnceOptions): Promise<RunResult<u
       opts.runner.run(opts.agent, opts.input as string, {
         maxTurns: opts.maxTurns,
         signal,
+        // Defense when a provider ignores parallel_tool_calls: local tool
+        // execution stays serial, so gate/step events can never interleave.
+        toolExecution: { maxFunctionToolConcurrency: 1 },
         errorHandlers: {
           maxTurns: () => ({ finalOutput: MAX_TURNS_FALLBACK }),
         },

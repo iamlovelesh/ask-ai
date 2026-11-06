@@ -33,12 +33,14 @@ import { coerceDateParams, widenDateFields } from './date-rail.js';
 
 export type StuckVerdict = 'ok' | 'hint' | 'stop';
 
-/** 3rd identical action+error -> corrective hint; 4th -> stop the loop. */
+/** 3rd identical action+error+params -> corrective hint; 4th -> stop the
+ * loop. Params are part of the identity (review I7): three DIFFERENT wrong
+ * calls to the same action are progress, not a stuck loop. */
 export class StuckTracker {
   private readonly counts = new Map<string, number>();
 
-  record(action: string, errorCode: string): StuckVerdict {
-    const key = `${action}::${errorCode}`;
+  record(action: string, errorCode: string, paramsKey = ''): StuckVerdict {
+    const key = `${action}::${errorCode}::${paramsKey}`;
     const n = (this.counts.get(key) ?? 0) + 1;
     this.counts.set(key, n);
     if (n >= 4) return 'stop';
@@ -95,6 +97,12 @@ interface SpillMarker {
   __spill: true;
   total: number;
   sample: unknown[];
+  /** Optional hydration channels (engine-wave E1, `catalog/list-output.ts`):
+   * a COMPLETE id enumeration and/or a re-runnable flat-equality query.
+   * Persisting these is what lets `refs.hydrate` return `complete: true` —
+   * dropping them was review finding C1 (sort/aggregate dead on real spills). */
+  idList?: string[];
+  query?: Record<string, unknown>;
 }
 
 function isSpill(x: unknown): x is SpillMarker {
@@ -193,7 +201,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           const detail = parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
           counters.stepsFailed += 1;
           emit({ t: 'step.failed', turnId, stepId, error: { code: 'PARAM_SCHEMA', message: detail }, ms: 0 });
-          return applyStuck(action.slug, 'PARAM_SCHEMA', `VALIDATION ERROR for ${action.name}: ${detail}. Correct the arguments and try again.`);
+          return applyStuck(action.slug, 'PARAM_SCHEMA', JSON.stringify(args), `VALIDATION ERROR for ${action.name}: ${detail}. Correct the arguments and try again.`);
         }
         const params = parsed.data as Record<string, unknown>;
 
@@ -245,15 +253,21 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           let spillRef: string | undefined;
           let count = countRows(output);
           if (isSpill(output)) {
-            const handle = refs.put({
+            // Executor parity (executor.ts spillToRef): prefer the producer's
+            // COMPLETE idList; fall back to sample ids (hydrate then honestly
+            // reports the set incomplete). Carry the re-runnable query too.
+            const sampleIds = output.sample.map(rowId).filter((id): id is string => id !== undefined);
+            const put: Parameters<RefStore['put']>[0] = {
               action: action.slug,
               turnId,
               stepId,
               entityType: action.entities[0] ?? action.module,
               total: output.total,
-              idList: output.sample.map(rowId).filter((id): id is string => id !== undefined),
+              idList: output.idList ?? sampleIds,
               sample: output.sample,
-            });
+            };
+            if (output.query !== undefined) put.query = output.query;
+            const handle = refs.put(put);
             spillRef = handle.ref;
             finalResult = { ref: handle.ref, total: output.total, sample: output.sample.slice(0, SPILL_SAMPLE_ROWS) };
             count = output.total;
@@ -281,7 +295,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           const error = describeError(err);
           counters.stepsFailed += 1;
           emit({ t: 'step.failed', turnId, stepId, error, ms });
-          return applyStuck(action.slug, error.code, `ERROR[${error.code}] from ${action.name}: ${error.message}`);
+          return applyStuck(action.slug, error.code, JSON.stringify(params), `ERROR[${error.code}] from ${action.name}: ${error.message}`);
         }
       },
     });
@@ -289,8 +303,8 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
 
   /** Feed stuck tracking on every failure observation; hint on the 3rd
    * identical failure, hard-stop the run on the 4th. */
-  function applyStuck(slug: string, code: string, observation: string): string {
-    const verdict = stuck.record(slug, code);
+  function applyStuck(slug: string, code: string, paramsKey: string, observation: string): string {
+    const verdict = stuck.record(slug, code, paramsKey);
     if (verdict === 'stop') {
       exits.stuck = `I kept hitting the same error (${code} from ${slug}) and stopped rather than repeat it again.`;
       exits.stop();
@@ -312,7 +326,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     execute: async ({ query }): Promise<string> => {
       const found = retrieve(query, input.sessionCtx).cards;
       if (found.length === 0) return 'No matching actions found in the catalog.';
-      return `Available actions (these are informational — call the matching tool if it is bound, otherwise refuse honestly):\n${renderCards(found)}`;
+      return `Catalog entries matching your query (informational — these are NOT callable this turn unless already among your tools; if the one you need is missing, tell the user honestly via session__refuse):\n${renderCards(found)}`;
     },
   });
 
@@ -334,13 +348,25 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       if (!complete) {
         return `The set behind ${ref} is incomplete on the server (only a sample was captured), so an exact sort is not possible. Say so honestly or narrow the search with filters.`;
       }
+      // Typed ordering (review I8): Number() over string fields yields NaN
+      // and an arbitrary "sorted" order the model would trust. Sort
+      // numerically only when every present value is numeric; otherwise
+      // compare as strings; a field absent everywhere is an honest error.
+      const present = rows.map((r) => r[field]).filter((v) => v !== undefined && v !== null);
+      if (present.length === 0) {
+        return `Field "${field}" is not present on any of the ${total} records — it cannot be sorted. Check the field name against the sample rows.`;
+      }
+      const numeric = present.every((v) => typeof v === 'number' || (typeof v === 'string' && v !== '' && Number.isFinite(Number(v))));
       const sorted = [...rows].sort((a, b) => {
-        const av = Number(a[field] ?? Number.NEGATIVE_INFINITY);
-        const bv = Number(b[field] ?? Number.NEGATIVE_INFINITY);
-        return direction === 'asc' ? av - bv : bv - av;
+        const av = a[field];
+        const bv = b[field];
+        const cmp = numeric
+          ? Number(av ?? Number.NEGATIVE_INFINITY) - Number(bv ?? Number.NEGATIVE_INFINITY)
+          : String(av ?? '').localeCompare(String(bv ?? ''));
+        return direction === 'asc' ? cmp : -cmp;
       });
       const top = sorted.slice(0, limit);
-      return `Sorted ${total} records by ${field} ${direction}; top ${top.length}: ${JSON.stringify(top).slice(0, OBSERVATION_CAP)}`;
+      return `Sorted ${total} records by ${field} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length}: ${JSON.stringify(top).slice(0, OBSERVATION_CAP)}`;
     },
   });
 

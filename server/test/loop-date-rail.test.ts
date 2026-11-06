@@ -29,6 +29,11 @@ describe('coerceDateParams', () => {
     expect(params['note']).toBe('@today');
   });
 
+  it('I5: coerces string ELEMENTS of arrays under date-shaped keys', () => {
+    const { params } = coerceDateParams({ reminder_at: ['2026-11-04T00:00:00Z', '@today'] }, NOW);
+    expect(params['reminder_at']).toEqual([Date.parse('2026-11-04T00:00:00Z'), Date.parse('2026-11-04T00:00:00.000Z')]);
+  });
+
   it('walks nested objects and arrays', () => {
     const { params } = coerceDateParams({ filter: { due_date: '@today' }, items: [{ expires_at: '2026-12-01T00:00:00Z' }] }, NOW);
     expect((params['filter'] as Record<string, unknown>)['due_date']).toBe(Date.parse('2026-11-04T00:00:00.000Z'));
@@ -95,5 +100,16 @@ describe('widenDateFields', () => {
     const wide = widenDateFields(schema);
     expect(wide.safeParse({ limit: 'not-a-number' }).success).toBe(false);
     expect(wide.safeParse({ query: 'acme', limit: 5 }).success).toBe(true);
+  });
+
+  it('I5: widens date fields NESTED in objects and arrays of objects', () => {
+    const nested = z.object({
+      filter: z.object({ due_date: z.number() }).optional(),
+      windows: z.array(z.object({ start_at: z.number() })).optional(),
+    });
+    const wide = widenDateFields(nested);
+    expect(wide.safeParse({ filter: { due_date: '2026-11-04T00:00:00Z' } }).success).toBe(true);
+    expect(wide.safeParse({ windows: [{ start_at: '@today' }] }).success).toBe(true);
+    expect(wide.safeParse({ filter: { due_date: 1793786400000 } }).success).toBe(true);
   });
 });

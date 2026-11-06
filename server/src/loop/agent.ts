@@ -46,6 +46,10 @@ export interface LoopSessionDeps {
   refs: RefStore;
   eventLog: EventLog;
   confirm: ConfirmBroker;
+  /** Aborted by SessionRuntime.cancel — stops the loop promptly and
+   * finalizes 'cancelled' (review I4: deny-at-gate alone let a cancelled
+   * turn keep looping and even re-gate). */
+  cancelSignal?: AbortSignal;
   /** Test seam: fetch handed to the runner's OpenAI client. */
   testFetch?: typeof fetch;
 }
@@ -93,7 +97,15 @@ function pickCards(userText: string, registry: Registry, sessionCtx: SessionCtx)
     return all.map((a) => ({ slug: a.slug, text: a.slug, score: 1 }));
   }
   const cards = retrieve(userText, sessionCtx).cards.filter((c) => registry.get(c.slug) !== undefined);
-  if (cards.length > 0) return cards;
+  // Review I10 (follow-up tool starvation): a terse follow-up ("now the
+  // oldest one too") can miss retrieval entirely — actions ALREADY USED in
+  // this session always ride along, ahead of any filler.
+  const bound = new Set(cards.map((c) => c.slug));
+  const sessionCards: Card[] = sessionCtx.usedActionSlugs
+    .filter((slug) => !bound.has(slug) && registry.get(slug) !== undefined)
+    .map((slug) => ({ slug, text: slug, score: 1 }));
+  const combined = [...sessionCards, ...cards];
+  if (combined.length > 0) return combined.slice(0, FULL_BIND_THRESHOLD);
   return all.slice(0, FULL_BIND_THRESHOLD).map((a) => ({ slug: a.slug, text: a.slug, score: 0 }));
 }
 
@@ -129,6 +141,12 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     writesLanded: 0,
     stop: () => stopController.abort(),
   };
+  const cancelSignal = sessionDeps.cancelSignal;
+  if (cancelSignal !== undefined) {
+    if (cancelSignal.aborted) stopController.abort();
+    else cancelSignal.addEventListener('abort', () => stopController.abort(), { once: true });
+  }
+  const wasCancelled = (): boolean => cancelSignal?.aborted === true;
 
   async function* finalize(status: TurnStatus, finalText: string): AsyncGenerator<Event, TurnResult> {
     for (const e of buffer.splice(0, buffer.length)) yield e;
@@ -196,7 +214,9 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       model: plannerModel(),
       instructions: buildLoopSystemPrompt(),
       tools,
-      modelSettings: { parallelToolCalls: false, maxTokens: MAX_OUTPUT_TOKENS },
+      // timeoutMs: per-model-call cap (review I9) so one hung provider call
+      // cannot eat the whole 90s turn deadline.
+      modelSettings: { parallelToolCalls: false, maxTokens: MAX_OUTPUT_TOKENS, timeoutMs: 60_000 },
     });
 
     const runner = createLoopRunner(sessionDeps.testFetch !== undefined ? { testFetch: sessionDeps.testFetch } : {});
@@ -240,6 +260,9 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     }
 
     // honest exits set by tools (these stop the run mid-flight)
+    if (wasCancelled()) {
+      return yield* finalize('cancelled', 'Okay — I stopped. Nothing further was changed.');
+    }
     if (exits.clarify !== undefined) return yield* finalize('clarify', exits.clarify);
     if (exits.refused !== undefined) return yield* finalize('refused', exits.refused);
     if (exits.stuck !== undefined) return yield* finalize('failed', exits.stuck);
@@ -267,10 +290,25 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
             : 'done';
     return yield* finalize(status, finalText);
   } catch (err) {
-    if (err instanceof BudgetExceededError) {
-      return yield* finalize('failed', 'The usage budget for this environment is exhausted; no request was made.');
+    if (wasCancelled()) {
+      return yield* finalize('cancelled', 'Okay — I stopped. Nothing further was changed.');
     }
-    const message = err instanceof Error ? err.message : String(err);
-    return yield* finalize('failed', `Unexpected error: ${message}`);
+    if (err instanceof BudgetExceededError) {
+      // Review I1: this can trip MID-turn, after steps (even writes) ran —
+      // report progress honestly, never "nothing happened".
+      const progress =
+        counters.stepsOk > 0
+          ? `I completed ${counters.stepsOk} step(s) before stopping — anything I reported done above did happen.`
+          : 'No actions were performed.';
+      return yield* finalize('failed', `I had to stop: the usage budget for this environment is exhausted. ${progress}`);
+    }
+    // Review I2: raw SDK/provider/db error text never reaches the user.
+    // Server-side context goes to stderr (coding-style: log detailed error
+    // context server-side; user gets a friendly line).
+    console.error(`[loop] turn ${turnId} unexpected error:`, err);
+    return yield* finalize(
+      'failed',
+      'Something went wrong on my side and I could not complete this request. Nothing beyond the steps already reported was changed — please try again.',
+    );
   }
 }

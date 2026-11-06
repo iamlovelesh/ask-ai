@@ -14,6 +14,16 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/never .*epoch/i);
   });
 
+  it('I6: states the ACTUAL @-relative grammar with parseable examples', () => {
+    expect(system).toContain('@now-7d');
+    expect(system).toContain('@start_of_month');
+    expect(system).not.toContain('"@today-"');
+  });
+
+  it('I3: is honest that searched actions may not be callable this turn', () => {
+    expect(system).toMatch(/not .*callable this turn|cannot call .*this turn/i);
+  });
+
   it('requires totals from result metadata with at most 3 examples', () => {
     expect(system).toMatch(/total/i);
     expect(system).toMatch(/at most 3/i);
