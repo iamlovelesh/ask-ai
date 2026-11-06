@@ -86,6 +86,38 @@ const SCHEMA: string[] = [
      meta TEXT
    )`,
   `CREATE INDEX IF NOT EXISTS idx_spans_turn ON spans (turn_id)`,
+  // --- memory domain (memory-layer design §4.1): durable, user-scoped facts
+  // about the user — NEVER in the resettable CRM db. Soft-invalidate
+  // (invalid_at/superseded_by), never hard-delete from the pipeline.
+  `CREATE TABLE IF NOT EXISTS memories (
+     id TEXT PRIMARY KEY,
+     user_id TEXT NOT NULL,
+     scope_ref TEXT,
+     category TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     key TEXT,
+     body TEXT NOT NULL,
+     source TEXT NOT NULL,
+     source_session TEXT,
+     source_seq INTEGER,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     superseded_by TEXT,
+     invalid_at INTEGER
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_memories_user_live
+     ON memories (user_id) WHERE invalid_at IS NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_profile_key
+     ON memories (user_id, category, key) WHERE kind = 'profile' AND invalid_at IS NULL`,
+  `CREATE TABLE IF NOT EXISTS memory_settings (
+     user_id TEXT PRIMARY KEY,
+     enabled INTEGER NOT NULL DEFAULT 1,
+     updated_at INTEGER
+   )`,
+  `CREATE TABLE IF NOT EXISTS session_memory_flags (
+     session_id TEXT PRIMARY KEY,
+     incognito INTEGER NOT NULL DEFAULT 0
+   )`,
 ];
 
 class SessionsDbImpl implements SessionsDb {
