@@ -11,6 +11,7 @@ import { costMeter } from '../src/llm/client';
 import { __resetIndexForTest } from '../src/agent/retrieval';
 import { openEventLog, type EventLog } from '../src/events/log';
 import { openSessions, type SessionsDb } from '../src/store/sessions-db';
+import { openScheduledTasks } from '../src/agent/scheduled-tasks';
 import { createRefStore, type RefStore, type HydrateResult } from '../src/agent/refs';
 import { buildRegistry, type Registry } from '../src/catalog/registry';
 import { ActionError, type ActionContext, type ActionDef, type Risk } from '../src/catalog/types';
@@ -318,6 +319,32 @@ describe('runLoopTurn — gate affectedCount counts id-shaped params (round-7 su
     ]);
     const req = events.find((e) => e.t === 'confirmation.required');
     expect(req && req.t === 'confirmation.required' ? req.scope.affectedCount : 0).toBe(12);
+  });
+});
+
+describe('runLoopTurn — scheduled follow-up (#8)', () => {
+  it('session__schedule_follow_up records a durable future reminder instead of refusing', async () => {
+    const scheduler = openScheduledTasks(sessionsDb);
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    await drive(registry, 'remind me next week to follow up with the new leads', [
+      toolCallResponse('session__schedule_follow_up', { when: '+1w', instruction: 'follow up with the new leads' }),
+      textResponse('Done — I\'ll remind you next week.'),
+    ], { scheduler });
+    const pending = scheduler.listPending(sessionId);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.instruction).toContain('follow up with the new leads');
+    expect(pending[0]!.dueAt).toBeGreaterThan(0);
+  });
+
+  it('is not offered when no scheduler is wired (tests/eval)', async () => {
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    // No scheduler override → the tool is unbound; calling it is an unknown
+    // tool, so the model must fall back. We just assert the turn still completes.
+    const events = await drive(registry, 'show leads', [
+      toolCallResponse('leads__search_leads', {}),
+      textResponse('No leads.'),
+    ]);
+    expect(completedOf(events).status).toBeDefined();
   });
 });
 

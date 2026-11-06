@@ -28,6 +28,7 @@ import { runBaselineTurn, type BaselineSessionDeps } from '../baseline/agent.js'
 import { modelStreamsTools, defaultModelId } from '../llm/models.js';
 import { runLoopTurn, type LoopSessionDeps } from '../loop/agent.js';
 import type { Principal } from '../agent/permissions.js';
+import { openScheduledTasks, type ScheduledTaskStore } from '../agent/scheduled-tasks.js';
 import type { Event } from '../events/types.js';
 
 /** 'optimized' = the production tool-loop agent (plan rev 3 pivot);
@@ -162,6 +163,13 @@ export class SessionRuntime {
     return b;
   }
 
+  /** Durable scheduled-follow-up store (#8), opened once over the sessions DB. */
+  private schedulerStore?: ScheduledTaskStore;
+  scheduler(): ScheduledTaskStore {
+    if (!this.schedulerStore) this.schedulerStore = openScheduledTasks(this.sessionsDb);
+    return this.schedulerStore;
+  }
+
   isRunning(sessionId: string): boolean {
     return this.running.has(sessionId);
   }
@@ -246,6 +254,7 @@ export class SessionRuntime {
                 eventLog: this.eventLog,
                 confirm,
                 cancelSignal: state.cancel.signal,
+                scheduler: this.scheduler(),
                 ...(state.model !== undefined ? { model: state.model } : {}),
                 ...(state.principal !== undefined ? { principal: state.principal } : {}),
                 // Live answer-token streaming — only for models whose tool

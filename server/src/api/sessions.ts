@@ -225,6 +225,17 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
     turnId = runtime.startTurn({ sessionId, userText: text, agent, model, principal });
   });
 
+  // --- GET /api/sessions/:id/scheduled (pending follow-ups, #8) -----------
+
+  app.get('/api/sessions/:id/scheduled', async (req: FastifyRequest<{ Params: SessionParams }>, reply) => {
+    const { id: sessionId } = req.params;
+    if (!sessionExists(sessionsDb, sessionId)) {
+      reply.code(404).send({ error: 'session_not_found' });
+      return;
+    }
+    reply.send({ tasks: runtime.scheduler().listPending(sessionId) });
+  });
+
   // --- POST /api/sessions/:id/confirm/:confirmId --------------------------
 
   app.post('/api/sessions/:id/confirm/:confirmId', async (req: FastifyRequest<{ Params: ConfirmParams }>, reply) => {

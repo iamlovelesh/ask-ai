@@ -28,6 +28,8 @@ import { retrieve, renderCards, type Card, type SessionCtx } from '../agent/retr
 import { shouldGate, type ConfirmBroker } from '../agent/executor.js';
 import { approvalPolicy } from '../agent/approval-policy.js';
 import { canUseAction, defaultPrincipal, type Principal } from '../agent/permissions.js';
+import type { ScheduledTaskStore } from '../agent/scheduled-tasks.js';
+import { resolveRelativeDate } from '../agent/date-expr.js';
 import type { ConfirmationScope, Event } from '../events/types.js';
 import { coerceDateParams, widenForModel } from './date-rail.js';
 import { loadSkills } from './skills/registry.js';
@@ -312,6 +314,11 @@ export interface BuildTurnToolsInput {
    * are bound as tools. Defaults to admin (every action), preserving the
    * pre-permission single-tenant behavior. */
   principal?: Principal;
+  /** Durable scheduled follow-ups (#8). When both are present, the agent gets
+   * a `session__schedule_follow_up` tool to defer work to a future time
+   * instead of refusing it. Absent in tests that don't exercise scheduling. */
+  sessionId?: string;
+  scheduler?: ScheduledTaskStore;
 }
 
 export const RECORD_ID_RE = /\b[a-z][a-z]*(?:_[a-z]+)*_\d+\b/g;
@@ -1125,6 +1132,41 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       return loaded.map((s) => `# Skill: ${s.name}\n${s.content}`).join('\n\n---\n\n');
     },
   });
+
+  // Durable scheduled follow-up (#8): only when a scheduler + sessionId are
+  // wired (production). Lets the agent defer "remind me Friday" instead of
+  // refusing it.
+  const sessionId = input.sessionId;
+  const scheduler = input.scheduler;
+  if (scheduler && sessionId !== undefined) {
+    const scheduleFollowUp = tool({
+      name: 'session__schedule_follow_up',
+      description:
+        'Schedule a follow-up for a FUTURE time instead of acting now — for "remind me Friday", "follow up next week", "check back in an hour". Records a durable reminder; after calling it, tell the user what you scheduled and when. Do NOT use for work to do right now, and only for times in the future.',
+      parameters: z.object({
+        when: z.string().describe('when it is due: an ISO date/time, or a relative offset like "+3d", "+1w", "+2h", or "@today"'),
+        instruction: z.string().describe('what to do / be reminded of when it fires'),
+      }),
+      execute: async ({ when, instruction }): Promise<string> => {
+        const now = clock.now();
+        const raw = when.trim();
+        // Accept bare offsets ("+3d") by normalizing to the date-expr grammar
+        // ("@now+3d"); otherwise pass through (@today / @now+Nd / ISO).
+        const normalized = /^[+-]\d+[mhdw]$/.test(raw) ? `@now${raw}` : raw;
+        const rel = resolveRelativeDate(normalized, now);
+        const dueAt = rel ?? Date.parse(raw);
+        if (!Number.isFinite(dueAt)) {
+          return `Could not understand the time "${when}". Use an ISO date or a relative expression like "+3d" or "+1w".`;
+        }
+        if (dueAt <= now) {
+          return `"${when}" is not in the future — schedule follow-ups for a later time only, or do the task now.`;
+        }
+        scheduler.schedule({ id: `task_${randomUUID()}`, sessionId, dueAt, instruction, createdAt: now });
+        return `Scheduled a follow-up for ${new Date(dueAt).toISOString()}: ${instruction}`;
+      },
+    });
+    tools.push(scheduleFollowUp);
+  }
 
   tools.push(searchActions, sortRef, filterRef, searchRef, aggregateRef, groupByRef, applyToRef, loadSkillsTool, askUser, refuse);
   return tools;

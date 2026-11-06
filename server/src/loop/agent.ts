@@ -42,6 +42,7 @@ import { buildDateAnchors } from './date-rail.js';
 import { renderRecentTurns } from './recent-turns.js';
 import { buildTurnTools, harvestIds, StuckTracker, type LoopExits } from './tools.js';
 import { defaultPrincipal, type Principal } from '../agent/permissions.js';
+import type { ScheduledTaskStore } from '../agent/scheduled-tasks.js';
 import { numberCheck } from './number-check.js';
 import { rescueToolCalls } from './tool-call-rescue.js';
 import { unsanctionedFilters } from './scope-check.js';
@@ -77,6 +78,9 @@ export interface LoopSessionDeps {
   /** Principal this turn runs as (#1). Only actions this principal may use are
    * bound/listed, and writes are attributed to it. Defaults to admin. */
   principal?: Principal;
+  /** Durable scheduled-follow-up store (#8). When present, the agent can defer
+   * work to a future time via session__schedule_follow_up. */
+  scheduler?: ScheduledTaskStore;
 }
 
 export interface RunLoopTurnInput {
@@ -327,6 +331,8 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       actingUserId: demoUserId,
       knownIds,
       principal,
+      sessionId,
+      ...(sessionDeps.scheduler !== undefined ? { scheduler: sessionDeps.scheduler } : {}),
     });
 
     // P1 (pattern): the full catalog rides in the (cacheable) system
