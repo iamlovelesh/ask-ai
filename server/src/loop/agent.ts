@@ -180,6 +180,26 @@ export function isLiveDataQuestion(userText: string): boolean {
   return QUANTITY_INTENT_RE.test(userText) && CRM_COLLECTION_RE.test(userText);
 }
 
+/**
+ * Backstop for a clarifying answer the model wrote in plain text instead of
+ * through `session__ask_user` (small models bypass the exit tool). A turn is a
+ * clarify when the final answer IS, or CONTAINS, a request for missing info —
+ * whatever channel it came through. Persona eval: "I need more information to
+ * update the deal. Could you please clarify: …" ended on a statement and used
+ * phrasings the old narrow regex missed, so it was mislabeled 'done'.
+ */
+// Imperative info-requests that read as a clarify even without a '?'. Only
+// consulted on NO-WRITE turns (the classifier guards on writesLanded===0), so
+// phrasings like "please confirm" can't flip a completed write to clarify.
+// Superset of the original narrow regex + the phrasings persona eval missed.
+const STRONG_CLARIFY_RE =
+  /\b(i need to (know|clarify)|i need (more|additional|some) (info|information|details?|detail)|could you (please )?(clarify|specify|provide|tell me|confirm)|can you (please )?(clarify|specify|provide|tell me|confirm)|please (clarify|specify|provide|confirm|let me know|tell me)|which (\w+ )?(do you mean|would you like|should i|are you referring)|what (would|do) you (want|like|mean))\b/i;
+export function looksLikeClarify(finalText: string): boolean {
+  // Any posed question mark means the answer asks something of the user; plus
+  // the imperative info-requests that carry no '?'.
+  return finalText.includes('?') || STRONG_CLARIFY_RE.test(finalText);
+}
+
 // Narrow-follow-up backstop (persona eval: "just the negotiation ones" → "none",
 // contradicting the prior turn's own list). A follow-up that REFERS to a prior
 // result AND asks to find/narrow it, done with ZERO reads, is confabulating —
@@ -659,11 +679,10 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     //    it arrived through;
     //  - a turn whose every dispatched action failed is a failed turn even
     //    when the model narrates the failure gracefully.
-    const asksQuestion =
-      finalText.trimEnd().endsWith('?') ||
-      /\b(i need to (know|clarify)|could you (provide|tell|confirm|specify)|please (provide|specify|confirm)|which (one|of these)? ?(do you mean|would you like))\b/i.test(
-        finalText,
-      );
+    // A write turn that ends by OFFERING a follow-up ("…done. Notify them?")
+    // is still 'done' (and keeps its changes footer) — only a turn with NO
+    // writes is reclassified to clarify by a plain-text question.
+    const asksQuestion = exits.writesLanded === 0 && looksLikeClarify(finalText);
     const status: TurnStatus =
       exits.denied && exits.writesLanded === 0
         ? 'cancelled'
