@@ -16,6 +16,7 @@ describe('model tier registry', () => {
     for (const m of listModels()) {
       expect(m.id).toMatch(/\//); // provider/model slug
       expect(m.label.length).toBeGreaterThan(0);
+      expect(m.name.length).toBeGreaterThan(0); // friendly model name shown in the picker
       expect(m.description.length).toBeGreaterThan(0);
       expect(['openai', 'anthropic', 'google']).toContain(m.provider);
       expect(typeof m.streamsTools).toBe('boolean');

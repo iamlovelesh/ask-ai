@@ -23,8 +23,16 @@ const detail = computed(() => {
     (p): p is string => p !== null,
   );
   if (m.llmCalls > 1) parts.push(`${m.llmCalls} llm calls`);
+  if (m.model) parts.push(modelLabel(m.model));
   return parts.join(' · ');
 });
+
+/** Show the model's short name (last path segment) in the trace detail —
+ * "claude-haiku-4.5", "gpt-4o-mini". */
+function modelLabel(id: string): string {
+  const seg = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id;
+  return seg;
+}
 
 function toggle(): void {
   expanded.value = !expanded.value;

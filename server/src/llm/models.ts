@@ -16,12 +16,16 @@
  * `speed` / `intelligence` are 1–5 relative scores (UI badges, not SLAs) —
  * monotonic across the tier order so the picker can show the tradeoff.
  */
+import { inferStreamsTools } from './model-catalog.js';
+
 export type ModelTier = 'extra-fast' | 'fast' | 'balanced' | 'smart' | 'extra-smart';
 
 export interface SelectableModel {
   id: string;
   tier: ModelTier;
   label: string;
+  /** Friendly model name shown under the tier (e.g. 'Claude Haiku 4.5'). */
+  name: string;
   description: string;
   provider: 'openai' | 'anthropic' | 'google';
   streamsTools: boolean;
@@ -35,6 +39,7 @@ export const SELECTABLE_MODELS: readonly SelectableModel[] = [
     id: 'google/gemini-2.5-flash-lite',
     tier: 'extra-fast',
     label: 'Extra fast',
+    name: 'Gemini 2.5 Flash Lite',
     description: 'Quickest replies for simple lookups and counts. Streams live.',
     provider: 'google',
     streamsTools: true,
@@ -45,6 +50,7 @@ export const SELECTABLE_MODELS: readonly SelectableModel[] = [
     id: 'openai/gpt-4o-mini',
     tier: 'fast',
     label: 'Fast',
+    name: 'GPT-4o mini',
     description: 'Snappy and accurate for everyday CRM questions. Streams live.',
     provider: 'openai',
     streamsTools: true,
@@ -55,6 +61,7 @@ export const SELECTABLE_MODELS: readonly SelectableModel[] = [
     id: 'anthropic/claude-haiku-4.5',
     tier: 'balanced',
     label: 'Balanced',
+    name: 'Claude Haiku 4.5',
     description: 'The tuned default — reliable multi-step tool use across the full catalog.',
     provider: 'anthropic',
     streamsTools: false,
@@ -66,6 +73,7 @@ export const SELECTABLE_MODELS: readonly SelectableModel[] = [
     id: 'anthropic/claude-sonnet-4.5',
     tier: 'smart',
     label: 'Smart',
+    name: 'Claude Sonnet 4.5',
     description: 'Stronger reasoning for complex, multi-step or ambiguous requests.',
     provider: 'anthropic',
     streamsTools: false,
@@ -76,6 +84,7 @@ export const SELECTABLE_MODELS: readonly SelectableModel[] = [
     id: 'anthropic/claude-opus-4.5',
     tier: 'extra-smart',
     label: 'Extra smart',
+    name: 'Claude Opus 4.5',
     description: 'Maximum reasoning for the hardest analysis. Slowest and priciest.',
     provider: 'anthropic',
     streamsTools: false,
@@ -103,11 +112,17 @@ export function defaultModelId(): string {
   return (SELECTABLE_MODELS.find((m) => m.recommended) ?? SELECTABLE_MODELS[0]!).id;
 }
 
+/** Whether a model streams tool calls: the curated tier flag if it is a tier
+ * model, else inferred from the provider prefix (OpenAI/Google yes) for
+ * arbitrary catalog models chosen via the advanced picker. */
 export function modelStreamsTools(id: string): boolean {
-  return BY_ID.get(id)?.streamsTools ?? false;
+  const tier = BY_ID.get(id);
+  return tier ? tier.streamsTools : inferStreamsTools(id);
 }
 
-/** Validate a client-supplied model id, falling back to the default. */
+/** Validate a client-supplied model id against the curated tiers, falling
+ * back to the default. For arbitrary catalog models, callers additionally
+ * accept ids that `catalogHas` (see the message handler). */
 export function resolveModelId(id: string | undefined): string {
   return id !== undefined && BY_ID.has(id) ? id : defaultModelId();
 }

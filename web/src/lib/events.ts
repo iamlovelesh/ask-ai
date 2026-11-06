@@ -30,6 +30,9 @@ export interface TurnMetrics {
   costUsd: number;
   stepsOk: number;
   stepsFailed: number;
+  gateWaitMs?: number;
+  /** The model slug that ran this turn (model-picker), shown in the trace. */
+  model?: string;
 }
 
 export type TurnStatus = 'done' | 'clarify' | 'refused' | 'failed' | 'cancelled';

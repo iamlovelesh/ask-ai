@@ -59,6 +59,9 @@ export interface TurnMetrics {
    * deadline, so a slow approver never turns an approved+executed turn into a
    * spurious 'failed'. Omitted (undefined) when no gate waited. */
   gateWaitMs?: number;
+  /** The OpenRouter model slug that ran this turn (model-picker). Persisted
+   * so the trace/footer can show which model produced the answer. */
+  model?: string;
 }
 
 // --- events/types.ts (LLD §2.3) ---------------------------------------------

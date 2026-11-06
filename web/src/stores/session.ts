@@ -26,12 +26,21 @@ export interface ModelOption {
   id: string;
   tier: string;
   label: string;
+  name: string;
   description: string;
   provider: string;
   streamsTools: boolean;
   speed: number;
   intelligence: number;
   recommended?: boolean;
+}
+
+/** One entry from the full OpenRouter catalog (advanced "other models"). */
+export interface CatalogModel {
+  id: string;
+  name: string;
+  contextLength?: number;
+  promptPrice?: string;
 }
 
 /** Sidebar page size. The DB can hold hundreds of eval-generated sessions;
@@ -100,6 +109,10 @@ export const useSessionStore = defineStore('session', {
      * user has chosen (sent with each message; '' = server default). */
     models: [] as ModelOption[],
     selectedModel: '' as string,
+    /** Advanced picker: the full OpenRouter catalog (lazy-loaded on first open)
+     * and whether a load is in flight. */
+    catalog: [] as CatalogModel[],
+    catalogLoading: false,
   }),
 
   getters: {
@@ -132,6 +145,19 @@ export const useSessionStore = defineStore('session', {
         if (this.selectedModel === '') this.selectedModel = body.default;
       } catch {
         /* non-fatal: the picker just stays empty and the server default applies */
+      }
+    },
+
+    async loadCatalog(): Promise<void> {
+      if (this.catalog.length > 0 || this.catalogLoading) return;
+      this.catalogLoading = true;
+      try {
+        const res = await fetch('/api/models/catalog');
+        if (res.ok) this.catalog = ((await res.json()) as { models: CatalogModel[] }).models;
+      } catch {
+        /* non-fatal: the advanced list just stays empty */
+      } finally {
+        this.catalogLoading = false;
       }
     },
 

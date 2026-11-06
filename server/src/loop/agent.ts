@@ -162,6 +162,10 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
   let tokensIn = 0;
   let tokensOut = 0;
   let costUsd = 0;
+  /** The model that runs this turn — the user's picked model, else the
+   * deployed default. Hoisted so both the Agent construction and the turn
+   * metrics (persisted → shown in the trace) use one source of truth. */
+  const turnModel = sessionDeps.model ?? plannerModel();
 
   const buffer: Event[] = [];
   const record = (e: Event): void => {
@@ -219,6 +223,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       costUsd,
       stepsOk: counters.stepsOk,
       stepsFailed: counters.stepsFailed,
+      model: turnModel,
     };
     const completedEv: Event = { t: 'turn.completed', turnId, status, metrics };
     eventLog.append(sessionId, completedEv);
@@ -277,7 +282,6 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     // longer hide capabilities. Only for real-size registries; tiny test
     // registries already full-bind.
     const catalogText = registry.all().length > FULL_BIND_THRESHOLD ? buildCatalogSummary(registry) : undefined;
-    const turnModel = sessionDeps.model ?? plannerModel();
     const agent = new Agent({
       name: 'ask-ai',
       model: turnModel,

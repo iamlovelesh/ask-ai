@@ -25,7 +25,7 @@ import type { ConfirmBroker, ConfirmRequest } from '../agent/executor.js';
 import type { Playbook } from '../playbooks/loader.js';
 import { runTurn, type SessionDeps } from '../agent/pipeline.js';
 import { runBaselineTurn, type BaselineSessionDeps } from '../baseline/agent.js';
-import { modelStreamsTools, resolveModelId } from '../llm/models.js';
+import { modelStreamsTools, defaultModelId } from '../llm/models.js';
 import { runLoopTurn, type LoopSessionDeps } from '../loop/agent.js';
 import type { Event } from '../events/types.js';
 
@@ -245,7 +245,7 @@ export class SessionRuntime {
                 // calls assemble correctly under stream:true (OpenAI yes,
                 // Anthropic-via-OpenRouter no). `streamAnswers` is the
                 // master test/prod gate; the model capability narrows it.
-                stream: this.streamAnswers && modelStreamsTools(resolveModelId(state.model)),
+                stream: this.streamAnswers && modelStreamsTools(state.model ?? defaultModelId()),
               } satisfies LoopSessionDeps,
             });
 

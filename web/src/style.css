@@ -1306,6 +1306,73 @@ button {
   color: var(--ink-dim, #6b7280);
   letter-spacing: 1px;
 }
+.model-picker-advanced-toggle {
+  margin-top: 6px;
+  font: inherit;
+  font-size: 0.74rem;
+  background: none;
+  border: none;
+  color: var(--petrol);
+  cursor: pointer;
+  padding: 0;
+}
+.model-picker-advanced-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.model-picker-advanced {
+  margin-top: 6px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--paper);
+}
+.model-picker-search {
+  width: 100%;
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 5px 8px;
+  border: 1px solid var(--hair);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  box-sizing: border-box;
+}
+.model-picker-advanced-note {
+  font-size: 0.78rem;
+  color: var(--ink-dim, #6b7280);
+  padding: 8px 2px;
+}
+.model-picker-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.model-picker-list-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.model-picker-list-item:hover {
+  background: color-mix(in srgb, var(--petrol) 8%, transparent);
+}
+.model-picker-list-item.is-on {
+  background: color-mix(in srgb, var(--petrol) 14%, transparent);
+}
+.model-picker-list-name {
+  font-size: 0.82rem;
+  color: var(--ink);
+}
+.model-picker-list-id {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--ink-dim, #6b7280);
+}
 
 .composer textarea {
   flex: 1;

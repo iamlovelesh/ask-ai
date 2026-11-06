@@ -12,7 +12,8 @@ import { z } from 'zod';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { openSse } from './sse.js';
 import { sessionExists } from './turn-runtime.js';
-import { listModels, resolveModelId, defaultModelId } from '../llm/models.js';
+import { listModels, defaultModelId, isSelectableModel } from '../llm/models.js';
+import { fetchModelCatalog, catalogHas } from '../llm/model-catalog.js';
 import type { AppDeps } from './types.js';
 
 const SESSION_TITLE_MAX_CHARS = 40;
@@ -63,10 +64,17 @@ function parseAfterSeq(query: Record<string, unknown>): number {
 export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { eventLog, sessionsDb, runtime } = deps;
 
-  // --- GET /api/models (model-picker options) ---------------------------
+  // --- GET /api/models (curated tiers) ----------------------------------
 
   app.get('/api/models', async (_req, reply) => {
     reply.send({ models: listModels(), default: defaultModelId() });
+  });
+
+  // --- GET /api/models/catalog (full OpenRouter list, advanced picker) --
+
+  app.get('/api/models/catalog', async (_req, reply) => {
+    const models = await fetchModelCatalog();
+    reply.send({ models });
   });
 
   // --- POST /api/sessions -----------------------------------------------
@@ -112,7 +120,20 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
       return;
     }
     const { text, agent = 'optimized' } = parsed.data;
-    const model = resolveModelId(parsed.data.model);
+    // Model validation: a curated tier is always honored; an arbitrary model
+    // is honored only if it exists in the OpenRouter catalog (advanced
+    // picker) — anything else falls back to the default. Never trust a raw
+    // client model string.
+    const requested = parsed.data.model;
+    let model: string;
+    if (requested !== undefined && isSelectableModel(requested)) {
+      model = requested;
+    } else if (requested !== undefined) {
+      await fetchModelCatalog();
+      model = catalogHas(requested) ? requested : defaultModelId();
+    } else {
+      model = defaultModelId();
+    }
 
     // LLD §6 "one turn at a time per session" — checked BEFORE opening the
     // SSE stream, so a rejected second POST gets a plain JSON 409, not a
