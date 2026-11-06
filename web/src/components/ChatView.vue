@@ -45,15 +45,6 @@ const sessionTitle = computed(() => {
  * turns yet. */
 const sessionLedger = computed(() => formatSessionLedger(sumSessionMetrics(chat.value?.turns ?? [])));
 
-/** True between `turn.started` and `plan.ready` (or any other outcome that
- * sets `turn.kind`) — the window where the agent is deciding what to do but
- * has nothing to show yet. `turn.kind` is set for every PlanOutcome variant
- * (see `lib/fold.ts`'s `plan.ready` branch), so `!turn.kind` is an accurate
- * "still planning" signal for both live and historical turns. */
-function isPlanning(turn: TurnView): boolean {
-  return !turn.kind && !turn.status;
-}
-
 /** aria-live announcement of step progress for the most recent turn — "step
  * 3 of 5 done". Counts any terminal step (done/failed/skipped) against the
  * steps known so far (grows as the plan is revealed); empty until the first
@@ -307,12 +298,6 @@ async function onCopyLink(): Promise<void> {
           <div class="speaker" style="margin-top: 16px">
             <span class="speaker-name">Ask AI</span>
             <span class="speaker-rule"></span>
-            <span v-if="isPlanning(turn)" class="planning-indicator">
-              Planning<span class="planning-dot">.</span><span class="planning-dot">.</span><span
-                class="planning-dot"
-                >.</span
-              >
-            </span>
             <span
               v-if="statusToken(turn.status)"
               :class="['turn-status', { 'is-fail': isFailStatus(turn.status) }]"
@@ -321,11 +306,14 @@ async function onCopyLink(): Promise<void> {
           </div>
 
           <div class="agent-body">
-            <!-- Live tool-activity: the plan-dsl agent sets kind==='plan';
-                 the tool-loop agent emits step events directly (no plan.ready),
-                 so show the tracker whenever the turn has steps — that renders
-                 "searching leads… checking contacts…" rows live via SSE. -->
-            <TaskTracker v-if="turn.kind === 'plan' || turn.stepOrder.length > 0" :turn="turn" />
+            <!-- progress: the TaskTracker owns the "thinking"
+                 state. Shown while the turn is in flight (status undefined) or
+                 when it produced any steps — it shimmers the active step and
+                 collapses to "Worked for Ns" when done. -->
+            <TaskTracker
+              v-if="turn.kind === 'plan' || turn.stepOrder.length > 0 || turn.status === undefined"
+              :turn="turn"
+            />
 
             <ClarifyCard v-if="turn.clarifyQuestion" :question="turn.clarifyQuestion" @reply="onClarifyReply" />
 

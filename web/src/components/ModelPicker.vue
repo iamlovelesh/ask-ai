@@ -5,31 +5,26 @@ import { useSessionStore } from '../stores/session.js';
 const props = defineProps<{ disabled?: boolean }>();
 const store = useSessionStore();
 
+const open = ref(false);
+const infoOpen = ref(false);
 const advancedOpen = ref(false);
 const search = ref('');
 
-/** The tier whose model is currently selected, or undefined when the user has
- * picked a non-tier "other" model from the catalog. */
 const currentTier = computed(() => store.models.find((m) => m.id === store.selectedModel));
 const isCustom = computed(() => store.selectedModel !== '' && !currentTier.value);
 const customEntry = computed(() =>
   store.catalog.find((m) => m.id === store.selectedModel) ?? { id: store.selectedModel, name: store.selectedModel },
 );
+const currentName = computed(() => (isCustom.value ? customEntry.value.name : (currentTier.value?.name ?? '')));
+const currentLabel = computed(() => (isCustom.value ? 'Custom' : (currentTier.value?.label ?? '')));
 
-/** Streaming capability of whatever is selected: tier flag, else inferred
- * from the provider prefix (OpenAI/Google stream). */
 const streams = computed(() =>
   currentTier.value
     ? currentTier.value.streamsTools
     : store.selectedModel.startsWith('openai/') || store.selectedModel.startsWith('google/'),
 );
 
-const headerLabel = computed(() =>
-  isCustom.value ? `Custom · ${customEntry.value.name}` : `${currentTier.value?.label ?? ''} · ${currentTier.value?.name ?? ''}`,
-);
-
-/** Slider position = tier index. In custom mode the thumb rests on the
- * recommended tier (visual only); moving it re-enters tier mode. */
+/** Slider position = tier index; custom rests on the recommended tier. */
 const index = computed<number>({
   get() {
     const i = store.models.findIndex((m) => m.id === store.selectedModel);
@@ -41,8 +36,19 @@ const index = computed<number>({
   },
 });
 
-function dots(score: number): string {
-  return '●'.repeat(Math.max(0, Math.min(5, score))) + '○'.repeat(Math.max(0, 5 - score));
+/** 0–1 fill fraction for the custom track. */
+const fillPct = computed(() =>
+  store.models.length > 1 ? (index.value / (store.models.length - 1)) * 100 : 0,
+);
+
+/** Signal-bar level for the trigger glyph (1 = fastest … N = smartest). */
+const barLevel = computed(() => (isCustom.value ? 3 : index.value + 1));
+const BARS = [1, 2, 3, 4, 5];
+
+function toggle(): void {
+  if (props.disabled) return;
+  open.value = !open.value;
+  if (open.value) void store.loadModels();
 }
 
 function toggleAdvanced(): void {
@@ -66,59 +72,103 @@ function pickCatalog(id: string): void {
 </script>
 
 <template>
-  <div v-if="store.models.length > 0" class="model-picker">
-    <div class="model-picker-head">
-      <span class="model-picker-current">{{ headerLabel }}</span>
-      <span v-if="currentTier?.recommended" class="model-picker-rec">recommended</span>
-      <span v-if="streams" class="model-picker-badge" title="Streams the answer live, token by token">⚡ streams live</span>
-    </div>
-
-    <input
-      class="model-picker-slider"
-      type="range"
-      min="0"
-      :max="store.models.length - 1"
-      step="1"
-      v-model.number="index"
+  <div v-if="store.models.length > 0" class="mp">
+    <!-- Compact trigger (M1): signal-bars glyph + current tier · model -->
+    <button
+      type="button"
+      class="mp-trigger"
+      :class="{ 'is-open': open }"
       :disabled="props.disabled"
-      :aria-label="`Model tier: ${currentTier?.label ?? 'custom'}`"
-    />
-    <div class="model-picker-scale"><span>Faster</span><span>Smarter</span></div>
-
-    <div class="model-picker-meta">
-      <span class="model-picker-desc">
-        {{ isCustom ? customEntry.id : currentTier?.description }}
+      :aria-expanded="open"
+      @click="toggle"
+    >
+      <span class="mp-bars" aria-hidden="true">
+        <span
+          v-for="b in BARS"
+          :key="b"
+          class="mp-bar"
+          :class="{ on: b <= barLevel }"
+          :style="{ height: 4 + b * 2 + 'px' }"
+        ></span>
       </span>
-      <span v-if="currentTier" class="model-picker-scores">
-        <span class="model-picker-score" :title="`Speed ${currentTier.speed}/5`">⚡&nbsp;{{ dots(currentTier.speed) }}</span>
-        <span class="model-picker-score" :title="`Intelligence ${currentTier.intelligence}/5`">🧠&nbsp;{{ dots(currentTier.intelligence) }}</span>
-      </span>
-    </div>
-
-    <button type="button" class="model-picker-advanced-toggle" :disabled="props.disabled" @click="toggleAdvanced">
-      {{ advancedOpen ? 'Hide other models' : 'Other models…' }}
+      <span class="mp-trigger-label">{{ currentLabel }} · {{ currentName }}</span>
+      <span v-if="streams" class="mp-trigger-stream" title="Streams the answer live">⚡</span>
+      <span class="mp-trigger-caret" :class="{ open }" aria-hidden="true">›</span>
     </button>
 
-    <div v-if="advancedOpen" class="model-picker-advanced">
-      <input
-        v-model="search"
-        class="model-picker-search"
-        type="text"
-        placeholder="Search models (e.g. gpt, gemini, llama)…"
-      />
-      <div v-if="store.catalogLoading" class="model-picker-advanced-note">Loading catalog…</div>
-      <div v-else-if="store.catalog.length === 0" class="model-picker-advanced-note">Catalog unavailable.</div>
-      <ul v-else class="model-picker-list">
-        <li
-          v-for="m in filteredCatalog"
-          :key="m.id"
-          :class="['model-picker-list-item', { 'is-on': m.id === store.selectedModel }]"
-          @click="pickCatalog(m.id)"
-        >
-          <span class="model-picker-list-name">{{ m.name }}</span>
-          <span class="model-picker-list-id">{{ m.id }}</span>
-        </li>
-      </ul>
-    </div>
+    <template v-if="open">
+      <div class="mp-backdrop" @click="open = false"></div>
+      <div class="mp-popover" role="dialog" aria-label="Choose a model">
+        <div class="mp-head">
+          <span class="mp-head-title">{{ currentLabel }} · {{ currentName }}</span>
+          <button
+            type="button"
+            class="mp-info-btn"
+            :aria-expanded="infoOpen"
+            aria-label="Model details"
+            @click="infoOpen = !infoOpen"
+          >
+            ⓘ
+          </button>
+          <span v-if="currentTier?.recommended" class="mp-rec">recommended</span>
+          <span v-if="streams" class="model-picker-badge mp-stream-badge">⚡ streams live</span>
+        </div>
+
+        <!-- ⓘ hovercard (M3): speed / intelligence -->
+        <div v-if="infoOpen && currentTier" class="mp-info-card">
+          <div class="mp-info-row">
+            <span>Speed</span><span class="mp-info-dots">{{ '●'.repeat(currentTier.speed) }}{{ '○'.repeat(5 - currentTier.speed) }}</span>
+          </div>
+          <div class="mp-info-row">
+            <span>Intelligence</span><span class="mp-info-dots">{{ '●'.repeat(currentTier.intelligence) }}{{ '○'.repeat(5 - currentTier.intelligence) }}</span>
+          </div>
+          <div class="mp-info-row">
+            <span>Streaming</span><span>{{ currentTier.streamsTools ? 'Live' : 'After verification' }}</span>
+          </div>
+        </div>
+
+        <!-- Custom tier slider (M2): styled track + invisible real range -->
+        <div class="mp-slider">
+          <div class="mp-track"><div class="mp-fill" :style="{ width: fillPct + '%' }"></div></div>
+          <div class="mp-dots">
+            <span v-for="(m, i) in store.models" :key="m.id" class="mp-dot" :class="{ on: i <= index }"></span>
+          </div>
+          <div class="mp-handle" :style="{ left: fillPct + '%' }"></div>
+          <input
+            class="mp-range"
+            type="range"
+            min="0"
+            :max="store.models.length - 1"
+            step="1"
+            v-model.number="index"
+            :aria-valuetext="`${currentLabel}: ${currentName}`"
+            aria-label="Model tier"
+          />
+        </div>
+        <div class="mp-scale"><span>Faster</span><span>Smarter</span></div>
+
+        <p class="mp-desc">{{ isCustom ? customEntry.id : currentTier?.description }}</p>
+
+        <button type="button" class="mp-advanced-toggle" @click="toggleAdvanced">
+          {{ advancedOpen ? 'Hide other models' : 'Other models…' }}
+        </button>
+        <div v-if="advancedOpen" class="mp-advanced">
+          <input v-model="search" class="mp-search" type="text" placeholder="Search models (gpt, gemini, llama)…" />
+          <div v-if="store.catalogLoading" class="mp-advanced-note">Loading catalog…</div>
+          <div v-else-if="store.catalog.length === 0" class="mp-advanced-note">Catalog unavailable.</div>
+          <ul v-else class="mp-list">
+            <li
+              v-for="m in filteredCatalog"
+              :key="m.id"
+              :class="['mp-list-item', { 'is-on': m.id === store.selectedModel }]"
+              @click="pickCatalog(m.id)"
+            >
+              <span class="mp-list-name">{{ m.name }}</span>
+              <span class="mp-list-id">{{ m.id }}</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </template>
   </div>
 </template>

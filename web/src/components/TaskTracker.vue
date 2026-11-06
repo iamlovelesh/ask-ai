@@ -1,13 +1,47 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import type { StepView, TurnView } from '../lib/fold.js';
 import { useCatalogStore } from '../stores/catalog.js';
 import { parseStepSummary } from '../lib/step-summary.js';
+import { loadingLabel } from '../lib/step-label.js';
+import ShimmeringText from './ShimmeringText.vue';
 
 const props = defineProps<{ turn: TurnView }>();
 
 const catalog = useCatalogStore();
 onMounted(() => void catalog.load());
+
+/** The timeline is collapsed by default (ThinkingStepsDisplay) — a
+ * finished turn shows a single "Worked for Ns" summary; expand for the steps. */
+const expanded = ref(false);
+
+/** The turn is still working until a terminal status lands. */
+const working = computed(() => props.turn.status === undefined);
+
+/** The step currently running (last one in 'running' state). */
+const activeStep = computed(() =>
+  orderedSteps()
+    .filter((s) => s.status === 'running')
+    .at(-1),
+);
+
+/** The "Worked for Ns" figure: the real turn duration (metrics.totalMs,
+ * which includes LLM time) once the turn completes — NOT the sum of step
+ * handler times, which is just DB latency and reads misleadingly small. */
+const totalMs = computed(() => props.turn.metrics?.totalMs ?? 0);
+
+/** Header text when working: the active step narrated, else "Thinking…". */
+const workingLabel = computed(() =>
+  activeStep.value ? loadingLabel(activeStep.value.action, actionName(activeStep.value)) : 'Thinking…',
+);
+
+/** Header text when done: "Worked for 1.4s" (or a step count if untimed). */
+const doneLabel = computed(() => {
+  const ms = formatMs(totalMs.value);
+  if (ms) return `Worked for ${ms}`;
+  const n = orderedSteps().length;
+  return n > 0 ? `${n} step${n === 1 ? '' : 's'}` : 'Done';
+});
 
 /** The action's human name (catalog name, else prettified slug) — the
  * primary label of a step row. The raw slug moves into the expanded detail. */
@@ -64,7 +98,28 @@ function adjustmentsLabel(count: number): string {
 <template>
   <div class="agent-section">
     <div v-if="turn.goal" class="tracker-goal">{{ turn.goal }}</div>
-    <ol class="tracker">
+
+    <!-- Collapsible "thinking steps" summary (pattern). Collapsed by
+         default; the header shimmers the active step while working and shows
+         "Worked for Ns" once done. -->
+    <button
+      v-if="orderedSteps().length > 0 || working"
+      type="button"
+      class="tracker-summary"
+      :class="{ 'is-working': working }"
+      :aria-expanded="expanded"
+      @click="expanded = !expanded"
+    >
+      <span v-if="working" class="tracker-summary-spin" aria-hidden="true"></span>
+      <span v-else class="tracker-summary-caret" :class="{ open: expanded }" aria-hidden="true">›</span>
+      <ShimmeringText v-if="working" :text="workingLabel" class="tracker-summary-label" />
+      <span v-else class="tracker-summary-label">{{ doneLabel }}</span>
+      <span v-if="orderedSteps().length > 0" class="tracker-summary-count"
+        >· {{ orderedSteps().length }} step{{ orderedSteps().length === 1 ? '' : 's' }}</span
+      >
+    </button>
+
+    <ol v-show="expanded" class="tracker">
       <li
         v-for="step in orderedSteps()"
         :key="step.stepId"
@@ -85,7 +140,12 @@ function adjustmentsLabel(count: number): string {
           <span class="tracker-dur">{{ formatMs(step.ms) }}</span>
         </button>
         <template v-else>
-          <span class="tracker-label">{{ actionName(step) }}</span>
+          <ShimmeringText
+            v-if="step.status === 'running'"
+            :text="loadingLabel(step.action, actionName(step))"
+            class="tracker-label"
+          />
+          <span v-else class="tracker-label">{{ actionName(step) }}</span>
           <span class="tracker-dur">{{ formatMs(step.ms) }}</span>
         </template>
 
