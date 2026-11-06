@@ -133,6 +133,22 @@ describe('runLoopTurn — memory recall', () => {
     expect(llmCallsOf(events)).toBe(1); // no grounded re-run
     expect(finalOf(events)).not.toMatch(/could not verify/i);
   });
+
+  it('a LIVE-DATA count/total question is NEVER grounded by memory — forces a re-read', async () => {
+    // A stale aggregate in memory must not be served as the current answer.
+    memory.add({ userId: 'user_1', category: 'fact', kind: 'collection', body: 'had 30 open opportunities last week', source: 'user' });
+    const events = await drive(
+      'how many open opportunities do we have right now?',
+      [
+        // First draft answers from memory with ZERO tool calls.
+        textResponse('Based on my memory, you have 30 open opportunities.'),
+        // After the forced grounding note, a second model call occurs.
+        textResponse('You currently have 30 open opportunities.'),
+      ],
+      { memory, memoryEnabled: true, memoryWritable: true, runExtraction: async () => {} },
+    );
+    expect(llmCallsOf(events)).toBe(2); // memory did NOT ground it → grounded re-run fired
+  });
 });
 
 describe('runLoopTurn — post-turn extraction', () => {

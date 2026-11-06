@@ -339,6 +339,22 @@ describe('runLoopTurn — data__batch (createMany bulk shape)', () => {
     expect(completedOf(events).status).toBe('done');
   });
 
+  it('accepts records as a native JSON array (createMany shape), not only a string', async () => {
+    let calls = 0;
+    const registry = buildRegistry(
+      [[{ ...action('tasks.create_task', 'write', async () => { calls += 1; return { id: `task_${calls}` }; }, z.object({ contact_id: z.string(), title: z.string() })), entities: ['tasks'] }]],
+      [],
+    );
+    const events = await drive(registry, 'create a follow-up task for con_1 and con_2', [
+      toolCallResponse('data__batch', { action: 'tasks__create_task', records: [{ contact_id: 'con_1', title: 'Follow up' }, { contact_id: 'con_2', title: 'Follow up' }] }),
+      textResponse('Done — created 2 tasks.'),
+    ]);
+    expect(calls).toBe(2); // native array accepted, both records written
+    const starts = events.filter((e) => e.t === 'step.started' && e.action === 'tasks.create_task');
+    expect(starts).toHaveLength(1); // ONE step for the whole batch
+    expect(completedOf(events).status).toBe('done');
+  });
+
   it('rejects a batch record that references an unseen id (provenance)', async () => {
     let calls = 0;
     const registry = buildRegistry(

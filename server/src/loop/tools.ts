@@ -35,7 +35,7 @@ import { coerceDateParams, widenForModel } from './date-rail.js';
 import { loadSkills } from './skills/registry.js';
 import { DATE_FIELD_RE } from '../agent/date-expr.js';
 import type { MemoryStore } from '../memory/store.js';
-import { screenMemory } from '../memory/denylist.js';
+import { screenMemory, isVolatileMemory } from '../memory/denylist.js';
 import type { MemoryCategory } from '../memory/types.js';
 
 // --- stuck detection (OpenHands StuckDetector-lite) ---------------------------
@@ -1251,27 +1251,60 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   // reaches for naturally ("create these N"), unlike the abstract apply_to_ref.
   // One confirmation; every id used is provenance-checked; schema-validated
   // per record. For writes over a WHOLE large result set, prefer apply_to_ref.
+  // `records` is a NATIVE array of per-record objects (createMany
+  // shape). A stringified-JSON param forced the model to double-encode the
+  // array inside the tool-call JSON, which it did unreliably — producing
+  // malformed JSON (ARG_SCHEMA failures) or arrays shorter than intended
+  // (it wrote 3 of 5, then narrated 5). Array-of-arbitrary-objects can't go
+  // through strict conversion, so build the non-strict JSON-schema path.
+  const batchParamsZod = z.object({
+    action: z.string().describe('tool name of the write action, e.g. tasks__create_task'),
+    records: z
+      .array(z.record(z.string(), z.unknown()))
+      .describe('Array of per-record parameter objects, one object per record, e.g. [{"contact_id":"con_5","title":"Follow up"},{"contact_id":"con_6","title":"Follow up"}]'),
+    dry_run: z.boolean().nullable().optional().describe('true = preview only: report what WOULD be written, no confirmation, no writes'),
+  });
+  const batchParams: { parameters: unknown; strict: boolean } = (() => {
+    try {
+      tool({ name: 'probe', description: 'p', parameters: batchParamsZod, execute: async () => '' });
+      return { parameters: batchParamsZod, strict: true };
+    } catch {
+      const js: unknown = JSON.parse(JSON.stringify(z.toJSONSchema(batchParamsZod as z.ZodType, { io: 'input', target: 'draft-7' })));
+      return { parameters: js, strict: false };
+    }
+  })();
   const batchWrite = tool({
     name: 'data__batch',
     description:
-      'Create or update MANY records in ONE step. Give the write action tool name and a JSON array of per-record parameter objects (one object per record you want written). Use this for "create a task for each of these leads", "update all of these", etc. — build the array from records you have ALREADY seen and call this ONCE, instead of calling the action per record (which exhausts your step budget and fails half-done). Every record id you reference must have appeared in an earlier result. One confirmation covers the whole batch.',
-    parameters: z.object({
-      action: z.string().describe('tool name of the write action, e.g. tasks__create_task'),
-      records: z.string().describe('JSON array of parameter objects, one per record, e.g. [{"contact_id":"con_5","title":"Follow up"},{"contact_id":"con_6","title":"Follow up"}]'),
-      dry_run: z.boolean().nullable().optional().describe('true = preview only: report what WOULD be written, no confirmation, no writes'),
-    }),
-    execute: async ({ action: actionName, records, dry_run }): Promise<string> => {
+      'Create or update MANY records in ONE step. Give the write action tool name and an array of per-record parameter objects (one object per record you want written). Use this for "create a task for each of these leads", "update all of these", etc. — build the array from records you have ALREADY seen and call this ONCE, instead of calling the action per record (which exhausts your step budget and fails half-done). Include EVERY record the request names — one array element each. Every record id you reference must have appeared in an earlier result. One confirmation covers the whole batch.',
+    strict: batchParams.strict as false,
+    parameters: batchParams.parameters as never,
+    errorFunction: (_ctx: unknown, err: unknown): string => {
+      const message = err instanceof Error ? err.message : String(err);
+      counters.stepsFailed += 1;
+      counters.step += 1;
+      emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'ARG_SCHEMA', message: message.slice(0, 300) }, ms: 0 });
+      return `INVALID ARGUMENTS for data__batch: ${message.slice(0, 300)}. "records" must be an array of objects, one per record — fix it and retry.`;
+    },
+    execute: async (rawArgs: unknown): Promise<string> => {
+      const a = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? (rawArgs as Record<string, unknown>) : {};
+      const actionName = typeof a['action'] === 'string' ? a['action'] : '';
+      const dry_run = a['dry_run'] === true;
       const slug = actionName.replace('__', '.');
       const target = registry.get(slug);
       if (!target) return `Unknown action "${actionName}" — check the tool name.`;
       if (target.risk === 'read') return `"${actionName}" is a read action — call it directly, data__batch is for writes.`;
-      let arr: unknown;
-      try {
-        arr = JSON.parse(records);
-      } catch {
-        return 'records is not valid JSON — pass a JSON array of parameter objects.';
+      // Dual-accept: native array (the schema) or a JSON string (defensive —
+      // a non-strict provider may still stringify it).
+      let arr: unknown = a['records'];
+      if (typeof arr === 'string') {
+        try {
+          arr = JSON.parse(arr);
+        } catch {
+          return 'records is not valid JSON — pass an array of parameter objects.';
+        }
       }
-      if (!Array.isArray(arr) || arr.length === 0) return 'records must be a non-empty JSON array of parameter objects.';
+      if (!Array.isArray(arr) || arr.length === 0) return 'records must be a non-empty array of parameter objects.';
       if (arr.length > APPLY_MAX_RECORDS) return `That is ${arr.length} records — more than the ${APPLY_MAX_RECORDS}-record batch limit. Narrow the set.`;
       // Validate + provenance-check every record BEFORE any write.
       const validated: Record<string, unknown>[] = [];
@@ -1421,6 +1454,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       if (!memory || !memoryWritable) return 'Memory is off for this chat — not saved.';
       const screen = screenMemory(body);
       if (!screen.allowed) return `skipped: ${screen.reason ?? 'sensitive'} — not saved.`;
+      // Volatile CRM aggregates/counts/snapshots are not durable — they go
+      // stale and must never be served as current. Re-read live data instead.
+      if (isVolatileMemory(body)) return 'skipped: that is a live data figure (count/total/snapshot) that changes — not saved. I re-read current data each time instead.';
       memory.add({
         userId: input.actingUserId,
         category,

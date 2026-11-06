@@ -48,3 +48,31 @@ export function screenMemory(body: string): DenylistResult {
   }
   return { allowed: true };
 }
+
+/**
+ * Volatile-aggregate screen (memory hygiene). Query results about live CRM
+ * state — record counts, totals/sums, breakdowns, and top-N snapshots of
+ * specific records with their current values — are NOT durable facts. They go
+ * stale the moment the data changes, and (persona eval) were served back later
+ * as if current, producing a confidently wrong "$678K / 30 open" against a real
+ * "$19.1M / 712". Keep durable intent (goals, preferences, who-they-are); drop
+ * today's numbers. Applied at both write paths, like `screenMemory`.
+ */
+const CRM_ENTITY = 'leads?|opportunit(?:y|ies)|opps?|deals?|contacts?|invoices?|tickets?|tasks?|accounts?|orders?|quotes?|appointments?|customers?|pipeline';
+const VOLATILE_RULES: RegExp[] = [
+  // Top-N / snapshot: a record id carrying a current money value ("opp_438 ($50,981.12)").
+  /\b[a-z]+_\d+\b[^.]{0,30}\$[\d,]/i,
+  // Leading count framing: "Currently has 712…", "Has 14…", "There are 30…".
+  /^\W*(?:currently\s+)?(?:has|have|there\s+are)\s+\d/i,
+  // Leading bare count of a CRM collection: "712 open opportunities", "30 leads".
+  new RegExp(`^\\W*\\d[\\d,]*\\s+(?:open\\s+|new\\s+|active\\s+|closed\\s+|overdue\\s+)?(?:${CRM_ENTITY})\\b`, 'i'),
+  // Total / combined / average value with a currency figure nearby.
+  /\b(?:total|combined|average|sum)\b[^.]{0,40}\$[\d,]/i,
+  // A breakdown/by-group statement.
+  /\bbreakdown\b[^.]{0,20}?(?::|\bby\b)/i,
+  // Top-N of a CRM collection.
+  new RegExp(`\\btop\\s+\\d+\\b[^.]{0,40}(?:${CRM_ENTITY})`, 'i'),
+];
+export function isVolatileMemory(body: string): boolean {
+  return VOLATILE_RULES.some((re) => re.test(body));
+}

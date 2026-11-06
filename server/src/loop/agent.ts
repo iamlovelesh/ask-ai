@@ -47,7 +47,7 @@ import { numberCheck } from './number-check.js';
 import { rescueToolCalls } from './tool-call-rescue.js';
 import { unsanctionedFilters } from './scope-check.js';
 import { unreadRequestedIds } from './coverage-check.js';
-import { countReconciliationNote } from './count-reconcile.js';
+import { countReconciliationNote, writeCountReconcileNote } from './count-reconcile.js';
 import { stripMonologue } from './strip-monologue.js';
 import {
   collectRecordIds,
@@ -155,8 +155,29 @@ const DATA_CLAIM_RE =
 const AUDIT_CLAIM_RE =
   /\b(are|were|was|is)\s+(not\s+)?(included|excluded|counted|covered)\b|\b(all|none|every one)\s+(of\s+(them|those|these)\s+)?(are|were|have been)\b|\byes\s*[—,-]/i;
 
-function needsGrounding(finalText: string, stepsRun: number): boolean {
-  return stepsRun === 0 && (DATA_CLAIM_RE.test(finalText) || AUDIT_CLAIM_RE.test(finalText));
+function needsGrounding(finalText: string, stepsRun: number, liveDataQuestion = false): boolean {
+  // A live-data count/total question answered with zero reads is unverified
+  // even when the answer carries no $ or date (a bare "30 open opportunities"):
+  // the question itself demands a fresh read.
+  return stepsRun === 0 && (liveDataQuestion || DATA_CLAIM_RE.test(finalText) || AUDIT_CLAIM_RE.test(finalText));
+}
+
+/**
+ * A question asking for a COUNT / TOTAL / BREAKDOWN about live CRM state —
+ * a quantity intent AND a CRM collection noun ("total value of open
+ * opportunities", "how many leads", "break down tickets by priority").
+ * Recalled memory can NEVER ground such an answer: the figure changes
+ * constantly, so the agent must re-read this turn (persona eval: a memorized
+ * "$678K / 30 open" was served against the real "$19.1M / 712"). A durable
+ * personal fact phrased with a number ("what is my quarterly target?") has no
+ * CRM collection noun and stays memory-groundable.
+ */
+const QUANTITY_INTENT_RE =
+  /\b(how many|how much|total|sum|count|number of|value of|breakdown|break down|average|avg)\b/i;
+const CRM_COLLECTION_RE =
+  /\b(leads?|opportunit(?:y|ies)|opps?|deals?|contacts?|invoices?|tickets?|tasks?|accounts?|orders?|quotes?|appointments?|customers?|pipeline|revenue|records?)\b/i;
+export function isLiveDataQuestion(userText: string): boolean {
+  return QUANTITY_INTENT_RE.test(userText) && CRM_COLLECTION_RE.test(userText);
 }
 
 // Narrow-follow-up backstop (persona eval: "just the negotiation ones" → "none",
@@ -518,7 +539,10 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
         // skip the forced re-run. Audit-style scope claims are NEVER grounded
         // by memory (they are CRM-scope assertions), so they still re-run.
         const groundedByMemory =
-          recalled !== '' && !AUDIT_CLAIM_RE.test(finalText) && numberCheck(finalText, [], userText, recalledEvidence).ok;
+          recalled !== '' &&
+          !AUDIT_CLAIM_RE.test(finalText) &&
+          !isLiveDataQuestion(userText) &&
+          numberCheck(finalText, [], userText, recalledEvidence).ok;
         // Did the user ask to narrow a PRIOR spilled result, but we read nothing
         // this turn? Then the draft is confabulated — force a ref-tool re-read.
         const narrowRef = lastSpilledRef(priorEvents);
@@ -527,7 +551,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
           narrowRef !== undefined &&
           NARROW_ANAPHORA_RE.test(userText) &&
           NARROW_INTENT_RE.test(userText);
-        if ((needsGrounding(finalText, counters.step + counters.virtualReads) || narrowFollowUp) && !groundedByMemory) {
+        if ((needsGrounding(finalText, counters.step + counters.virtualReads, isLiveDataQuestion(userText)) || narrowFollowUp) && !groundedByMemory) {
           const note = narrowFollowUp
             ? `The records the user is narrowing are the COMPLETE set behind ref ${narrowRef}. The list in your previous message was only a sample. You MUST call data__filter_ref (a field condition, e.g. stage/status/priority) or data__search_ref (free text) on ${narrowRef} to answer — do NOT answer from memory or claim an empty result without checking.`
             : GROUNDING_NOTE;
@@ -579,9 +603,12 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
           // independent of figure-matching. Observed live: an optimized turn
           // answered "251 leads" with stepsOk:0 and no caution.
           const groundedByMemoryBelt =
-            recalled !== '' && !AUDIT_CLAIM_RE.test(finalText) && numberCheck(finalText, [], userText, recalledEvidence).ok;
+            recalled !== '' &&
+            !AUDIT_CLAIM_RE.test(finalText) &&
+            !isLiveDataQuestion(userText) &&
+            numberCheck(finalText, [], userText, recalledEvidence).ok;
           if (
-            needsGrounding(finalText, counters.step + counters.virtualReads) &&
+            needsGrounding(finalText, counters.step + counters.virtualReads, isLiveDataQuestion(userText)) &&
             !groundedByMemoryBelt &&
             !/could not verify|double-check this/i.test(finalText)
           ) {
@@ -648,6 +675,11 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     // Deterministic actions ledger (round-6 support F1: "both cancelled"
     // after ONE cancel): the server, not the model, states what changed.
     if (status === 'done' && exits.writesLanded > 0) {
+      // Batch-overclaim guard: correct the prose BEFORE the footer so the
+      // footer's own numbers can't be mis-read as a claim. Persona eval: a
+      // batch wrote 3 tasks but the answer narrated "for the 5 newest leads".
+      const writeNote = writeCountReconcileNote(finalText, exits.writesLanded);
+      if (writeNote !== null) finalText += `\n\n${writeNote}`;
       const parts = [...exits.writeActions.entries()].map(([name, n]) => `${name} ×${n}`).join(', ');
       finalText += `\n\n— Changes this turn: ${exits.writesLanded} (${parts})`;
     }

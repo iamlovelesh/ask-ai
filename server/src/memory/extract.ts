@@ -13,7 +13,7 @@
 
 import { z } from 'zod';
 import { llmCall } from '../llm/client.js';
-import { screenMemory } from './denylist.js';
+import { screenMemory, isVolatileMemory } from './denylist.js';
 import type { MemoryStore } from './store.js';
 import type { Memory, MemoryCategory, MemoryKind } from './types.js';
 import type { Event } from '../events/types.js';
@@ -61,8 +61,12 @@ the user is and how they work. Mark salient=true only for things that will still
 future conversation; set salient=false for one-off, ephemeral, or purely transactional details.
 Use kind="profile" with a short stable key for a single-valued preference/fact (e.g. key
 "date-format"); use kind="collection" (no key) for standalone notes. NEVER extract secrets,
-passwords, card numbers, government ids, or anything sensitive. Return an empty list when nothing
-durable was stated.`;
+passwords, card numbers, government ids, or anything sensitive.
+NEVER store volatile query results — record counts, totals, sums, averages, breakdowns, or lists
+of specific records with their current values (e.g. "712 open opportunities", "total pipeline is
+$19M", "top 5 deals: opp_438 …"). Those change constantly and are wrong the next day; the user's
+live data is always re-read fresh. Store the durable INTENT behind a request (a standing goal or
+preference), never today's numbers. Return an empty list when nothing durable was stated.`;
 
 const CONSOLIDATE_SYSTEM = `You reconcile one new candidate memory against the user's existing
 memories. Choose exactly one operation: ADD (genuinely new), UPDATE (supersedes a specific
@@ -181,7 +185,9 @@ export async function runMemoryExtraction(input: MemoryExtractionInput): Promise
       turnId: input.turnId,
     });
     const extracted = value as z.infer<typeof EXTRACT_SCHEMA>;
-    const kept = extracted.candidates.filter((c) => c.salient && screenMemory(c.body).allowed);
+    const kept = extracted.candidates.filter(
+      (c) => c.salient && screenMemory(c.body).allowed && !isVolatileMemory(c.body),
+    );
 
     for (const candidate of kept) {
       const matches = findMatches(candidate, existing);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { countReconciliationNote } from '../src/loop/count-reconcile';
+import { countReconciliationNote, writeCountReconcileNote } from '../src/loop/count-reconcile';
 
 describe('countReconciliationNote (#1 undercount guard)', () => {
   it('flags when the answer states a small count but a ref-tool sorted a much larger set', () => {
@@ -32,5 +32,49 @@ describe('countReconciliationNote (#1 undercount guard)', () => {
 
   it('returns null with no tool outputs', () => {
     expect(countReconciliationNote('You have 5 things.', [])).toBeNull();
+  });
+});
+
+describe('writeCountReconcileNote (batch overclaim guard)', () => {
+  it('flags when the answer claims more records acted on than were actually written', () => {
+    const note = writeCountReconcileNote(
+      "I've created follow-up tasks for the 5 newest leads, due next Monday.",
+      3,
+    );
+    expect(note).not.toBeNull();
+    expect(note).toMatch(/\b3\b/);
+    expect(note).toMatch(/\b5\b/);
+    expect(note).toMatch(/remaining 2|only .*3|not 5/i);
+  });
+
+  it('flags "created N tasks" overclaims', () => {
+    const note = writeCountReconcileNote('Created 5 tasks for your leads.', 3);
+    expect(note).not.toBeNull();
+    expect(note).toMatch(/3/);
+  });
+
+  it('does NOT flag when the claim matches what was written', () => {
+    expect(writeCountReconcileNote('Created 5 tasks.', 5)).toBeNull();
+  });
+
+  it('does NOT flag when the claim is smaller than what was written', () => {
+    expect(writeCountReconcileNote('Updated 2 records as requested.', 3)).toBeNull();
+  });
+
+  it('does NOT flag when there is no quantity claim', () => {
+    expect(writeCountReconcileNote('Done — the follow-up tasks are created.', 3)).toBeNull();
+  });
+
+  it('does NOT flag when the answer already states the real accomplished count ("3 of the 5")', () => {
+    const honest = 'I created follow-up tasks for 3 of the 5 newest leads; the other 2 have no associated contact.';
+    expect(writeCountReconcileNote(honest, 3)).toBeNull();
+  });
+
+  it('does NOT read bare years or ids as a quantity claim', () => {
+    expect(writeCountReconcileNote('Created tasks for leads added in 2026.', 3)).toBeNull();
+  });
+
+  it('returns null when nothing was written', () => {
+    expect(writeCountReconcileNote('I created tasks for the 5 leads.', 0)).toBeNull();
   });
 });

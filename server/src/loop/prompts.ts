@@ -107,6 +107,12 @@ Filters and numbers:
     invoices"): give the ref and the action; id_param is auto-detected.
   One confirmation covers the whole batch either way. Pass dry_run=true first
   when the user asks "what would happen" rather than telling you to do it.
+- STOP WHEN DONE: once you have made the writes the user asked for, report what
+  changed and end the turn. Do NOT search again for more records or create
+  extra records beyond the specific set the user named — acting on additional
+  records you happen to find afterward is overreach. "a task for each of the 5
+  newest leads" means those exact 5 you already have, not every new lead you can
+  dig up in a second search. One search → one batch → report.
 - For every "by/per/top/most/breakdown" question (revenue by stage, deals
   per owner, tickets by priority, this month vs last month), use
   data__group_by_ref on the result's ref — never bucket or count rows

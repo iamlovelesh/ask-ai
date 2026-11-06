@@ -114,6 +114,12 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toContain('data__apply_to_ref');
   });
 
+  it('tells the model to STOP after completing the requested writes — no re-search for extra records (double-round fix)', () => {
+    expect(system).toMatch(/once you(?:'ve| have) (?:made|done|completed) the writes/i);
+    expect(system).toMatch(/do not search again|create extra records/i);
+    expect(system).toMatch(/overreach|beyond the .* set the user named/i);
+  });
+
   it('routes grouping questions to group_by and mandates record reference tokens (patterns)', () => {
     expect(system).toContain('data__group_by_ref');
     expect(system).toMatch(/by\/per\/top|per owner|breakdown/i);
