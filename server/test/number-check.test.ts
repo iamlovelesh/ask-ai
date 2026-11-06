@@ -46,6 +46,17 @@ describe('numberCheck', () => {
     expect(numberCheck('Okay — I stopped. Nothing further was changed.', []).ok).toBe(true);
   });
 
+  it('round-7c: a figure late in large outputs is still verified (date digits must not exhaust the pool)', () => {
+    // Live failure: 30 wide rows × 5 ISO timestamps each shed ~7 digit
+    // tokens apiece, hitting the pool cap before the tool-computed sum at
+    // the END of the last observation — the CORRECT total got flagged.
+    const noisyRows = Array.from({ length: 150 }, (_, i) =>
+      `{"id":"inv_${i}","created_at":"2026-05-15T19:33:01.323Z","updated_at":"2026-06-01T07:12:44.001Z","due_date":"2026-07-20T00:00:00.000Z"}`,
+    ).join(',');
+    const outs = [`top rows: [${noisyRows}]. Sum of total_cents over these top 10: 9733367.`];
+    expect(numberCheck('The combined value is **$97,333.67**.', outs).ok).toBe(true);
+  });
+
   it('round-7b N2: repeated unsupported figures are reported once (deduped)', () => {
     const r = numberCheck('You owe $55.55. To repeat: $55.55 — that is $55.55.', OUTPUTS);
     expect(r.ok).toBe(false);

@@ -31,8 +31,15 @@ const ISO_DATE_RE = /\b(\d{4})-(\d{2})-(\d{2})/g;
 const TIME_RE = /\b\d{1,2}:\d{2}\b/g;
 
 const SMALL_INT_MAX = 12;
-const MAX_POOL = 400;
+const MAX_POOL = 2000;
 const EPS = 0.006;
+
+// ISO timestamps shed ~7 digit tokens each ("2026","05","15","19","33",...)
+// — stripped from the numeric pool scan (round-7c: date-digit noise
+// exhausted the pool before a correct tool-computed sum at the end of the
+// last observation). Dates stay fully available to the date pool, which
+// scans the UNstripped outputs.
+const ISO_TIMESTAMP_RE = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/g;
 
 function parseNum(raw: string): number {
   return Number(raw.replace(/[$,]/g, ''));
@@ -57,7 +64,8 @@ export function numberCheck(draft: string, toolOutputs: readonly string[], userT
 
   // candidate pool: every number in outputs plus cents/dollars variants
   const pool: number[] = [];
-  for (const m of outputs.matchAll(NUMBER_RE)) {
+  const numericOutputs = outputs.replace(ISO_TIMESTAMP_RE, ' ');
+  for (const m of numericOutputs.matchAll(NUMBER_RE)) {
     const n = parseNum(m[0]);
     if (!Number.isFinite(n)) continue;
     pool.push(n, n / 100, n * 100);
