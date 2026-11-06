@@ -103,6 +103,12 @@ describe('buildLoopUserPrompt', () => {
     expect(prompt).toContain('user_1 (Isla Reyes)');
   });
 
+  it('scopes to the current user ONLY on explicit me/my phrasing (round-4b NEW-1)', () => {
+    const prompt = buildLoopUserPrompt(input);
+    expect(prompt).toMatch(/ONLY when .*(say|says|said) .*(me|my|I)/i);
+    expect(prompt).toMatch(/do NOT add .*(owner|assignee|user) filter/i);
+  });
+
   it("explains that me/my/I maps to the current user", () => {
     const prompt = buildLoopUserPrompt(input);
     expect(prompt).toMatch(/me|my|I\b/);

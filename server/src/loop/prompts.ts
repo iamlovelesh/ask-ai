@@ -113,7 +113,7 @@ export function buildLoopUserPrompt(input: LoopUserPromptInput): string {
   const recent = input.recentTurns.trim() === '' ? '(no previous turns in this conversation)' : input.recentTurns;
   return [
     '<current_user>',
-    `The current user talking to you is ${input.currentUser}. When they say "me", "my", or "I", use this user id.`,
+    `The current user talking to you is ${input.currentUser}. Use this user id ONLY when they say "me", "my", "mine", or "I". For any other request ("all overdue invoices", "the oldest ticket") do NOT add an owner/assignee/user filter — those questions are about the whole CRM unless the user scopes them.`,
     '</current_user>',
     '',
     '<current_time>',
