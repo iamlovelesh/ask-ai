@@ -78,14 +78,22 @@ describe('buildLoopUserPrompt', () => {
     nowIso: '2026-11-04T10:00:00.000Z',
     dateAnchors: 'today start = 2026-11-04T00:00:00.000Z',
     recentTurns: 'Turn 1: user said hello -> answered hi',
+    currentUser: 'user_1 (Isla Reyes)',
   };
 
-  it('embeds all four inputs', () => {
+  it('embeds all five inputs', () => {
     const prompt = buildLoopUserPrompt(input);
     expect(prompt).toContain(input.userText);
     expect(prompt).toContain(input.nowIso);
     expect(prompt).toContain(input.dateAnchors);
     expect(prompt).toContain(input.recentTurns);
+    expect(prompt).toContain('user_1 (Isla Reyes)');
+  });
+
+  it("explains that me/my/I maps to the current user", () => {
+    const prompt = buildLoopUserPrompt(input);
+    expect(prompt).toMatch(/me|my|I\b/);
+    expect(prompt).toMatch(/current user/i);
   });
 
   it('marks an empty history as such rather than omitting the section', () => {

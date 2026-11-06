@@ -184,6 +184,38 @@ describe('runLoopTurn — read turn', () => {
   });
 });
 
+describe('runLoopTurn — wildcard filter scrub (round-4 F24)', () => {
+  it("drops '*'/'all'/'any'/'' placeholder values from optional params before dispatch", async () => {
+    let got: Record<string, unknown> | undefined;
+    const registry = buildRegistry(
+      [[action('leads.search_leads', 'read', async (input) => { got = input; return { items: [], total: 0 }; },
+        z.object({ query: z.string().optional(), status: z.string().optional(), source: z.string().optional(), limit: z.number().optional() }))]],
+      [],
+    );
+    const events = await drive(registry, 'show all leads', [
+      toolCallResponse('leads__search_leads', { query: '*', status: 'all', source: 'ANY', limit: 50 }),
+      textResponse('Found them.'),
+    ]);
+    expect(got).toEqual({ limit: 50 });
+    const started = events.find((e) => e.t === 'step.started');
+    expect(started && started.t === 'step.started' ? started.resolvedParams?.[0] : undefined).toEqual({ limit: 50 });
+  });
+
+  it('leaves legitimate values untouched', async () => {
+    let got: Record<string, unknown> | undefined;
+    const registry = buildRegistry(
+      [[action('leads.search_leads', 'read', async (input) => { got = input; return { items: [], total: 0 }; },
+        z.object({ status: z.string().optional() }))]],
+      [],
+    );
+    await drive(registry, 'new leads', [
+      toolCallResponse('leads__search_leads', { status: 'new' }),
+      textResponse('ok'),
+    ]);
+    expect(got).toEqual({ status: 'new' });
+  });
+});
+
 describe('runLoopTurn — date rail end to end', () => {
   it('coerces ISO strings to epoch before the handler and echoes the resolved range', async () => {
     let got: Record<string, unknown> | undefined;

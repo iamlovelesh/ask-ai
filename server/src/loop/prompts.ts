@@ -89,11 +89,17 @@ export interface LoopUserPromptInput {
   nowIso: string;
   dateAnchors: string;
   recentTurns: string;
+  /** The acting user, as `<id> (<name>)` — "me/my/I" resolves to this. */
+  currentUser: string;
 }
 
 export function buildLoopUserPrompt(input: LoopUserPromptInput): string {
   const recent = input.recentTurns.trim() === '' ? '(no previous turns in this conversation)' : input.recentTurns;
   return [
+    '<current_user>',
+    `The current user talking to you is ${input.currentUser}. When they say "me", "my", or "I", use this user id.`,
+    '</current_user>',
+    '',
     '<current_time>',
     `now: ${input.nowIso}`,
     input.dateAnchors,

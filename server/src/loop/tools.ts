@@ -207,8 +207,19 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         const stepId = `s${counters.step}`;
         const args = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? (rawArgs as Record<string, unknown>) : {};
 
+        // 0. wildcard scrub (round-4 F24): models fill unused optional
+        // filters with placeholder values ('*', 'all', 'any', '') that
+        // handlers bind LITERALLY (WHERE status = '*') — producing
+        // confident wrong zeros. "Match everything" is expressed by
+        // OMITTING the param, so placeholders are dropped, never passed.
+        const scrubbed: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(args)) {
+          if (typeof v === 'string' && /^(\*+|all|any)?$/i.test(v.trim())) continue;
+          scrubbed[k] = v;
+        }
+
         // 1. deterministic date rail, then re-validate against the ORIGINAL schema
-        const { params: coerced, resolved } = coerceDateParams(args, clock.now());
+        const { params: coerced, resolved } = coerceDateParams(scrubbed, clock.now());
         const parsed = action.inputSchema.safeParse(coerced);
         if (!parsed.success) {
           const detail = parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');

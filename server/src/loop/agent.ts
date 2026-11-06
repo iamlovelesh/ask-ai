@@ -220,11 +220,24 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     });
 
     const runner = createLoopRunner(sessionDeps.testFetch !== undefined ? { testFetch: sessionDeps.testFetch } : {});
+    // Acting-user identity (engine-wave E9 parity): "<id> (<name>)" so the
+    // model can resolve me/my/I — its absence dropped identity scoping in
+    // round-4 sales testing ("my open opportunities" answered org-wide).
+    const demoUserId = process.env['DEMO_USER_ID'] || 'user_1';
+    let currentUser = demoUserId;
+    try {
+      const nameRow = crm.tx((db) => db.get('SELECT name FROM users WHERE id = ?', [demoUserId]));
+      const name = nameRow?.['name'];
+      if (typeof name === 'string' && name.length > 0) currentUser = `${demoUserId} (${name})`;
+    } catch {
+      // no users table / lookup failure → bare id
+    }
     const prompt = buildLoopUserPrompt({
       userText,
       nowIso: clock.iso(),
       dateAnchors: buildDateAnchors(clock.now()),
       recentTurns: renderRecentTurns(priorEvents),
+      currentUser,
     });
 
     let finalText: string | undefined;
