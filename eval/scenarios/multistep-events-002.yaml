@@ -56,6 +56,6 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM participations WHERE id='part_211' AND waitlisted=0 AND status='attended'"
           countDelta: 1
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustNotClaim: [failed, error]

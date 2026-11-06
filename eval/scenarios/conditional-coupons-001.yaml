@@ -45,6 +45,6 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM records WHERE kind='coupon_redemption' AND parent_id='struct_200'"
           countDelta: 1
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustNotClaim: [failed, error, invalid]

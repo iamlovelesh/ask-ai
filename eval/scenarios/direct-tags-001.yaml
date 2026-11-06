@@ -29,4 +29,4 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM contacts WHERE id='con_1' AND tags LIKE '%tag 3%'"
           countDelta: 1
       behavior:
-        confirmation: false
+        confirmation: true

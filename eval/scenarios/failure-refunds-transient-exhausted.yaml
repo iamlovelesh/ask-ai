@@ -40,3 +40,4 @@ turns:
           equals: 1
       behavior:
         status: failed
+        confirmation: true

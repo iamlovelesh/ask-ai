@@ -47,7 +47,7 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM records WHERE kind='lesson_completion' AND contact_id='con_1'"
           countDelta: 2
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustMention: ["50"]
         mustNotClaim: [failed, error]

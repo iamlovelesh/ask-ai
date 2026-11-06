@@ -163,6 +163,14 @@ function renderDatesForModel(value: unknown, keyOfParent?: string): unknown {
 
 /** Natural count phrasing: entity nouns are plural table names ("invoices"),
  * so singular counts strip the s and plural counts never double it. */
+/** Kill IEEE-754 summation artifacts (review MED-2: 0.1+0.2 →
+ * 0.30000000000000004 leaking verbatim into an answer). Integers and clean
+ * decimals pass through unchanged; noise is rounded at the 10th digit. */
+function cleanFloat(n: number): number {
+  if (!Number.isFinite(n) || Number.isInteger(n)) return n;
+  return Math.round(n * 1e10) / 1e10;
+}
+
 function pluralNoun(noun: string, count: number): string {
   if (count === 1) return noun.endsWith('s') ? noun.slice(0, -1) : noun;
   return noun.endsWith('s') ? noun : `${noun}s`;
@@ -296,10 +304,14 @@ export function harvestIds(text: string, ids: Set<string>): void {
 }
 
 const IDENTITY_FIELD_RE = /(user|assignee|owner|host|creator)_id$/;
-/** Support round-7b F7 ruling: writes that MUTATE an existing record (verb
- * prefix below) confirm even at one target; creates stay ungated. */
-const MUTATION_VERB_RE =
-  /^[a-z_]+\.(set|update|merge|archive|unarchive|cancel|close|reopen|pause|resume|reschedule|reassign|assign|change|mark|void|refund|complete|delete|remove)_/;
+/** Support round-7b F7 ruling (hardened after review HIGH-1): writes that
+ * MUTATE an existing record confirm even at one target; only genuine
+ * record CREATES (and simulation helpers) stay ungated. Inverted from an
+ * allowlist of mutation verbs to a denylist-by-default: a verb NOT in this
+ * create allowlist gates, so a newly-added write verb is safe (gated) by
+ * default rather than silently ungated. */
+const CREATE_WRITE_VERB_RE =
+  /^[a-z_]+\.(create|add|draft|duplicate|export|invite|register|enroll|join|submit|receive|upload|schedule|reply|define|bind)_/;
 /** Params that are pagination/shaping, never scope filters. */
 const NON_FILTER_KEYS = new Set(['limit', 'offset', 'cursor', 'page', 'sort', 'sort_by', 'order', 'order_by', 'direction', 'format']);
 const IDENTITY_PLACEHOLDER_RE = /^(me|myself|current[ _]?user)$/i;
@@ -319,9 +331,20 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   // BIND discovered actions mid-run (langgraph-bigtool / Anthropic Tool
   // Search pattern: discovery leads to invocation, never a dead end).
   const tools: Tool[] = [];
-  // One denial is final for the whole turn (support round-7b N3: a second
-  // merge gate fired seconds after the user declined the first).
+  // A denial is final for the SAME action+target the rest of the turn
+  // (support round-7b N3: a second merge gate fired seconds after the user
+  // declined the first). Keyed by slug + sorted id-shaped params so a
+  // legitimately different target can still be proposed (review MED-1).
   const deniedActions = new Set<string>();
+  const denialKey = (slug: string, params: Record<string, unknown>): string => {
+    const ids: string[] = [];
+    for (const v of Object.values(params)) {
+      for (const x of Array.isArray(v) ? v : [v]) {
+        if (typeof x === 'string' && /^[a-z][a-z_]*_\d+$/.test(x)) ids.push(x);
+      }
+    }
+    return `${slug}|${ids.sort().join(',')}`;
+  };
   // the acting user's own id is always legitimate evidence/target
   input.knownIds.add(input.actingUserId);
   const seenSlugs = new Set<string>();
@@ -419,9 +442,11 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           }
         }
         const affectedCount = isWrite ? Math.max(maxArrayLength(params), idValues.size, 1) : Math.max(maxArrayLength(params), idValues.size);
-        if (isWrite && (shouldGate(action.risk, affectedCount) || MUTATION_VERB_RE.test(action.slug))) {
-          if (deniedActions.has(action.slug)) {
-            return `The user already DECLINED "${action.name}" this turn — do not retry or re-propose it. Acknowledge their decision, or ask what they would like instead.`;
+        const isMutation = isWrite && !CREATE_WRITE_VERB_RE.test(action.slug);
+        if (isWrite && (shouldGate(action.risk, affectedCount) || isMutation)) {
+          const dKey = denialKey(action.slug, params);
+          if (deniedActions.has(dKey)) {
+            return `The user already DECLINED "${action.name}" for this exact target this turn — do not retry or re-propose it. Acknowledge their decision, or ask what they would like instead.`;
           }
           const confirmId = `cf_${randomUUID()}`;
           const noun = action.entities[0] ?? 'record';
@@ -465,8 +490,8 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           emit({ t: 'confirmation.resolved', turnId, confirmId, approved });
           if (!approved) {
             exits.denied = true;
-            deniedActions.add(action.slug);
-            return `DENIED by the user — "${action.name}" was NOT executed. Do not claim it happened and do NOT propose it again this turn; tell the user plainly that nothing was changed, or ask how to narrow the request.`;
+            deniedActions.add(dKey);
+            return `DENIED by the user — "${action.name}" was NOT executed. Do not claim it happened and do NOT propose it again for this target this turn; tell the user plainly that nothing was changed, or ask how to narrow the request.`;
           }
           if (snapshotBefore !== undefined) {
             const snapshotAfter = takeSnapshot();
@@ -589,8 +614,15 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           // support 7c N7: a mixed-status result presented as one status
           // ("active campaigns" listing completed ones) — disclose the
           // composition on the search itself, not only on ref computations.
-          const resultItems = (finalResult as Record<string, unknown> | null)?.['items'];
-          const comp = Array.isArray(resultItems) ? statusComposition(resultItems as Record<string, unknown>[]) : '';
+          // Both inline ({items}) and spill ({sample}) shapes (review MED-3:
+          // a mixed-status total is MORE likely to mislead on large sets).
+          const resultObj = finalResult as Record<string, unknown> | null;
+          const compRows = Array.isArray(resultObj?.['items'])
+            ? (resultObj!['items'] as Record<string, unknown>[])
+            : Array.isArray(resultObj?.['sample'])
+              ? (resultObj!['sample'] as Record<string, unknown>[])
+              : undefined;
+          const comp = compRows ? statusComposition(compRows) : '';
           const observation = `${summary}.${echo}${windowNote} result=${body}${comp}`;
           exits.toolOutputs.push(observation);
           return observation;
@@ -731,7 +763,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         sample: top.slice(0, SPILL_SAMPLE_ROWS),
       });
       const subsetSum = numeric
-        ? ` Sum of ${sortLabel} over these top ${top.length}: ${top.reduce((acc, r) => acc + (Number(r[field] ?? 0) - (subtract_field ? Number(r[subtract_field] ?? 0) : 0)), 0)}.`
+        ? ` Sum of ${sortLabel} over these top ${top.length}: ${cleanFloat(top.reduce((acc, r) => acc + (Number(r[field] ?? 0) - (subtract_field ? Number(r[subtract_field] ?? 0) : 0)), 0))}.`
         : '';
       const obs = `Sorted ${total} records by ${sortLabel} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length} [ref ${topHandle.ref}]: ${renderRefRows(top, subtract_field ? [field, subtract_field] : [field])}.${subsetSum}${statusComposition(rows)}`;
       publishObs(obs);
@@ -903,7 +935,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         return obs;
       }
 
-      if (deniedActions.has(target.slug)) {
+      if (deniedActions.has(`${target.slug}|bulk`)) {
         return `The user already DECLINED "${target.name}" this turn — do not retry or re-propose it. Acknowledge their decision, or ask what they would like instead.`;
       }
       counters.step += 1;
@@ -924,7 +956,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       emit({ t: 'confirmation.resolved', turnId, confirmId, approved });
       if (!approved) {
         exits.denied = true;
-        deniedActions.add(target.slug);
+        deniedActions.add(`${target.slug}|bulk`);
         return `DENIED by the user — "${target.name}" was NOT executed for any of the ${ids.length} records. Nothing was changed; do NOT propose it again this turn — say so plainly.`;
       }
 

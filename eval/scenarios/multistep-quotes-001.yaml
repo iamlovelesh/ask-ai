@@ -31,7 +31,7 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM invoices WHERE quote_id='quote_3' AND total_cents=175318"
           countDelta: 1
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustMention: ["1,753"]
         mustNotClaim: [failed, error]

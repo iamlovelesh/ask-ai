@@ -669,6 +669,31 @@ describe('runLoopTurn — ref data tools', () => {
     expect(completedOf(events).status).toBe('done');
   });
 
+  it('review MED-2: sort_ref subset sum does not leak IEEE float artifacts', async () => {
+    // 0.1 + 0.2 style values — naive summation yields 0.30000000000000004
+    const floatRows = [
+      { id: 'r_1', rate: 0.1 },
+      { id: 'r_2', rate: 0.2 },
+    ];
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'top rates',
+      sessionDeps: {
+        registry: buildRegistry([[action('metrics.search', 'read', async () => ({ items: [], total: 2 }))]], []),
+        crm: fakeCrm, refs: refsWithRows(floatRows, true), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__sort_ref', { ref: 'r_t1_s1', field: 'rate', direction: 'desc', limit: 2 }),
+          textResponse('ok'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).not.toMatch(/0\.30000000000000004|9999999999/);
+    expect(obs).toContain('0.3');
+  });
+
   it('round-7b: ids surfaced by ref-tool outputs are provenance-known for follow-up reads', async () => {
     // Live failure: sort_ref rows showed contact_id con_8518, but the
     // firewall rejected contacts__get_contact_details(id=con_8518) with
@@ -1631,6 +1656,23 @@ describe('runLoopTurn — support round-7b rails (denied-cache, scope disclosure
     expect(events.some((e) => e.t === 'step.failed' && JSON.stringify(e).includes('UNKNOWN_ID'))).toBe(true);
   });
 
+  it('N3 (review MED-1): a denial blocks only the SAME target, not a different one in the same turn', async () => {
+    const merged: string[] = [];
+    const mergeAction = action('contacts.merge_contacts', 'destructive', async (p) => { merged.push(`${p['primary_id']}+${p['duplicate_id']}`); return { ok: true }; }, z.object({ primary_id: z.string(), duplicate_id: z.string() }));
+    const registry = buildRegistry([[mergeAction]], []);
+    const confirms: string[] = [];
+    // deny the first (con_1+con_2), approve a DIFFERENT pair (con_3+con_4)
+    const broker: ConfirmBroker = { request: async (req) => { confirms.push(req.confirmId); return confirms.length > 1; } };
+    const events = await drive(registry, 'merge con_1 into con_2, and separately con_3 into con_4', [
+      toolCallResponse('contacts__merge_contacts', { primary_id: 'con_1', duplicate_id: 'con_2' }),
+      toolCallResponse('contacts__merge_contacts', { primary_id: 'con_3', duplicate_id: 'con_4' }),
+      textResponse('Done the second one.'),
+    ], { confirm: broker });
+    expect(confirms).toHaveLength(2); // the different target reaches the broker
+    expect(merged).toEqual(['con_3+con_4']);
+    void events;
+  });
+
   it('N7: a search result with mixed statuses carries a composition note', async () => {
     const search = action(
       'campaigns.search_campaigns',
@@ -1659,6 +1701,33 @@ describe('runLoopTurn — support round-7b rails (denied-cache, scope disclosure
     };
     for await (const ev of runLoopTurn(input)) events.push(ev);
     expect(seen.bodies[1] ?? '').toMatch(/status composition: .*1 (completed|active)/);
+  });
+
+  it('N7 (review MED-3): mixed-status SPILL results (>50) also carry a composition note', async () => {
+    const spillSearch = action('campaigns.search_campaigns', 'read', async () => ({
+      __spill: true,
+      total: 120,
+      sample: [
+        { id: 'campaign_2', status: 'completed' },
+        { id: 'campaign_4', status: 'active' },
+        { id: 'campaign_6', status: 'active' },
+      ],
+    }));
+    const registry = buildRegistry([[spillSearch]], []);
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'list active campaigns',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('campaigns__search_campaigns', {}),
+          textResponse('You have many campaigns.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(seen.bodies[1] ?? '').toMatch(/status composition:/);
   });
 
   it('N1: a totality answer computed with a filter the user never asked for gets a deterministic disclosure', async () => {
@@ -1693,6 +1762,24 @@ describe('runLoopTurn — support round-7b rails (denied-cache, scope disclosure
     expect(confirms).toHaveLength(1);
     expect(wrote).toHaveLength(1);
     expect(events.some((e) => e.t === 'confirmation.required')).toBe(true);
+  });
+
+  it('F7 (review HIGH-1): mutation verbs OUTSIDE the old allowlist still gate (publish/revoke/link/approve)', async () => {
+    for (const slug of ['websites.publish_website', 'users.revoke_user_role', 'companies.link_contact_to_company', 'refunds.approve_refund_request']) {
+      const wrote: string[] = [];
+      const mut = action(slug, 'write', async () => { wrote.push('w'); return { ok: true }; }, z.object({ id: z.string() }));
+      const registry = buildRegistry([[mut]], []);
+      const confirms: string[] = [];
+      const broker: ConfirmBroker = { request: async (req) => { confirms.push(req.confirmId); return true; } };
+      const toolName = slug.replace('.', '__');
+      const events = await drive(registry, `do ${slug} on rec_1`, [
+        toolCallResponse(toolName, { id: 'rec_1' }),
+        textResponse('Done.'),
+      ], { confirm: broker });
+      expect(confirms, `${slug} must gate`).toHaveLength(1);
+      expect(wrote, `${slug} must run after approval`).toHaveLength(1);
+      expect(events.some((e) => e.t === 'confirmation.required')).toBe(true);
+    }
   });
 
   it('F7 counter-case: a create with an association id stays ungated', async () => {

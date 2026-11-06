@@ -42,6 +42,6 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM structures WHERE id='struct_296' AND config LIKE '%\"pinned\":true%'"
           countDelta: 1
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustNotClaim: [failed, error]

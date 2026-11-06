@@ -149,6 +149,11 @@ describe('search_contacts — filter discrimination (LLD §9.3 Tier-A)', () => {
       def('contacts.search_contacts').handler({ query: 'Liam Volkov', city: 'Madrid' }, ctx(db)),
     );
     expect((madrid as { total: number }).total).toBe(1);
+    // review MED-4: casing variant must still match (city stored 'Madrid')
+    const lower = await crm.tx((db) =>
+      def('contacts.search_contacts').handler({ query: 'Liam Volkov', city: 'madrid' }, ctx(db)),
+    );
+    expect((lower as { total: number }).total).toBe(1);
     expect((madrid as { items: { city: string }[] }).items[0]?.city).toBe('Madrid');
     // all three still findable without the city filter
     const all = await crm.tx((db) =>

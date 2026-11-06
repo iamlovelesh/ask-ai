@@ -40,4 +40,4 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM structures WHERE id='struct_179' AND config LIKE '%team offsite%'"
           countDelta: 1
       behavior:
-        confirmation: false
+        confirmation: true

@@ -271,12 +271,14 @@ const searchContacts: ActionDef<SearchContactsInput, SearchContactsOutput> = {
     // Support 7e N14: name-only search over 12 same-named contacts forced
     // the model to fold the city into the name query (LIKE match failed) and
     // falsely deny an existing contact. City/country are first-class filters.
+    // Case-insensitive (review MED-4): exact `city = ?` reintroduced the
+    // very false-denial the city filter was added to fix, on a casing variant.
     if (input.city) {
-      where.push('city = ?');
+      where.push('city = ? COLLATE NOCASE');
       params.push(input.city);
     }
     if (input.country) {
-      where.push('country = ?');
+      where.push('country = ? COLLATE NOCASE');
       params.push(input.country);
     }
     const limit = input.limit ?? 50;

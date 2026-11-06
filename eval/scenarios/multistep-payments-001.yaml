@@ -40,6 +40,6 @@ turns:
         - query: "SELECT amount_paid_cents FROM invoices WHERE id='inv_1'"
           equals: 110532
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustNotClaim: [failed, error]

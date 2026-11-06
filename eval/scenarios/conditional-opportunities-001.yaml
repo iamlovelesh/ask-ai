@@ -45,6 +45,6 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM opportunities WHERE pipeline_id='struct_167' AND stage='negotiation'"
           countDelta: 30
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustNotClaim: [failed, error]
