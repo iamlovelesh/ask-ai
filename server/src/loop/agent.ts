@@ -97,7 +97,7 @@ function buildSessionCtx(events: readonly Event[]): SessionCtx {
  * fabrication risk — nothing in context contains full records. Triggers ONE
  * grounded re-run. Deterministic, narrow: data-shaped claims only. */
 const DATA_CLAIM_RE =
-  /\$\s?\d|\d{4}-\d{2}-\d{2}|\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}\b|\b\d+\s+(days?|weeks?|months?)\s+(overdue|ago|old)\b/i;
+  /\$\s?\d|\d{4}-\d{2}-\d{2}|\b(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|jun(e)?|jul(y)?|aug(ust)?|sep(tember)?|oct(ober)?|nov(ember)?|dec(ember)?)\.?\s+\d{1,2}\b|\b\d+\s+(days?|weeks?|months?)\s+(overdue|ago|old)\b/i;
 
 function needsGrounding(finalText: string, stepsRun: number): boolean {
   return stepsRun === 0 && DATA_CLAIM_RE.test(finalText);
@@ -251,6 +251,17 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       // cannot eat the whole 90s turn deadline.
       modelSettings: { parallelToolCalls: false, maxTokens: MAX_OUTPUT_TOKENS, timeoutMs: 60_000 },
     });
+    // Grounded re-run twin (round-6b item 1): toolChoice 'required' FORCES
+    // the first call to be a tool read (the SDK's resetToolChoice default
+    // then returns to auto), so a fabrication-prone zero-step answer cannot
+    // simply repeat itself.
+    const groundedAgent = new Agent({
+      name: 'ask-ai',
+      model: plannerModel(),
+      instructions: buildLoopSystemPrompt(),
+      tools,
+      modelSettings: { parallelToolCalls: false, maxTokens: MAX_OUTPUT_TOKENS, timeoutMs: 60_000, toolChoice: 'required' },
+    });
 
     const runner = createLoopRunner(sessionDeps.testFetch !== undefined ? { testFetch: sessionDeps.testFetch } : {});
     const prompt = buildLoopUserPrompt({
@@ -263,10 +274,10 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
 
     let finalText: string | undefined;
     try {
-      const runOnce = async (input2: string): Promise<string> => {
+      const runOnce = async (input2: string, agentToUse: Agent = agent): Promise<string> => {
         const result = await runLoopOnce({
           runner,
-          agent,
+          agent: agentToUse,
           input: input2,
           maxTurns,
           deadlineMs,
@@ -284,7 +295,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       };
       finalText = await runOnce(prompt);
       if (finalText !== MAX_TURNS_FALLBACK && exits.clarify === undefined && exits.refused === undefined && needsGrounding(finalText, counters.step)) {
-        finalText = await runOnce(`${prompt}\n\n${GROUNDING_NOTE}`);
+        finalText = await runOnce(`${prompt}\n\n${GROUNDING_NOTE}`, groundedAgent);
       }
     } catch (err) {
       if (err instanceof LoopStoppedError) {

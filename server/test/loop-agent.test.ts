@@ -975,6 +975,35 @@ describe('runLoopTurn — zero-width date window hint (round-6 sales F38)', () =
 });
 
 describe('runLoopTurn — zero-step grounding check (round-6 billing G1)', () => {
+  it('the grounded re-run FORCES a tool call via tool_choice required (round-6b item 1)', async () => {
+    let fetched = 0;
+    const registry = buildRegistry(
+      [[action('invoices.get_invoice_details', 'read', async () => { fetched += 1; return { id: 'inv_55', issued_at: 1744934400000 }; })]],
+      [],
+    );
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'when was the oldest one issued?',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          textResponse('It was issued on Jul 16, 2026.'), // abbreviated month, zero steps
+          toolCallResponse('invoices__get_invoice_details', { id: 'inv_55' }),
+          textResponse('It was issued on April 18, 2026.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(fetched).toBe(1);
+    expect(finalOf(events)).toContain('April 18');
+    const reRunBody = seen.bodies[1] ?? '';
+    expect(reRunBody).toContain('"tool_choice":"required"');
+    // and the follow-up call after the forced tool resets to auto
+    const thirdBody = seen.bodies[2] ?? '';
+    expect(thirdBody).not.toContain('"tool_choice":"required"');
+  });
+
   it('a zero-step answer containing dates/amounts triggers ONE grounded re-run', async () => {
     let fetched = 0;
     const registry = buildRegistry(
