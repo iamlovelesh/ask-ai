@@ -12,13 +12,42 @@
 import { z } from 'zod';
 import { DATE_FIELD_RE, resolveRelativeDate } from '../agent/date-expr.js';
 
+const DAY_MS = 24 * 3600 * 1000;
+
+function dayStartUtc(ms: number): number {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
 export interface CoercedParams {
   params: Record<string, unknown>;
   /** One line per coercion, e.g. `created_after: '@today' → 2026-11-04T00:00:00.000Z`. */
   resolved: string[];
 }
 
+const WEEKDAY_INDEX: Record<string, number> = {
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+};
+
+/** 'friday' / 'next friday' / 'this friday' → day-start UTC of the NEXT
+ * occurrence strictly after today (round-6 support N5: the model mapped
+ * "due friday" to Sunday by itself — weekday words now resolve server-side). */
+function resolveWeekday(expr: string, nowMs: number): number | null {
+  const m = /^(?:next\s+|this\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)$/i.exec(expr.trim());
+  if (!m) return null;
+  const target = WEEKDAY_INDEX[(m[1] as string).toLowerCase()] as number;
+  const todayStart = dayStartUtc(nowMs);
+  const todayDow = new Date(todayStart).getUTCDay();
+  const delta = ((target - todayDow + 7) % 7) || 7;
+  return todayStart + delta * DAY_MS;
+}
+
 function coerceValue(key: string, value: string, nowMs: number, resolved: string[]): unknown {
+  const weekday = resolveWeekday(value, nowMs);
+  if (weekday !== null) {
+    resolved.push(`${key}: '${value}' → ${new Date(weekday).toISOString()}`);
+    return weekday;
+  }
   const relative = resolveRelativeDate(value, nowMs);
   if (relative !== null) {
     resolved.push(`${key}: '${value}' → ${new Date(relative).toISOString()}`);
@@ -69,12 +98,6 @@ export function coerceDateParams(params: Record<string, unknown>, nowMs: number)
 }
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const DAY_MS = 24 * 3600 * 1000;
-
-function dayStartUtc(ms: number): number {
-  const d = new Date(ms);
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-}
 
 function isoDate(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);

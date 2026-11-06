@@ -154,6 +154,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
   const exits: LoopExits = {
     denied: false,
     writesLanded: 0,
+    writeActions: new Map(),
     stop: () => stopController.abort(),
   };
   const cancelSignal = sessionDeps.cancelSignal;
@@ -341,6 +342,12 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
           : counters.stepsFailed > 0 && counters.stepsOk === 0
             ? 'failed'
             : 'done';
+    // Deterministic actions ledger (round-6 support F1: "both cancelled"
+    // after ONE cancel): the server, not the model, states what changed.
+    if (status === 'done' && exits.writesLanded > 0) {
+      const parts = [...exits.writeActions.entries()].map(([name, n]) => `${name} ×${n}`).join(', ');
+      finalText += `\n\n— Changes this turn: ${exits.writesLanded} (${parts})`;
+    }
     return yield* finalize(status, finalText);
   } catch (err) {
     if (wasCancelled()) {

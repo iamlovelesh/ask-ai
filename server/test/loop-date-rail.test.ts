@@ -81,6 +81,13 @@ describe('buildDateAnchors', () => {
     expect(anchors).toMatch(/next monday = 2026-11-09/i);
   });
 
+  it('round-6 support N5: weekday WORDS resolve as date param values', () => {
+    const { params } = coerceDateParams({ due_at: 'friday' }, NOW);
+    expect(params['due_at']).toBe(Date.parse('2026-11-06T00:00:00.000Z'));
+    const { params: p2 } = coerceDateParams({ due_at: 'next wednesday' }, NOW);
+    expect(p2['due_at']).toBe(Date.parse('2026-11-11T00:00:00.000Z'));
+  });
+
   it('includes month bounds and 7 days ago', () => {
     expect(anchors).toContain('2026-11-01T00:00:00.000Z');
     expect(anchors).toContain('2026-11-30T23:59:59.999Z');

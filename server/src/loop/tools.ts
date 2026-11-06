@@ -61,6 +61,9 @@ export interface LoopExits {
   stuck?: string;
   denied: boolean;
   writesLanded: number;
+  /** Human-readable action name -> write count (the deterministic actions
+   * ledger appended to write-turn answers; round-6 support F1). */
+  writeActions: Map<string, number>;
   /** Aborts the in-flight run immediately (exit tools, stuck-stop). */
   stop: () => void;
 }
@@ -338,10 +341,17 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         if (isWrite && shouldGate(action.risk, affectedCount)) {
           const confirmId = `cf_${randomUUID()}`;
           const noun = action.entities[0] ?? 'record';
+          const targetSample: string[] = [];
+          for (const v of Object.values(params)) {
+            const vals = Array.isArray(v) ? v : [v];
+            for (const x of vals) {
+              if (typeof x === 'string' && /^[a-z][a-z_]*_\d+$/.test(x) && targetSample.length < 5) targetSample.push(x);
+            }
+          }
           const scope: ConfirmationScope = {
             actions: [action.slug],
             affectedCount,
-            targetSample: [],
+            targetSample,
             description: `${action.name} — ${affectedCount} ${pluralNoun(noun, affectedCount)}.`,
           };
           markTtfur();
@@ -438,7 +448,10 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           }
           emit(finishedEv);
           counters.stepsOk += 1;
-          if (isWrite) exits.writesLanded += 1;
+          if (isWrite) {
+            exits.writesLanded += 1;
+            exits.writeActions.set(action.name, (exits.writeActions.get(action.name) ?? 0) + 1);
+          }
 
           const echo = resolved.length > 0 ? ` [resolved dates: ${resolved.join('; ')}]` : '';
           // Round-6 sales F38: an equal _after/_before pair is a zero-width
@@ -707,6 +720,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       if (ok > 0) {
         counters.stepsOk += 1;
         exits.writesLanded += ok;
+        exits.writeActions.set(target.name, (exits.writeActions.get(target.name) ?? 0) + ok);
       }
       if (failed > 0 && ok === 0) counters.stepsFailed += 1;
       emit({ t: 'step.finished', turnId, stepId, summary: `${target.name}: ${ok}/${ids.length} ${pluralNoun(noun, ids.length)} processed`, ms });

@@ -886,6 +886,46 @@ describe('runLoopTurn — follow-up tool binding (I10)', () => {
   });
 });
 
+describe('runLoopTurn — actions ledger on write turns (round-6 support F1)', () => {
+  it('appends a deterministic changes summary so false "both done" claims are visible', async () => {
+    const registry = buildRegistry(
+      [[action('tasks.cancel_task', 'write', async () => ({ ok: true }), z.object({ id: z.string() }))]],
+      [],
+    );
+    const events = await drive(registry, 'cancel task_7 and task_8', [
+      toolCallResponse('tasks__cancel_task', { id: 'task_7' }),
+      textResponse('Both tasks are now cancelled.'),
+    ]);
+    const final = finalOf(events);
+    expect(final).toContain('Both tasks are now cancelled.');
+    expect(final).toMatch(/1 change|1 record changed|changes this turn: 1/i);
+    expect(final).toMatch(/cancel_task|cancel task/i);
+  });
+
+  it('read-only turns get no ledger suffix', async () => {
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const events = await drive(registry, 'find leads', [
+      toolCallResponse('leads__search_leads', {}),
+      textResponse('None found.'),
+    ]);
+    expect(finalOf(events)).toBe('None found.');
+  });
+});
+
+describe('runLoopTurn — gate target sample from params (round-6 support N7)', () => {
+  it('single-action gates list the target ids', async () => {
+    const registry = buildRegistry([[action('invoices.send_reminders', 'bulk', async () => ({}), z.object({ ids: z.array(z.string()) }))]], []);
+    const events = await drive(registry, 'remind inv_1 inv_2 inv_3 inv_4', [
+      toolCallResponse('invoices__send_reminders', { ids: ['inv_1', 'inv_2', 'inv_3', 'inv_4'] }),
+      textResponse('ok'),
+    ]);
+    const req = events.find((e) => e.t === 'confirmation.required');
+    const sample = req && req.t === 'confirmation.required' ? req.scope.targetSample : [];
+    expect(sample).toContain('inv_1');
+    expect(sample.length).toBeGreaterThanOrEqual(4);
+  });
+});
+
 describe('runLoopTurn — row-aware observation truncation (round-6 marketing R6-1 / review M5)', () => {
   it('long list results keep whole rows and state exactly how many were omitted', async () => {
     const rows = Array.from({ length: 30 }, (_, i) => ({ id: `struct_${i}`, name: `Campaign ${i}`, status: 'active', padding: 'x'.repeat(120) }));
@@ -1081,7 +1121,7 @@ describe('runLoopTurn — gate wait excluded from the deadline (round-4)', () =>
       { budget: { maxTurns: 4, deadlineMs: 400 } },
     );
     expect(completedOf(events).status).toBe('done');
-    expect(finalOf(events)).toBe('Sent.');
+    expect(finalOf(events)).toContain('Sent.');
   });
 });
 
