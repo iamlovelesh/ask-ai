@@ -11,6 +11,7 @@ import { costMeter } from '../src/llm/client';
 import { __resetIndexForTest } from '../src/agent/retrieval';
 import { openEventLog, type EventLog } from '../src/events/log';
 import { openSessions, type SessionsDb } from '../src/store/sessions-db';
+import { openScheduledTasks } from '../src/agent/scheduled-tasks';
 import { createRefStore, type RefStore, type HydrateResult } from '../src/agent/refs';
 import { buildRegistry, type Registry } from '../src/catalog/registry';
 import { ActionError, type ActionContext, type ActionDef, type Risk } from '../src/catalog/types';
@@ -318,6 +319,110 @@ describe('runLoopTurn — gate affectedCount counts id-shaped params (round-7 su
     ]);
     const req = events.find((e) => e.t === 'confirmation.required');
     expect(req && req.t === 'confirmation.required' ? req.scope.affectedCount : 0).toBe(12);
+  });
+});
+
+describe('runLoopTurn — scheduled follow-up (#8)', () => {
+  it('session__schedule_follow_up records a durable future reminder instead of refusing', async () => {
+    const scheduler = openScheduledTasks(sessionsDb);
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    await drive(registry, 'remind me next week to follow up with the new leads', [
+      toolCallResponse('session__schedule_follow_up', { when: '+1w', instruction: 'follow up with the new leads' }),
+      textResponse('Done — I\'ll remind you next week.'),
+    ], { scheduler });
+    const pending = scheduler.listPending(sessionId);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.instruction).toContain('follow up with the new leads');
+    expect(pending[0]!.dueAt).toBeGreaterThan(0);
+  });
+
+  it('is not offered when no scheduler is wired (tests/eval)', async () => {
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    // No scheduler override → the tool is unbound; calling it is an unknown
+    // tool, so the model must fall back. We just assert the turn still completes.
+    const events = await drive(registry, 'show leads', [
+      toolCallResponse('leads__search_leads', {}),
+      textResponse('No leads.'),
+    ]);
+    expect(completedOf(events).status).toBeDefined();
+  });
+});
+
+describe('runLoopTurn — value-based approval policy (#7)', () => {
+  it('gates a high-value single-record write that risk and count alone would wave through', async () => {
+    const registry = buildRegistry(
+      [[{ ...action('orders.create_order', 'write', async () => ({ id: 'ord_1' }), z.object({ contact_id: z.string(), amount: z.number() })), entities: ['orders'] }]],
+      [],
+    );
+    const events = await drive(registry, 'create a $9,000 order for con_5', [
+      toolCallResponse('orders__create_order', { contact_id: 'con_5', amount: 900_000 }),
+      textResponse('done'),
+    ]);
+    const req = events.find((e) => e.t === 'confirmation.required');
+    expect(req).toBeDefined();
+    expect(req && req.t === 'confirmation.required' ? req.scope.description : '').toMatch(/approval/i);
+  });
+});
+
+describe('runLoopTurn — approval-arg editing (#6)', () => {
+  it('runs the handler with the user-edited arguments on approval', async () => {
+    let got: Record<string, unknown> | undefined;
+    const registry = buildRegistry(
+      [[{ ...action('orders.create_order', 'write', async (input) => { got = input; return { id: 'ord_1' }; }, z.object({ contact_id: z.string(), amount: z.number() })), entities: ['orders'] }]],
+      [],
+    );
+    const editBroker: ConfirmBroker = { request: async () => ({ approved: true, editedParams: { amount: 100_000 } }) };
+    await drive(registry, 'create a $9,000 order for con_5', [
+      toolCallResponse('orders__create_order', { contact_id: 'con_5', amount: 900_000 }),
+      textResponse('done'),
+    ], { confirm: editBroker });
+    expect(got?.['amount']).toBe(100_000);
+    expect(got?.['contact_id']).toBe('con_5');
+  });
+
+  it('rejects invalid edited arguments without running the handler', async () => {
+    let ran = false;
+    const registry = buildRegistry(
+      [[{ ...action('orders.create_order', 'write', async () => { ran = true; return { id: 'ord_1' }; }, z.object({ contact_id: z.string(), amount: z.number() })), entities: ['orders'] }]],
+      [],
+    );
+    const badEdit: ConfirmBroker = { request: async () => ({ approved: true, editedParams: { amount: 'lots' } }) };
+    const events = await drive(registry, 'create a $9,000 order for con_5', [
+      toolCallResponse('orders__create_order', { contact_id: 'con_5', amount: 900_000 }),
+      textResponse('done'),
+    ], { confirm: badEdit });
+    expect(ran).toBe(false);
+    expect(events.some((e) => e.t === 'step.failed')).toBe(true);
+  });
+
+  it('rejects an approval-time edit that retargets the write to another record (review CRITICAL)', async () => {
+    let ran = false;
+    const registry = buildRegistry(
+      [[{ ...action('orders.update_order', 'write', async () => { ran = true; return { id: 'ord_1' }; }, z.object({ order_id: z.string(), amount: z.number() })), entities: ['orders'] }]],
+      [],
+    );
+    // User names ord_1; the edit tries to move the write to ord_999.
+    const retarget: ConfirmBroker = { request: async () => ({ approved: true, editedParams: { order_id: 'ord_999' } }) };
+    const events = await drive(registry, 'update order ord_1 to amount 500', [
+      toolCallResponse('orders__update_order', { order_id: 'ord_1', amount: 500 }),
+      textResponse('done'),
+    ], { confirm: retarget });
+    expect(ran).toBe(false);
+    expect(events.some((e) => e.t === 'step.failed')).toBe(true);
+  });
+
+  it('includes the proposed params in the confirmation scope so the client can edit them', async () => {
+    const registry = buildRegistry(
+      [[{ ...action('orders.create_order', 'write', async () => ({ id: 'ord_1' }), z.object({ contact_id: z.string(), amount: z.number() })), entities: ['orders'] }]],
+      [],
+    );
+    const events = await drive(registry, 'create a $9,000 order for con_5', [
+      toolCallResponse('orders__create_order', { contact_id: 'con_5', amount: 900_000 }),
+      textResponse('done'),
+    ]);
+    const req = events.find((e) => e.t === 'confirmation.required');
+    const params = req && req.t === 'confirmation.required' ? req.scope.params : undefined;
+    expect(params?.['amount']).toBe(900_000);
   });
 });
 
@@ -660,6 +765,31 @@ describe('runLoopTurn — ref data tools', () => {
     expect(followUp).not.toContain('1784292987854');
     expect(followUp).toContain('2026-07-17');
     expect(completedOf(events).status).toBe('done');
+  });
+
+  it('data__search_ref finds rows by free-text across any field within the set (#11)', async () => {
+    const namedRows = [
+      { id: 'co_1', name: 'Acme Corp', city: 'Austin' },
+      { id: 'co_2', name: 'Globex', city: 'Boston' },
+      { id: 'co_3', name: 'Initech', city: 'Acme Valley' },
+    ];
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'find acme in my companies',
+      sessionDeps: {
+        registry: buildRegistry([[action('companies.search', 'read', async () => ({ items: [], total: 3 }))]], []),
+        crm: fakeCrm, refs: refsWithRows(namedRows, true), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__search_ref', { ref: 'r_t1_s1', query: 'acme' }),
+          textResponse('Found 2.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const followUp = seen.bodies[1] ?? '';
+    expect(followUp).toContain('2 matched'); // 'Acme Corp' (name) + 'Acme Valley' (city)
+    expect(followUp).toContain('co_1');
   });
 
   it('round-7c N8: a top-10 sort over wide rows shows ALL ranked rows, never a mid-token cut', async () => {

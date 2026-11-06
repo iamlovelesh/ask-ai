@@ -26,6 +26,10 @@ import type { VirtualClock } from '../store/clock.js';
 import type { RefStore } from '../agent/refs.js';
 import { retrieve, renderCards, type Card, type SessionCtx } from '../agent/retrieval.js';
 import { shouldGate, type ConfirmBroker } from '../agent/executor.js';
+import { approvalPolicy } from '../agent/approval-policy.js';
+import { canUseAction, defaultPrincipal, type Principal } from '../agent/permissions.js';
+import type { ScheduledTaskStore } from '../agent/scheduled-tasks.js';
+import { resolveRelativeDate } from '../agent/date-expr.js';
 import type { ConfirmationScope, Event } from '../events/types.js';
 import { coerceDateParams, widenForModel } from './date-rail.js';
 import { loadSkills } from './skills/registry.js';
@@ -315,6 +319,15 @@ export interface BuildTurnToolsInput {
   /** False when the session is incognito or memory is globally off — recall
    * still reads, but `memory__save` writes nothing. Defaults to writable. */
   memoryWritable?: boolean;
+  /** Principal-scoped permissions (#1): only actions this principal may use
+   * are bound as tools. Defaults to admin (every action), preserving the
+   * pre-permission single-tenant behavior. */
+  principal?: Principal;
+  /** Durable scheduled follow-ups (#8). When both are present, the agent gets
+   * a `session__schedule_follow_up` tool to defer work to a future time
+   * instead of refusing it. Absent in tests that don't exercise scheduling. */
+  sessionId?: string;
+  scheduler?: ScheduledTaskStore;
 }
 
 export const RECORD_ID_RE = /\b[a-z][a-z]*(?:_[a-z]+)*_\d+\b/g;
@@ -322,6 +335,35 @@ export const RECORD_ID_RE = /\b[a-z][a-z]*(?:_[a-z]+)*_\d+\b/g;
 /** Add every record-id-shaped token in `text` to `ids`. */
 export function harvestIds(text: string, ids: Set<string>): void {
   for (const m of text.matchAll(RECORD_ID_RE)) ids.add(m[0]);
+}
+
+/** Provenance firewall core: the first `key=value` whose id-shaped value in an
+ * id-targeting field was never seen (not in `knownIds`), or undefined if all
+ * targeted ids are known. Shared by the pre-dispatch check and the #6
+ * approval-edit re-check so both enforce the SAME rule. */
+export function firstUnseenId(params: Record<string, unknown>, knownIds: ReadonlySet<string>): string | undefined {
+  for (const [k, v] of Object.entries(params)) {
+    if (!/id(s)?$/.test(k)) continue;
+    for (const x of Array.isArray(v) ? v : [v]) {
+      if (typeof x !== 'string') continue;
+      const idLike = x.match(RECORD_ID_RE);
+      if (idLike && idLike[0] === x && !knownIds.has(x)) return `${k}=${x}`;
+    }
+  }
+  return undefined;
+}
+
+/** An edited field that would RETARGET a write (an id/target field, or any new
+ * value that is itself id-shaped) — forbidden at approval time (#6 hardening:
+ * an edit must never move the write off the record the human approved). */
+export function forbiddenTargetEdit(editedParams: Record<string, unknown>): string | undefined {
+  for (const [k, v] of Object.entries(editedParams)) {
+    if (/id(s)?$/.test(k)) return k;
+    for (const x of Array.isArray(v) ? v : [v]) {
+      if (typeof x === 'string' && /^[a-z][a-z_]*_\d+$/.test(x)) return k;
+    }
+  }
+  return undefined;
 }
 
 const IDENTITY_FIELD_RE = /(user|assignee|owner|host|creator)_id$/;
@@ -368,9 +410,14 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   };
   // the acting user's own id is always legitimate evidence/target
   input.knownIds.add(input.actingUserId);
+  const principal = input.principal ?? defaultPrincipal();
   const seenSlugs = new Set<string>();
   const bindAction = (action: ActionDef): boolean => {
     if (seenSlugs.has(action.slug)) return false;
+    // Permission pruning (#1): never bind a tool this principal may not use —
+    // enforced at the single bind choke point, so both the initial shortlist
+    // and dynamic catalog__search_actions binding are covered.
+    if (!canUseAction(principal, action)) return false;
     seenSlugs.add(action.slug);
     tools.push(buildActionTool(action));
     return true;
@@ -435,21 +482,15 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         // prior results). Unseen id -> look it up first.
         const isWrite = action.risk !== 'read';
         {
-          for (const [k, v] of Object.entries(params)) {
-            if (!/id(s)?$/.test(k)) continue;
-            // support 7c N6: fabricated ids arrived inside an ARRAY param
-            // ("check all 12" invented 8 contact ids) — arrays are checked
-            // element-by-element, same rule as scalars.
-            for (const x of Array.isArray(v) ? v : [v]) {
-              if (typeof x !== 'string') continue;
-              const idLike = x.match(RECORD_ID_RE);
-              if (idLike && idLike[0] === x && !input.knownIds.has(x)) {
-                counters.stepsFailed += 1;
-                counters.step += 1;
-                emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'UNKNOWN_ID', message: `${k}=${x} not seen in any result` }, ms: 0 });
-                return `BLOCKED: the id ${x} never appeared in any search result or the user's message this conversation — do not guess record ids. Search for the record first, then use the id from the result.`;
-              }
-            }
+          // support 7c N6: fabricated ids arrive in scalars AND arrays — the
+          // shared firewall checks both element-by-element.
+          const bad = firstUnseenId(params, input.knownIds);
+          if (bad) {
+            counters.stepsFailed += 1;
+            counters.step += 1;
+            emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'UNKNOWN_ID', message: `${bad} not seen in any result` }, ms: 0 });
+            const idOnly = bad.slice(bad.indexOf('=') + 1);
+            return `BLOCKED: the id ${idOnly} never appeared in any search result or the user's message this conversation — do not guess record ids. Search for the record first, then use the id from the result.`;
           }
         }
 
@@ -464,7 +505,14 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         }
         const affectedCount = isWrite ? Math.max(maxArrayLength(params), idValues.size, 1) : Math.max(maxArrayLength(params), idValues.size);
         const isMutation = isWrite && !CREATE_WRITE_VERB_RE.test(action.slug);
-        if (isWrite && (shouldGate(action.risk, affectedCount) || isMutation)) {
+        // The arguments the handler actually runs with — `params`, unless the
+        // user edits them at the approval gate (#6), in which case the edited,
+        // re-validated set replaces it below.
+        let effectiveParams = params;
+        // Value-based policy (#7): gate high-value/financial writes by their
+        // arguments, independent of risk class and record count.
+        const policyHit = isWrite ? approvalPolicy(action.slug, params) : null;
+        if (isWrite && (shouldGate(action.risk, affectedCount) || isMutation || policyHit !== null)) {
           const dKey = denialKey(action.slug, params);
           if (deniedActions.has(dKey)) {
             return `The user already DECLINED "${action.name}" for this exact target this turn — do not retry or re-propose it. Acknowledge their decision, or ask what they would like instead.`;
@@ -482,7 +530,8 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
             actions: [action.slug],
             affectedCount,
             targetSample,
-            description: `${action.name} — ${affectedCount} ${pluralNoun(noun, affectedCount)}.`,
+            description: `${action.name} — ${affectedCount} ${pluralNoun(noun, affectedCount)}.${policyHit ? ` Requires approval: ${policyHit.reason}.` : ''}`,
+            params,
           };
           // P3 (snapshot-and-recheck): freeze the targeted records'
           // CURRENT values at proposal time; after approval, re-read and
@@ -506,8 +555,10 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           markTtfur();
           emit({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
           const gateStartedAt = performance.now();
-          const approved = await confirm.request({ turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+          const verdict = await confirm.request({ turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
           counters.gateWaitMs += performance.now() - gateStartedAt;
+          const approved = typeof verdict === 'boolean' ? verdict : verdict.approved;
+          const editedParams = typeof verdict === 'boolean' ? undefined : verdict.editedParams;
           emit({ t: 'confirmation.resolved', turnId, confirmId, approved });
           if (!approved) {
             exits.denied = true;
@@ -523,6 +574,41 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
               return `CONFLICT: the targeted record(s) changed while awaiting approval — "${action.name}" was NOT executed (the user approved the OLD state). Re-read the record and, if the action still applies, propose it again.`;
             }
           }
+          // Approval-arg editing (#6): the user approved an EDITED set — merge
+          // over the proposal, re-validate against the ORIGINAL action schema
+          // (same date coercion as the initial parse), and run with that. A
+          // failed re-validation never reaches the handler.
+          if (editedParams && Object.keys(editedParams).length > 0) {
+            // Security (review CRITICAL): an approval-time edit must NEVER
+            // retarget the write — changing an id/target field would slip past
+            // the provenance firewall and void the snapshot the human approved.
+            const targetEdit = forbiddenTargetEdit(editedParams);
+            if (targetEdit) {
+              counters.stepsFailed += 1;
+              counters.step += 1;
+              emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'EDIT_FORBIDDEN', message: `cannot retarget via edited field ${targetEdit}` }, ms: 0 });
+              return `The record being acted on cannot be changed at approval time (you tried to edit "${targetEdit}"). Only values like amounts, dates, or text may be edited — nothing was changed.`;
+            }
+            const merged = { ...params, ...editedParams };
+            const reparsed = action.inputSchema.safeParse(coerceDateParams(merged, clock.now()).params);
+            if (!reparsed.success) {
+              counters.stepsFailed += 1;
+              counters.step += 1;
+              const bad = reparsed.error.issues.map((i) => i.path.join('.')).join(', ');
+              emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'PARAM_SCHEMA', message: `edited arguments invalid: ${bad}` }, ms: 0 });
+              return `The edited arguments for "${action.name}" are invalid (${bad}) — nothing was changed. Ask the user to correct them, or proceed with the original values.`;
+            }
+            effectiveParams = reparsed.data as Record<string, unknown>;
+            // Defense-in-depth: the edited set passes the SAME provenance
+            // firewall as the original (an id that slipped in some other way).
+            const unseen = firstUnseenId(effectiveParams, input.knownIds);
+            if (unseen) {
+              counters.stepsFailed += 1;
+              counters.step += 1;
+              emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'UNKNOWN_ID', message: `${unseen} not seen in any result` }, ms: 0 });
+              return `BLOCKED: an edited argument referenced a record (${unseen}) never seen this conversation — nothing was changed.`;
+            }
+          }
         }
 
         // 3. dispatch
@@ -534,14 +620,14 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           }
         }
         markTtfur();
-        emit({ t: 'step.started', turnId, stepId, action: action.slug, resolvedParams: [params] });
+        emit({ t: 'step.started', turnId, stepId, action: action.slug, resolvedParams: [effectiveParams] });
         const key = `${turnId}:0:${stepId}:0`;
         const startedAt = performance.now();
         try {
           // TRANSIENT errors get ONE deterministic in-place retry (old
           // executor parity, LLD §5.3) before the model ever sees them.
           const dispatch = (): Promise<unknown> =>
-            crm.tx((db) => action.handler(params, { db, clock, idempotencyKey: key, format: 'concise' } satisfies ActionContext));
+            crm.tx((db) => action.handler(effectiveParams, { db, clock, idempotencyKey: key, format: 'concise' } satisfies ActionContext));
           let output: unknown;
           try {
             output = await dispatch();
@@ -690,7 +776,10 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const fromScan = registry
         .all()
         .filter((a) => tokens.some((t) => a.slug.includes(t) || a.name.toLowerCase().includes(t) || a.description.toLowerCase().includes(t)));
-      const found = [...new Map([...fromRetrieval, ...fromScan].map((a) => [a.slug, a])).values()];
+      const found = [...new Map([...fromRetrieval, ...fromScan].map((a) => [a.slug, a])).values()]
+        // Permission pruning (#1): a restricted principal never even sees
+        // actions it may not use in search results.
+        .filter((a) => canUseAction(principal, a));
       if (found.length === 0) return 'No matching actions found in the catalog.';
       const bound: string[] = [];
       for (const a of found) {
@@ -840,6 +929,43 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
+  const searchRef = tool({
+    name: 'data__search_ref',
+    description:
+      'Free-text search WITHIN the set behind a ref: returns rows where ANY field contains the query (case-insensitive). Use to find specific records in a large result ("the one named Acme", "rows mentioning refund") WITHOUT re-querying. Use data__filter_ref instead when you know the exact field and condition. Returns a NEW ref + count + sample.',
+    parameters: z.object({ ref: z.string(), query: z.string() }),
+    execute: async ({ ref, query }): Promise<string> => {
+      const q = query.trim().toLowerCase();
+      if (q === '') return `Provide a non-empty query to search ${ref}.`;
+      const { rows, complete, total } = hydrateRows(ref);
+      const matches = rows.filter((row) =>
+        Object.values(row as Record<string, unknown>).some(
+          (v) => v !== null && v !== undefined && String(v).toLowerCase().includes(q),
+        ),
+      );
+      const ids = matches.map(rowId).filter((id): id is string => id !== undefined);
+      const source = refs.get(ref);
+      const handle = refs.put({
+        action: 'data.search_ref',
+        turnId,
+        stepId: `s${counters.step += 1}`,
+        entityType: source?.entityType ?? 'record',
+        total: matches.length,
+        // Only a COMPLETE source yields an authoritative id enumeration; for a
+        // partial sample search, elide the idList ([]) so hydrate reports the
+        // derived subset as incomplete rather than falsely exact.
+        idList: complete ? ids : [],
+        sample: matches.slice(0, SPILL_SAMPLE_ROWS),
+      });
+      const scope = complete
+        ? `${total} records`
+        : `a partial ${rows.length}-row sample (the server set is incomplete — narrow the original search for an exhaustive lookup)`;
+      const obs = `Search "${query}" over ${scope}: ${matches.length} matched [ref ${handle.ref}]. Sample: ${renderRefRows(matches.slice(0, 5), [])}`;
+      publishObs(obs);
+      return obs;
+    },
+  });
+
   const aggregateRef = tool({
     name: 'data__aggregate_ref',
     description:
@@ -972,8 +1098,11 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       markTtfur();
       emit({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
       const gateStartedAt = performance.now();
-      const approved = await confirm.request({ turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+      const verdict = await confirm.request({ turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
       counters.gateWaitMs += performance.now() - gateStartedAt;
+      // Bulk apply-to-ref does not support per-record arg editing; take the
+      // approval boolean only (#6 editing is for single-action gates).
+      const approved = typeof verdict === 'boolean' ? verdict : verdict.approved;
       emit({ t: 'confirmation.resolved', turnId, confirmId, approved });
       if (!approved) {
         exits.denied = true;
@@ -1105,7 +1234,44 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
-  tools.push(searchActions, sortRef, filterRef, aggregateRef, groupByRef, applyToRef, loadSkillsTool, askUser, refuse);
+  // Durable scheduled follow-up (#8): only when a scheduler + sessionId are
+  // wired (production). Lets the agent defer "remind me Friday" instead of
+  // refusing it.
+  const sessionId = input.sessionId;
+  const scheduler = input.scheduler;
+  // Scheduling defers WORK, so it is a write-class capability — a read-only
+  // viewer cannot schedule (review CRITICAL: the tool used to bypass pruning).
+  if (scheduler && sessionId !== undefined && canUseAction(principal, { risk: 'write' })) {
+    const scheduleFollowUp = tool({
+      name: 'session__schedule_follow_up',
+      description:
+        'Schedule a follow-up for a FUTURE time instead of acting now — for "remind me Friday", "follow up next week", "check back in an hour". Records a durable reminder; after calling it, tell the user what you scheduled and when. Do NOT use for work to do right now, and only for times in the future.',
+      parameters: z.object({
+        when: z.string().describe('when it is due: an ISO date/time, or a relative offset like "+3d", "+1w", "+2h", or "@today"'),
+        instruction: z.string().describe('what to do / be reminded of when it fires'),
+      }),
+      execute: async ({ when, instruction }): Promise<string> => {
+        const now = clock.now();
+        const raw = when.trim();
+        // Accept bare offsets ("+3d") by normalizing to the date-expr grammar
+        // ("@now+3d"); otherwise pass through (@today / @now+Nd / ISO).
+        const normalized = /^[+-]\d+[mhdw]$/.test(raw) ? `@now${raw}` : raw;
+        const rel = resolveRelativeDate(normalized, now);
+        const dueAt = rel ?? Date.parse(raw);
+        if (!Number.isFinite(dueAt)) {
+          return `Could not understand the time "${when}". Use an ISO date or a relative expression like "+3d" or "+1w".`;
+        }
+        if (dueAt <= now) {
+          return `"${when}" is not in the future — schedule follow-ups for a later time only, or do the task now.`;
+        }
+        scheduler.schedule({ id: `task_${randomUUID()}`, sessionId, dueAt, instruction, createdAt: now, role: principal.role, userId: principal.userId });
+        return `Scheduled a follow-up for ${new Date(dueAt).toISOString()}: ${instruction}`;
+      },
+    });
+    tools.push(scheduleFollowUp);
+  }
+
+  tools.push(searchActions, sortRef, filterRef, searchRef, aggregateRef, groupByRef, applyToRef, loadSkillsTool, askUser, refuse);
   if (memory) tools.push(memorySave, memoryRecall);
   return tools;
 }

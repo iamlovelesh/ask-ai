@@ -10,13 +10,18 @@ const infoOpen = ref(false);
 const advancedOpen = ref(false);
 const search = ref('');
 
+const isAuto = computed(() => store.selectedModel === 'auto');
 const currentTier = computed(() => store.models.find((m) => m.id === store.selectedModel));
-const isCustom = computed(() => store.selectedModel !== '' && !currentTier.value);
+const isCustom = computed(() => store.selectedModel !== '' && !isAuto.value && !currentTier.value);
 const customEntry = computed(() =>
   store.catalog.find((m) => m.id === store.selectedModel) ?? { id: store.selectedModel, name: store.selectedModel },
 );
-const currentName = computed(() => (isCustom.value ? customEntry.value.name : (currentTier.value?.name ?? '')));
-const currentLabel = computed(() => (isCustom.value ? 'Custom' : (currentTier.value?.label ?? '')));
+const currentName = computed(() =>
+  isAuto.value ? 'adaptive' : isCustom.value ? customEntry.value.name : (currentTier.value?.name ?? ''),
+);
+const currentLabel = computed(() =>
+  isAuto.value ? 'Auto' : isCustom.value ? 'Custom' : (currentTier.value?.label ?? ''),
+);
 
 const streams = computed(() =>
   currentTier.value
@@ -127,8 +132,24 @@ function pickCatalog(id: string): void {
           </div>
         </div>
 
+        <!-- Auto meta-option (#13): server picks the tier per question -->
+        <button
+          v-if="store.autoModel"
+          type="button"
+          class="mp-auto"
+          :class="{ 'is-on': isAuto }"
+          @click="store.selectModel('auto')"
+        >
+          <span class="mp-auto-spark" aria-hidden="true">✨</span>
+          <span class="mp-auto-text">
+            <span class="mp-auto-title">Auto</span>
+            <span class="mp-auto-sub">Picks the right model for each question</span>
+          </span>
+          <span v-if="isAuto" class="mp-auto-check" aria-hidden="true">✓</span>
+        </button>
+
         <!-- Custom tier slider (M2): styled track + invisible real range -->
-        <div class="mp-slider">
+        <div class="mp-slider" :class="{ 'is-muted': isAuto }">
           <div class="mp-track"><div class="mp-fill" :style="{ width: fillPct + '%' }"></div></div>
           <div class="mp-dots">
             <span v-for="(m, i) in store.models" :key="m.id" class="mp-dot" :class="{ on: i <= index }"></span>

@@ -41,6 +41,8 @@ import { buildCatalogSummary } from '../baseline/catalog-summary.js';
 import { buildDateAnchors } from './date-rail.js';
 import { renderRecentTurns } from './recent-turns.js';
 import { buildTurnTools, harvestIds, StuckTracker, type LoopExits } from './tools.js';
+import { defaultPrincipal, type Principal } from '../agent/permissions.js';
+import type { ScheduledTaskStore } from '../agent/scheduled-tasks.js';
 import { numberCheck } from './number-check.js';
 import { rescueToolCalls } from './tool-call-rescue.js';
 import { unsanctionedFilters } from './scope-check.js';
@@ -89,6 +91,12 @@ export interface LoopSessionDeps {
   extractModel?: string;
   /** Test seam: the post-turn extraction fn (defaults to `runMemoryExtraction`). */
   runExtraction?: (input: MemoryExtractionInput) => Promise<void>;
+  /** Principal this turn runs as (#1). Only actions this principal may use are
+   * bound/listed, and writes are attributed to it. Defaults to admin. */
+  principal?: Principal;
+  /** Durable scheduled-follow-up store (#8). When present, the agent can defer
+   * work to a future time via session__schedule_follow_up. */
+  scheduler?: ScheduledTaskStore;
 }
 
 export interface RunLoopTurnInput {
@@ -229,10 +237,12 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
    * metrics (persisted → shown in the trace) use one source of truth. */
   const turnModel = sessionDeps.model ?? plannerModel();
 
+  // Principal this turn runs as (#1); defaults to admin scoped to DEMO_USER_ID.
+  const principal = sessionDeps.principal ?? { ...defaultPrincipal(), userId: process.env['DEMO_USER_ID'] || 'user_1' };
   // Acting-user identity (engine-wave E9 parity): "<id> (<name>)" for the
   // prompt, bare id for identity-param substitution and memory scoping.
   // Hoisted above finalize so the post-turn extractor can read demoUserId.
-  const demoUserId = process.env['DEMO_USER_ID'] || 'user_1';
+  const demoUserId = principal.userId;
   let currentUser = demoUserId;
   try {
     const nameRow = crm.tx((db) => db.get('SELECT name FROM users WHERE id = ?', [demoUserId]));
@@ -347,6 +357,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     const priorEvents = eventLog.list(sessionId).map((se) => se.event);
     const sessionCtx = buildSessionCtx(priorEvents);
     const cards = pickCards(userText, registry, sessionCtx);
+    // (principal, demoUserId, currentUser are hoisted above finalize.)
     // Provenance firewall seed: ids the USER typed + ids from prior turns.
     const knownIds = new Set<string>();
     harvestIds(userText, knownIds);
@@ -368,6 +379,9 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       planHash,
       actingUserId: demoUserId,
       knownIds,
+      principal,
+      sessionId,
+      ...(sessionDeps.scheduler !== undefined ? { scheduler: sessionDeps.scheduler } : {}),
       // Gate on memoryOn (recall allowed), NOT store-presence: when memory is
       // globally OFF, memoryOn is false → neither memory tool is bound, so the
       // model cannot read memories back via memory__recall. Incognito keeps
@@ -378,8 +392,9 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     // P1 (pattern): the full catalog rides in the (cacheable) system
     // prompt so the model always knows what exists — retrieval misses can no
     // longer hide capabilities. Only for real-size registries; tiny test
-    // registries already full-bind.
-    const catalogText = registry.all().length > FULL_BIND_THRESHOLD ? buildCatalogSummary(registry) : undefined;
+    // registries already full-bind. Permission-pruned (#1) so a restricted
+    // principal is never told about actions it may not use.
+    const catalogText = registry.all().length > FULL_BIND_THRESHOLD ? buildCatalogSummary(registry, principal) : undefined;
     const agent = new Agent({
       name: 'ask-ai',
       model: turnModel,

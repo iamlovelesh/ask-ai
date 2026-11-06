@@ -51,8 +51,16 @@ export interface ConfirmRequest {
 
 /** Resolves a confirmation to approved/denied. Task 15 wires this to HTTP
  * (`POST .../confirm/:confirmId`); tests use an auto/scripted broker. */
+/** Verdict a broker may return instead of a bare boolean (#6): approval plus
+ * optional user-edited arguments for the gated action. A plain `boolean` is
+ * still accepted everywhere (approve/deny with no edits). */
+export interface ConfirmVerdict {
+  approved: boolean;
+  editedParams?: Record<string, unknown>;
+}
+
 export interface ConfirmBroker {
-  request(req: ConfirmRequest): Promise<boolean>;
+  request(req: ConfirmRequest): Promise<boolean | ConfirmVerdict>;
 }
 
 export type StepLifecycle = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'cancelled';
@@ -718,7 +726,7 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
     // deadline (both the executor's own check below and, via `onGateWait`,
     // the caller's in-execution LLM-call budget).
     const waitStart = performance.now();
-    const approved = await confirm.request({
+    const verdict = await confirm.request({
       turnId,
       confirmId,
       planRev,
@@ -726,6 +734,9 @@ export async function execute(input: ExecuteInput): Promise<ExecutionResult> {
       stepId: step.id,
       scope,
     });
+    // This legacy (plan-DSL) path does not apply edited args; normalize a
+    // verdict object down to its approval boolean (#6 editing is loop-only).
+    const approved = typeof verdict === 'boolean' ? verdict : verdict.approved;
     const waited = performance.now() - waitStart;
     metrics.gateWaitMs += waited;
     input.onGateWait?.(waited);

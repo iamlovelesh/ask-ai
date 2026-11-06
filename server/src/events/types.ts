@@ -73,6 +73,11 @@ export interface ConfirmationScope {
   affectedCount: number;
   targetSample: string[];
   description: string;
+  /** The proposed arguments for the gated action (#6). Surfaced so the client
+   * can show — and let the user EDIT — them before approving; the edited
+   * values flow back via the confirm verdict and are re-validated server-side
+   * before the handler runs. Absent for multi-action/legacy scopes. */
+  params?: Record<string, unknown>;
 }
 
 export type Event =

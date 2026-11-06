@@ -100,6 +100,25 @@ function writeStoredModel(id: string): void {
   }
 }
 
+/** The role choice (#1) persists across refreshes, same as the model. Empty
+ * string = no explicit role = the server's admin default. */
+const ROLE_STORAGE_KEY = 'ask-ai:selectedRole';
+export type SelectableRole = 'admin' | 'member' | 'viewer';
+function readStoredRole(): string {
+  try {
+    return localStorage.getItem(ROLE_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+function writeStoredRole(role: string): void {
+  try {
+    localStorage.setItem(ROLE_STORAGE_KEY, role);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 export const useSessionStore = defineStore('session', {
   state: () => ({
     sessions: [] as SessionSummary[],
@@ -126,8 +145,13 @@ export const useSessionStore = defineStore('session', {
     /** Model-picker: the tier allowlist from GET /api/models and the id the
      * user has chosen (sent with each message; '' = server default). */
     models: [] as ModelOption[],
+    /** The "Auto" option (server picks a tier per question), kept out of the
+     * tier slider and shown as a separate pill. Null until /api/models loads. */
+    autoModel: null as ModelOption | null,
     /** Restored from localStorage so a refresh keeps the user's choice. */
     selectedModel: readStoredModel(),
+    /** Principal role sent with each message (#1); '' = server admin default. */
+    selectedRole: readStoredRole(),
     /** Advanced picker: the full OpenRouter catalog (lazy-loaded on first open)
      * and whether a load is in flight. */
     catalog: [] as CatalogModel[],
@@ -160,7 +184,9 @@ export const useSessionStore = defineStore('session', {
         const res = await fetch('/api/models');
         if (!res.ok) return;
         const body = (await res.json()) as { models: ModelOption[]; default: string };
-        this.models = body.models;
+        // Split "Auto" out of the tier slider — it's an adaptive meta-option.
+        this.autoModel = body.models.find((m) => m.id === 'auto') ?? null;
+        this.models = body.models.filter((m) => m.id !== 'auto');
         // Keep any restored/persisted choice; only fall back to the server
         // default when the user has never chosen one.
         if (this.selectedModel === '') this.selectedModel = body.default;
@@ -173,6 +199,12 @@ export const useSessionStore = defineStore('session', {
     selectModel(id: string): void {
       this.selectedModel = id;
       writeStoredModel(id);
+    },
+
+    /** Set the active principal role AND persist it (#1). '' clears to default. */
+    selectRole(role: string): void {
+      this.selectedRole = role;
+      writeStoredRole(role);
     },
 
     async loadCatalog(): Promise<void> {
@@ -309,7 +341,11 @@ export const useSessionStore = defineStore('session', {
         const frames = await fetchSse(`/api/sessions/${id}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.selectedModel ? { text, model: this.selectedModel } : { text }),
+          body: JSON.stringify({
+            text,
+            ...(this.selectedModel ? { model: this.selectedModel } : {}),
+            ...(this.selectedRole ? { role: this.selectedRole } : {}),
+          }),
         });
         for await (const frame of frames) {
           receivedAnyFrame = true;
@@ -414,7 +450,7 @@ export const useSessionStore = defineStore('session', {
       chat.reconnecting = false;
     },
 
-    async confirm(confirmId: string, approved: boolean): Promise<void> {
+    async confirm(confirmId: string, approved: boolean, editedParams?: Record<string, unknown>): Promise<void> {
       const id = this.activeId;
       if (!id) return;
       const chat = this.chats[id];
@@ -424,10 +460,11 @@ export const useSessionStore = defineStore('session', {
       // channel is open) confirms/corrects this shortly after.
       if (turn?.pendingConfirm) turn.pendingConfirm.resolved = true;
       try {
+        const body = editedParams && Object.keys(editedParams).length > 0 ? { approved, editedParams } : { approved };
         const res = await fetch(`/api/sessions/${id}/confirm/${confirmId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ approved }),
+          body: JSON.stringify(body),
         });
         if (!res.ok) this.pushToast(`Could not resolve confirmation (HTTP ${res.status}).`);
       } catch {

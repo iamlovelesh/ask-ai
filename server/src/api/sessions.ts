@@ -12,9 +12,20 @@ import { z } from 'zod';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { openSse } from './sse.js';
 import { sessionExists } from './turn-runtime.js';
-import { listModels, defaultModelId, isSelectableModel } from '../llm/models.js';
+import { listPickerModels, defaultModelId, isSelectableModel, resolveAutoModel, AUTO_MODEL_ID } from '../llm/models.js';
+import { resolvePrincipal, routeAgentForRole } from '../agent/permissions.js';
 import { fetchModelCatalog, catalogHas } from '../llm/model-catalog.js';
+import { llmCall } from '../llm/client.js';
+import { generateTitle, TITLE_MAX_CHARS } from './title.js';
 import type { AppDeps } from './types.js';
+
+// Fast, cheap model for the cosmetic thread title. Off under tests (keeps
+// them hermetic) and when explicitly disabled by ops.
+const TITLE_MODEL = 'google/gemini-2.5-flash-lite';
+const TITLE_SYSTEM =
+  'Write a short, specific title (max 6 words, no quotes, no trailing period) for a CRM chat that starts with the user message below. Reply with ONLY the title.';
+const autoTitleEnabled = (): boolean =>
+  process.env['VITEST'] === undefined && process.env['DISABLE_AUTO_TITLE'] !== '1';
 
 const SESSION_TITLE_MAX_CHARS = 40;
 
@@ -25,10 +36,16 @@ const messageBodySchema = z.object({
    * in `resolveModelId` (an unknown id silently falls back to the default —
    * never trust a raw client model string). */
   model: z.string().optional(),
+  /** Principal role this turn runs as (#1). An unknown/absent role resolves to
+   * the admin default in `resolvePrincipal`, preserving prior behavior. */
+  role: z.string().optional(),
 });
 
 const confirmBodySchema = z.object({
   approved: z.boolean(),
+  /** Approval-arg editing (#6): user-edited arguments for the gated action,
+   * re-validated server-side before the handler runs. */
+  editedParams: z.record(z.string(), z.unknown()).optional(),
 });
 
 interface SessionParams {
@@ -67,7 +84,7 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
   // --- GET /api/models (curated tiers) ----------------------------------
 
   app.get('/api/models', async (_req, reply) => {
-    reply.send({ models: listModels(), default: defaultModelId() });
+    reply.send({ models: listPickerModels(), default: defaultModelId() });
   });
 
   // --- GET /api/models/catalog (full OpenRouter list, advanced picker) --
@@ -126,7 +143,11 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
     // client model string.
     const requested = parsed.data.model;
     let model: string;
-    if (requested !== undefined && isSelectableModel(requested)) {
+    if (requested === AUTO_MODEL_ID) {
+      // "Auto": pick the tier per-turn from the request; the turn stores the
+      // concrete model, so the trace shows what Auto chose.
+      model = resolveAutoModel(text);
+    } else if (requested !== undefined && isSelectableModel(requested)) {
       model = requested;
     } else if (requested !== undefined) {
       await fetchModelCatalog();
@@ -149,10 +170,28 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
     // cheap to guard anyway) race of two first messages.
     const hasAnyTurn = eventLog.list(sessionId).some((se) => se.event.t === 'turn.started');
     if (!hasAnyTurn) {
-      sessionsDb.run(`UPDATE sessions SET title = ? WHERE id = ? AND title IS NULL`, [
-        text.slice(0, SESSION_TITLE_MAX_CHARS),
-        sessionId,
-      ]);
+      const placeholder = text.slice(0, SESSION_TITLE_MAX_CHARS);
+      sessionsDb.run(`UPDATE sessions SET title = ? WHERE id = ? AND title IS NULL`, [placeholder, sessionId]);
+      // Upgrade to an LLM-generated title in the background (#12). Best-effort:
+      // never blocks or fails the turn, and only overwrites the exact
+      // placeholder we just set (so a user rename is never clobbered).
+      if (autoTitleEnabled()) {
+        void generateTitle(text, {
+          complete: async (msg) => {
+            const r = await llmCall({
+              stage: 'compose', model: TITLE_MODEL, system: TITLE_SYSTEM,
+              prompt: msg.slice(0, 500), turnId: `title-${sessionId}`, maxOutputTokens: 24,
+            });
+            return typeof r.value === 'string' ? r.value : '';
+          },
+        })
+          .then((title) => {
+            if (title && title !== placeholder && title.length <= TITLE_MAX_CHARS) {
+              sessionsDb.run(`UPDATE sessions SET title = ? WHERE id = ? AND title = ?`, [title, sessionId, placeholder]);
+            }
+          })
+          .catch(() => { /* cosmetic — keep the placeholder */ });
+      }
     }
 
     // Subscribe BEFORE starting the turn — `startTurn` synchronously drives
@@ -182,7 +221,23 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
     });
     conn.onClientGone(unsub);
 
-    turnId = runtime.startTurn({ sessionId, userText: text, agent, model });
+    const principal = resolvePrincipal({ role: parsed.data.role });
+    // Security (review CRITICAL): the legacy baseline/plandsl agents do not
+    // enforce principal permissions, so a non-admin is forced onto the
+    // permission-aware "optimized" loop regardless of the requested agent.
+    const routedAgent = routeAgentForRole(principal.role, agent) as typeof agent;
+    turnId = runtime.startTurn({ sessionId, userText: text, agent: routedAgent, model, principal });
+  });
+
+  // --- GET /api/sessions/:id/scheduled (pending follow-ups, #8) -----------
+
+  app.get('/api/sessions/:id/scheduled', async (req: FastifyRequest<{ Params: SessionParams }>, reply) => {
+    const { id: sessionId } = req.params;
+    if (!sessionExists(sessionsDb, sessionId)) {
+      reply.code(404).send({ error: 'session_not_found' });
+      return;
+    }
+    reply.send({ tasks: runtime.scheduler().listPending(sessionId) });
   });
 
   // --- POST /api/sessions/:id/confirm/:confirmId --------------------------
@@ -210,7 +265,7 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
       return;
     }
 
-    resolution.resolve(parsed.data.approved);
+    resolution.resolve(parsed.data.approved, parsed.data.editedParams);
     reply.code(204).send();
   });
 

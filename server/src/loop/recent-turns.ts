@@ -16,6 +16,19 @@ import type { Event } from '../events/types.js';
 
 const DEFAULT_KEEP_LAST_N = 3;
 
+// Context compaction (a common pattern: prune history at a fraction of the
+// window). The last `keepLastN` turns are full-detail CANDIDATES, but the
+// full-detail section is also bounded by a character budget: walking
+// newest→oldest, a candidate that would push the section past the budget is
+// demoted to a collapsed one-liner instead. The newest turn is always kept in
+// full (floor of 1) even if it alone exceeds the budget. ~6000 chars ≈ 1500
+// tokens, well under the model's window with room for the catalog + prompt.
+const DEFAULT_MAX_CHARS = 6000;
+
+function fullLines(turn: TurnView): string[] {
+  return [`user: ${turn.userText}`, ...turn.steps, `assistant: ${turn.answer}`, ''];
+}
+
 interface TurnView {
   userText: string;
   steps: string[];
@@ -49,22 +62,37 @@ function fold(events: readonly Event[]): TurnView[] {
   return [...byTurn.values()].filter((t) => t.completed && t.answer !== '');
 }
 
-/** Renders completed turns oldest→newest: last `keepLastN` in full detail,
- * older ones collapsed to one line. Empty string when nothing completed. */
-export function renderRecentTurns(events: readonly Event[], keepLastN = DEFAULT_KEEP_LAST_N): string {
+/** Renders completed turns oldest→newest: the newest turns in full detail
+ * (bounded by `keepLastN` AND the `maxChars` budget), older ones collapsed to
+ * one line. Empty string when nothing completed. */
+export function renderRecentTurns(
+  events: readonly Event[],
+  keepLastN = DEFAULT_KEEP_LAST_N,
+  maxChars = DEFAULT_MAX_CHARS,
+): string {
   const turns = fold(events);
   if (turns.length === 0) return '';
-  const cutoff = Math.max(0, turns.length - keepLastN);
+  const windowStart = Math.max(0, turns.length - keepLastN);
+  // Walk the full-detail candidates newest→oldest, keeping each in full while
+  // the section stays within budget; demote the rest. Newest is always full.
+  const full = new Set<number>();
+  let budget = maxChars;
+  for (let i = turns.length - 1; i >= windowStart; i -= 1) {
+    const cost = fullLines(turns[i] as TurnView).join('\n').length;
+    if (full.size === 0 || cost <= budget) {
+      full.add(i);
+      budget -= cost;
+    } else {
+      break; // older candidates can't fit either (sections only grow)
+    }
+  }
   const lines: string[] = [];
   turns.forEach((turn, i) => {
-    if (i < cutoff) {
+    if (full.has(i)) {
+      lines.push(...fullLines(turn));
+    } else {
       lines.push(`[earlier] user: ${turn.userText} → assistant: ${turn.answer}`);
-      return;
     }
-    lines.push(`user: ${turn.userText}`);
-    for (const s of turn.steps) lines.push(s);
-    lines.push(`assistant: ${turn.answer}`);
-    lines.push('');
   });
   return lines.join('\n').trimEnd();
 }

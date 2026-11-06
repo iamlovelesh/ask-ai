@@ -447,7 +447,8 @@ export async function* runBaselineTurn(input: RunBaselineTurnInput): AsyncGenera
         };
         markTtfur(); // tool-intent: the model decided to call a gated action.
         record({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash, stepId, scope });
-        const approved = await confirm.request({ turnId, confirmId, planRev: 0, planHash, stepId, scope });
+        const verdict = await confirm.request({ turnId, confirmId, planRev: 0, planHash, stepId, scope });
+        const approved = typeof verdict === 'boolean' ? verdict : verdict.approved;
         record({ t: 'confirmation.resolved', turnId, confirmId, approved });
         if (!approved) {
           history.push(

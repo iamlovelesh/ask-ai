@@ -3,11 +3,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useSessionStore } from '../stores/session.js';
 import TaskTracker from './TaskTracker.vue';
 import ModelPicker from './ModelPicker.vue';
+import RolePicker from './RolePicker.vue';
 import ConfirmCard from './ConfirmCard.vue';
 import ClarifyCard from './ClarifyCard.vue';
 import CostBadge from './CostBadge.vue';
 import TraceView from './TraceView.vue';
 import AuditFeed from './AuditFeed.vue';
+import RecordPopover, { type RecordPopoverState } from './RecordPopover.vue';
+import type { TurnView } from '../lib/fold.js';
 import { formatSessionLedger, sumSessionMetrics } from '../lib/ledger.js';
 import { renderMarkdown } from '../lib/markdown.js';
 
@@ -17,6 +20,36 @@ const store = useSessionStore();
 
 const chat = computed(() => store.chats[props.sessionId] ?? null);
 const draft = ref('');
+
+/** Record chips (#14): clicking a `[[record:…]]` chip opens a detail popover
+ * fetched from GET /api/records/:entity/:id. */
+const recordPopover = ref<RecordPopoverState | null>(null);
+
+async function onBodyClick(e: MouseEvent): Promise<void> {
+  const chip = (e.target as HTMLElement | null)?.closest?.('.record-chip') as HTMLElement | null;
+  if (!chip) return;
+  const ref = chip.getAttribute('data-record');
+  if (!ref) return;
+  const slash = ref.indexOf('/');
+  if (slash < 0) return;
+  const entity = ref.slice(0, slash);
+  const id = ref.slice(slash + 1);
+  const rect = chip.getBoundingClientRect();
+  const x = Math.min(rect.left, window.innerWidth - 320);
+  recordPopover.value = { x: Math.max(8, x), y: rect.bottom + 6, entity, id, loading: true };
+  try {
+    const res = await fetch(`/api/records/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`);
+    if (!recordPopover.value || recordPopover.value.id !== id) return; // superseded
+    if (!res.ok) {
+      recordPopover.value = { ...recordPopover.value, loading: false, error: 'Record not found.' };
+      return;
+    }
+    const body = (await res.json()) as { fields: Record<string, unknown> };
+    recordPopover.value = { ...recordPopover.value, loading: false, fields: body.fields };
+  } catch {
+    if (recordPopover.value) recordPopover.value = { ...recordPopover.value, loading: false, error: 'Could not load record.' };
+  }
+}
 const scrollEl = ref<HTMLElement | null>(null);
 const textareaEl = ref<HTMLTextAreaElement | null>(null);
 /** True once the user has scrolled up away from the bottom — pauses the
@@ -201,8 +234,8 @@ async function onCancel(): Promise<void> {
   await store.cancel();
 }
 
-async function onResolveConfirm(confirmId: string, approved: boolean): Promise<void> {
-  await store.confirm(confirmId, approved);
+async function onResolveConfirm(confirmId: string, approved: boolean, editedParams?: Record<string, unknown>): Promise<void> {
+  await store.confirm(confirmId, approved, editedParams);
 }
 
 async function onRetryConnection(): Promise<void> {
@@ -329,6 +362,7 @@ async function onCopyLink(): Promise<void> {
               v-if="turn.finalText || turn.deltaText || turn.unsupportedReason"
               :class="['said', 'said-agent', 'agent-section', { 'is-fail': isFailStatus(turn.status) }]"
               v-html="renderMarkdown(turn.finalText || turn.deltaText || turn.unsupportedReason || '')"
+              @click="onBodyClick"
             ></div>
           </div>
 
@@ -364,7 +398,10 @@ async function onCopyLink(): Promise<void> {
         <button v-if="chat.running" class="btn-cancel" @click="onCancel">Cancel</button>
         <button v-else class="btn-send" :disabled="!draft.trim()" @click="onSend">Send</button>
       </div>
-      <ModelPicker :disabled="chat.running" />
+      <div class="composer-controls">
+        <ModelPicker :disabled="chat.running" />
+        <RolePicker :disabled="chat.running" />
+      </div>
     </div>
 
     <!-- inspector drawer: slides over the transcript -->
@@ -405,5 +442,9 @@ async function onCopyLink(): Promise<void> {
         </div>
       </aside>
     </template>
+
+    <Teleport to="body">
+      <RecordPopover v-if="recordPopover" :state="recordPopover" @close="recordPopover = null" />
+    </Teleport>
   </div>
 </template>

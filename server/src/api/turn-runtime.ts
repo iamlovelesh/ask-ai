@@ -22,12 +22,14 @@ import type { SessionsDb } from '../store/sessions-db.js';
 import type { EventLog } from '../events/log.js';
 import { createRefStore, type RefStore } from '../agent/refs.js';
 import { createMemoryStore, type MemoryStore } from '../memory/store.js';
-import type { ConfirmBroker, ConfirmRequest } from '../agent/executor.js';
+import type { ConfirmBroker, ConfirmRequest, ConfirmVerdict } from '../agent/executor.js';
 import type { Playbook } from '../playbooks/loader.js';
 import { runTurn, type SessionDeps } from '../agent/pipeline.js';
 import { runBaselineTurn, type BaselineSessionDeps } from '../baseline/agent.js';
 import { modelStreamsTools, defaultModelId } from '../llm/models.js';
 import { runLoopTurn, type LoopSessionDeps } from '../loop/agent.js';
+import { resolvePrincipal, type Principal } from '../agent/permissions.js';
+import { openScheduledTasks, type ScheduledTaskStore } from '../agent/scheduled-tasks.js';
 import type { Event } from '../events/types.js';
 
 /** 'optimized' = the production tool-loop agent (plan rev 3 pivot);
@@ -46,14 +48,14 @@ export function sessionExists(sessionsDb: SessionsDb, sessionId: string): boolea
 
 interface PendingConfirm {
   req: ConfirmRequest;
-  resolve: (approved: boolean) => void;
+  resolve: (verdict: boolean | ConfirmVerdict) => void;
 }
 
 class HttpConfirmBroker implements ConfirmBroker {
   private readonly pending = new Map<string, PendingConfirm>();
 
-  request(req: ConfirmRequest): Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
+  request(req: ConfirmRequest): Promise<boolean | ConfirmVerdict> {
+    return new Promise<boolean | ConfirmVerdict>((resolve) => {
       this.pending.set(req.confirmId, { req, resolve });
     });
   }
@@ -79,11 +81,11 @@ class HttpConfirmBroker implements ConfirmBroker {
    * immediately — `resolveConfirmation` checks `isPending`, not whether
    * the `confirmation.resolved` EVENT has been appended yet (that happens
    * on a later microtask, once the executor's `await` resumes). */
-  resolve(confirmId: string, approved: boolean): boolean {
+  resolve(confirmId: string, approved: boolean, editedParams?: Record<string, unknown>): boolean {
     const p = this.pending.get(confirmId);
     if (!p) return false;
     this.pending.delete(confirmId);
-    p.resolve(approved);
+    p.resolve(editedParams && Object.keys(editedParams).length > 0 ? { approved, editedParams } : approved);
     return true;
   }
 }
@@ -99,6 +101,8 @@ interface RunningTurn {
   /** Loop turns only (review I4): aborted by cancel() so the tool loop
    * stops promptly and finalizes 'cancelled' instead of looping on. */
   cancel: AbortController;
+  /** Principal this turn runs as (#1); undefined = admin default. */
+  principal?: Principal;
 }
 
 export interface StartTurnInput {
@@ -108,12 +112,14 @@ export interface StartTurnInput {
   /** Validated (allowlisted) OpenRouter model id for this turn, or undefined
    * for the deployed default. */
   model?: string;
+  /** Principal this turn runs as (#1); undefined = admin default. */
+  principal?: Principal;
 }
 
 export type ConfirmResolution =
   | { outcome: 'not_found' }
   | { outcome: 'conflict' }
-  | { outcome: 'ok'; resolve: (approved: boolean) => void };
+  | { outcome: 'ok'; resolve: (approved: boolean, editedParams?: Record<string, unknown>) => void };
 
 export class SessionRuntime {
   private readonly refsCache = new Map<string, RefStore>();
@@ -166,6 +172,13 @@ export class SessionRuntime {
     return b;
   }
 
+  /** Durable scheduled-follow-up store (#8), opened once over the sessions DB. */
+  private schedulerStore?: ScheduledTaskStore;
+  scheduler(): ScheduledTaskStore {
+    if (!this.schedulerStore) this.schedulerStore = openScheduledTasks(this.sessionsDb);
+    return this.schedulerStore;
+  }
+
   isRunning(sessionId: string): boolean {
     return this.running.has(sessionId);
   }
@@ -193,6 +206,7 @@ export class SessionRuntime {
       turnId,
       agent: input.agent,
       ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(input.principal !== undefined ? { principal: input.principal } : {}),
       cancel: new AbortController(),
     };
     this.running.set(input.sessionId, state);
@@ -255,7 +269,9 @@ export class SessionRuntime {
                 eventLog: this.eventLog,
                 confirm,
                 cancelSignal: state.cancel.signal,
+                scheduler: this.scheduler(),
                 ...(state.model !== undefined ? { model: state.model } : {}),
+                ...(state.principal !== undefined ? { principal: state.principal } : {}),
                 // Live answer-token streaming — only for models whose tool
                 // calls assemble correctly under stream:true (OpenAI yes,
                 // Anthropic-via-OpenRouter no). `streamAnswers` is the
@@ -365,9 +381,42 @@ export class SessionRuntime {
 
     return {
       outcome: 'ok',
-      resolve: (approved: boolean) => {
-        broker.resolve(confirmId, approved);
+      resolve: (approved: boolean, editedParams?: Record<string, unknown>) => {
+        broker.resolve(confirmId, approved, editedParams);
       },
     };
+  }
+
+  /**
+   * Auto-resume due scheduled follow-ups (#8): for each pending task whose
+   * dueAt has passed, start a system-initiated turn that runs the stored
+   * instruction, then mark it fired. A session with a turn already in flight
+   * is skipped and retried next tick (never two concurrent turns). A task is
+   * marked fired ONLY after its turn starts, so a failed start leaves it
+   * pending to retry. Returns how many fired. `start` is injectable for tests.
+   */
+  fireDueScheduledTasks(
+    nowMs: number,
+    start: (task: { sessionId: string; instruction: string; principal: Principal }) => void = ({ sessionId, instruction, principal }) =>
+      void this.startTurn({ sessionId, userText: instruction, agent: 'optimized', principal }),
+  ): number {
+    let fired = 0;
+    for (const task of this.scheduler().due(nowMs)) {
+      if (this.isRunning(task.sessionId)) continue; // retry next tick
+      try {
+        // Resume as the principal that SCHEDULED it (review CRITICAL) — never
+        // escalate an unattended turn to admin. An unrecognized stored role
+        // resolves back to a safe concrete principal.
+        const principal = resolvePrincipal({ role: task.role, userId: task.userId });
+        start({ sessionId: task.sessionId, instruction: task.instruction, principal });
+        this.scheduler().markFired(task.id);
+        fired += 1;
+      } catch (err) {
+        // Leave pending to retry next tick — but surface it, so a task that
+        // always throws is observable instead of silently looping forever.
+        console.error(`[scheduler] failed to fire task ${task.id} (session ${task.sessionId}):`, err);
+      }
+    }
+    return fired;
   }
 }

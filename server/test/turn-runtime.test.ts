@@ -110,6 +110,40 @@ async function waitFor(sessionId: string, type: Event['t'], timeoutMs = 10_000):
   }
 }
 
+describe('SessionRuntime.fireDueScheduledTasks (#8 auto-resume)', () => {
+  const NOW = 1_762_000_000_000;
+
+  it('fires due tasks via start + marks them fired; future tasks stay pending', () => {
+    const runtime = makeRuntime([]);
+    const sid = eventLog.createSession('sched');
+    runtime.scheduler().schedule({ id: 'task_due', sessionId: sid, dueAt: NOW - 1000, instruction: 'do the overdue thing', createdAt: NOW - 10_000, role: 'admin', userId: 'user_1' });
+    runtime.scheduler().schedule({ id: 'task_future', sessionId: sid, dueAt: NOW + 86_400_000, instruction: 'later', createdAt: NOW, role: 'admin', userId: 'user_1' });
+    const calls: { sessionId: string; instruction: string }[] = [];
+    const fired = runtime.fireDueScheduledTasks(NOW, ({ sessionId, instruction }) => { calls.push({ sessionId, instruction }); });
+    expect(fired).toBe(1);
+    expect(calls).toEqual([{ sessionId: sid, instruction: 'do the overdue thing' }]);
+    expect(runtime.scheduler().listPending(sid).map((t) => t.id)).toEqual(['task_future']);
+  });
+
+  it('resumes a task as the principal that scheduled it, NOT admin (review CRITICAL)', () => {
+    const runtime = makeRuntime([]);
+    const sid = eventLog.createSession('sched-role');
+    runtime.scheduler().schedule({ id: 'task_v', sessionId: sid, dueAt: NOW - 1000, instruction: 'viewer thing', createdAt: NOW - 1, role: 'viewer', userId: 'user_7' });
+    let seen: { role: string; userId: string } | undefined;
+    runtime.fireDueScheduledTasks(NOW, ({ principal }) => { seen = { role: principal.role, userId: principal.userId }; });
+    expect(seen).toEqual({ role: 'viewer', userId: 'user_7' });
+  });
+
+  it('a failed start leaves the task pending (retry next tick)', () => {
+    const runtime = makeRuntime([]);
+    const sid = eventLog.createSession('sched2');
+    runtime.scheduler().schedule({ id: 'task_x', sessionId: sid, dueAt: NOW - 1000, instruction: 'x', createdAt: NOW - 1, role: 'admin', userId: 'user_1' });
+    const fired = runtime.fireDueScheduledTasks(NOW, () => { throw new Error('busy'); });
+    expect(fired).toBe(0);
+    expect(runtime.scheduler().listPending(sid).map((t) => t.id)).toEqual(['task_x']);
+  });
+});
+
 describe('SessionRuntime agent routing', () => {
   it("agent:'optimized' drives the tool loop — no plan.ready, loop-shaped events", async () => {
     __setLoopTestFetch(loopFetch([toolCallResponse('leads__search_leads', { query: 'x' }), textResponse('Found 2 leads.')]));
