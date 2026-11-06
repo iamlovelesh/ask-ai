@@ -184,6 +184,22 @@ describe('runLoopTurn — read turn', () => {
   });
 });
 
+describe('runLoopTurn — identity param substitution (round-4 billing C1)', () => {
+  it("replaces literal 'me' in *_user_id/assignee/owner params with the acting user id", async () => {
+    let got: Record<string, unknown> | undefined;
+    const registry = buildRegistry(
+      [[action('appointments.search', 'read', async (input) => { got = input; return { items: [], total: 0 }; },
+        z.object({ host_user_id: z.string().optional(), assignee_id: z.string().optional() }))]],
+      [],
+    );
+    await drive(registry, 'my appointments today', [
+      toolCallResponse('appointments__search', { host_user_id: 'me', assignee_id: 'current_user' }),
+      textResponse('ok'),
+    ]);
+    expect(got).toEqual({ host_user_id: 'user_1', assignee_id: 'user_1' });
+  });
+});
+
 describe('runLoopTurn — wildcard filter scrub (round-4 F24)', () => {
   it("drops '*'/'all'/'any'/'' placeholder values from optional params before dispatch", async () => {
     let got: Record<string, unknown> | undefined;
@@ -243,6 +259,42 @@ describe('runLoopTurn — date rail end to end', () => {
   });
 });
 
+describe('runLoopTurn — observation rendering rails (round-4 support findings)', () => {
+  it('renders date-shaped epoch fields as ISO strings in observations so the model never hand-converts', async () => {
+    const registry = buildRegistry(
+      [[action('tickets.search', 'read', async () => ({ items: [{ id: 't1', created_at: 1781344800000 }], total: 1 }))]],
+      [],
+    );
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'oldest ticket',
+      sessionDeps: { registry, crm: fakeCrm, refs, eventLog, confirm: approveAll, testFetch: scriptedFetch([toolCallResponse('tickets__search', {}), textResponse('ok')], seen) },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).toContain('2026-06-13');
+    expect(obs).not.toContain('1781344800000');
+  });
+
+  it('mints a ref for complete inline list results so aggregate/sort/filter work on small sets too', async () => {
+    const rows = Array.from({ length: 14 }, (_, i) => ({ id: `inv_${i}`, total_cents: (i + 1) * 100 }));
+    const registry = buildRegistry([[action('invoices.search', 'read', async () => ({ items: rows, total: 14 }))]], []);
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: 't_9', userText: 'how much is owed',
+      sessionDeps: { registry, crm: fakeCrm, refs, eventLog, confirm: approveAll, testFetch: scriptedFetch([toolCallResponse('invoices__search', {}), textResponse('ok')], seen) },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).toMatch(/\[ref r_t9_s1\]/);
+    const handle = refs.get('r_t9_s1');
+    expect(handle?.idList).toHaveLength(14);
+    expect(handle?.total).toBe(14);
+  });
+});
+
 describe('runLoopTurn — confirmation gate', () => {
   const bulk = () =>
     buildRegistry([[action('invoices.send_reminders', 'bulk', async () => ({ sent: 165 }))]], []);
@@ -282,6 +334,18 @@ describe('runLoopTurn — confirmation gate', () => {
     expect(completedOf(events).status).toBe('cancelled');
     expect(finalOf(events)).toBe('Okay — I did not send anything.');
     expect(typesOf(events)).not.toContain('step.started');
+  });
+
+  it('singular count with a plural entity noun reads naturally', async () => {
+    const registry = buildRegistry([[{ ...action('invoices.send_reminder', 'bulk', async () => ({})), entities: ['invoices'] }]], []);
+    const events = await drive(registry, 'remind', [
+      toolCallResponse('invoices__send_reminder', { id: 'inv_1' }),
+      textResponse('ok'),
+    ]);
+    const req = events.find((e) => e.t === 'confirmation.required');
+    const description = req && req.t === 'confirmation.required' ? req.scope.description : '';
+    expect(description).toContain('1 invoice');
+    expect(description).not.toContain('1 invoices');
   });
 
   it('gate description pluralizes without double-s', async () => {
@@ -564,6 +628,66 @@ describe('runLoopTurn — data__filter_ref', () => {
   });
 });
 
+describe('runLoopTurn — data__apply_to_ref bulk writes (round-4 billing)', () => {
+  it('applies a write action to every record behind a ref through ONE confirmation gate', async () => {
+    const rows = Array.from({ length: 165 }, (_, i) => ({ id: `inv_${i}` }));
+    let handlerCalls = 0;
+    const sendAction = action('invoices.send_invoice_reminder', 'write', async () => { handlerCalls += 1; return { sent: 1 }; },
+      z.object({ id: z.string() }));
+    const registry = buildRegistry([[sendAction]], []);
+    const refsWith: RefStore = {
+      put: refs.put.bind(refs), get: () => ({ ref: 'r_t1_s1', action: 'x', turnId: 't_1', stepId: 's1', entityType: 'invoices', total: rows.length, idList: rows.map((r) => r.id), sample: rows.slice(0, 20), createdAt: 0, stale: false } as ReturnType<RefStore['get']> & object),
+      resolve: () => ({ ids: rows.map((r) => r.id), missing: 0, total: rows.length }),
+      hydrate: (): HydrateResult => ({ rows, complete: true, total: rows.length }),
+      markAllStale: () => {},
+    };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'send reminders for all overdue',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs: refsWith, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__apply_to_ref', { ref: 'r_t1_s1', action: 'invoices__send_invoice_reminder', id_param: 'id' }),
+          textResponse('Sent 165 reminders.'),
+        ]),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(handlerCalls).toBe(165);
+    const req = events.find((e) => e.t === 'confirmation.required');
+    expect(req && req.t === 'confirmation.required' ? req.scope.affectedCount : 0).toBe(165);
+    expect(events.filter((e) => e.t === 'confirmation.required')).toHaveLength(1);
+    expect(completedOf(events).status).toBe('done');
+  });
+
+  it('denied apply_to_ref never invokes the handler', async () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({ id: `inv_${i}` }));
+    let handlerCalls = 0;
+    const sendAction = action('invoices.send_invoice_reminder', 'write', async () => { handlerCalls += 1; return {}; }, z.object({ id: z.string() }));
+    const registry = buildRegistry([[sendAction]], []);
+    const refsWith: RefStore = {
+      put: refs.put.bind(refs), get: refs.get.bind(refs),
+      resolve: () => ({ ids: rows.map((r) => r.id), missing: 0, total: rows.length }),
+      hydrate: (): HydrateResult => ({ rows, complete: true, total: rows.length }),
+      markAllStale: () => {},
+    };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'send reminders',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs: refsWith, eventLog, confirm: denyAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__apply_to_ref', { ref: 'r_t1_s1', action: 'invoices__send_invoice_reminder', id_param: 'id' }),
+          textResponse('Nothing sent.'),
+        ]),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(handlerCalls).toBe(0);
+    expect(completedOf(events).status).toBe('cancelled');
+  });
+});
+
 describe('runLoopTurn — catalog search escape hatch', () => {
   it('BINDS discovered actions mid-run so the model can call them on the next step', async () => {
     // >24 actions (no full-bind); the needed action is neither session-used
@@ -728,6 +852,22 @@ describe('runLoopTurn — finalize honesty (I1, I2)', () => {
   });
 });
 
+describe('runLoopTurn — gate wait excluded from the deadline (round-4)', () => {
+  it('a confirmation wait longer than the deadline does not fail the turn', async () => {
+    const slowConfirm: ConfirmBroker = { request: () => new Promise((r) => setTimeout(() => r(true), 700)) };
+    const registry = buildRegistry([[action('invoices.send_reminders', 'bulk', async () => ({ sent: 2 }))]], []);
+    const events = await drive(
+      registry,
+      'send reminders',
+      [toolCallResponse('invoices__send_reminders', { ids: ['a', 'b'] }), textResponse('Sent.')],
+      { confirm: slowConfirm },
+      { budget: { maxTurns: 4, deadlineMs: 400 } },
+    );
+    expect(completedOf(events).status).toBe('done');
+    expect(finalOf(events)).toBe('Sent.');
+  });
+});
+
 describe('runLoopTurn — cancellation (I4)', () => {
   it('an aborted cancelSignal stops the loop and finalizes cancelled', async () => {
     const cancel = new AbortController();
@@ -760,38 +900,40 @@ describe('runLoopTurn — loop safety', () => {
     expect(events.filter((e) => e.t === 'step.failed').length).toBeGreaterThanOrEqual(3);
   });
 
-  it('step cap finalizes failed honestly without burning the full deadline', async () => {
-    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+  it('step cap finalizes failed honestly AND discloses work already done (round-4 billing C3)', async () => {
+    let writes = 0;
+    const registry = buildRegistry([[action('invoices.send_reminder', 'write', async () => { writes += 1; return { sent: 1 }; })]], []);
     let n = 0;
-    const script = () => toolCallResponse('leads__search_leads', { query: `q${n++}` });
+    const script = () => toolCallResponse('invoices__send_reminder', { id: `inv_${n++}` });
     const events = await drive(
       registry,
-      'loop forever',
-      Array.from({ length: 13 }, script),
+      'send them all',
+      Array.from({ length: 5 }, script),
       {},
       { budget: { maxTurns: 3, deadlineMs: 30_000 } },
     );
     expect(completedOf(events).status).toBe('failed');
-    expect(finalOf(events)).toMatch(/could not finish|step limit/i);
+    const final = finalOf(events);
+    expect(final).toMatch(/could not finish|step limit/i);
+    // real writes happened before the cap — the user MUST be told
+    expect(final).toMatch(new RegExp(String(writes) + '.*(change|write|action|step)', 'i'));
   });
 
-  it('deadline breach finalizes failed honestly', async () => {
-    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
-    const slowScript = [textResponse('late')];
-    const seen: Seen = { bodies: [] };
-    let first = true;
-    const slowFetch: typeof fetch = (async (_i: string | URL | Request, init?: RequestInit) => {
-      if (seen && init?.body) seen.bodies.push(String(init.body));
-      if (first) { first = false; await new Promise((r) => setTimeout(r, 1200)); }
-      return new Response(JSON.stringify(slowScript[0]), { status: 200, headers: { 'content-type': 'application/json' } });
-    }) as typeof fetch;
-    const events: Event[] = [];
-    const input: RunLoopTurnInput = {
-      sessionId, turnId: `t_${randomUUID()}`, userText: 'hello',
-      sessionDeps: { registry, crm: fakeCrm, refs, eventLog, confirm: approveAll, testFetch: slowFetch },
-      budget: { maxTurns: 3, deadlineMs: 150 },
-    };
-    for await (const ev of runLoopTurn(input)) events.push(ev);
+  it('deadline breach between model calls finalizes failed honestly', async () => {
+    // New semantics: the deadline is ACTIVE time checked before each model
+    // call (per-call hangs are bounded by modelSettings.timeoutMs); a slow
+    // first step pushes the SECOND call past the deadline.
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => {
+      await new Promise((r) => setTimeout(r, 300));
+      return { items: [], total: 0 };
+    })]], []);
+    const events = await drive(
+      registry,
+      'hello',
+      [toolCallResponse('leads__search_leads', {}), textResponse('late')],
+      {},
+      { budget: { maxTurns: 3, deadlineMs: 150 } },
+    );
     expect(completedOf(events).status).toBe('failed');
     expect(finalOf(events)).toMatch(/time|deadline/i);
   });

@@ -63,7 +63,9 @@ export interface RunLoopTurnInput {
   budget?: { maxTurns?: number; deadlineMs?: number };
 }
 
-const MAX_LOOP_STEPS = 12;
+// 20, not 12: round-4 marketing killed a legitimate 10-campaign rundown at
+// the 12-step cap. Cost stays bounded by the deadline + per-call maxTokens.
+const MAX_LOOP_STEPS = 20;
 const LOOP_DEADLINE_MS = 90_000;
 /** Providers pre-authorize max_tokens against remaining account credit —
  * the SDK's unlimited default turned a low OpenRouter balance into 402s on
@@ -134,7 +136,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     buffer.push(e);
   };
 
-  const counters = { stepsOk: 0, stepsFailed: 0, step: 0 };
+  const counters = { stepsOk: 0, stepsFailed: 0, step: 0, gateWaitMs: 0 };
   const stopController = new AbortController();
   const exits: LoopExits = {
     denied: false,
@@ -192,6 +194,17 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     const priorEvents = eventLog.list(sessionId).map((se) => se.event);
     const sessionCtx = buildSessionCtx(priorEvents);
     const cards = pickCards(userText, registry, sessionCtx);
+    // Acting-user identity (engine-wave E9 parity): "<id> (<name>)" for the
+    // prompt, bare id for the identity-param substitution rail.
+    const demoUserId = process.env['DEMO_USER_ID'] || 'user_1';
+    let currentUser = demoUserId;
+    try {
+      const nameRow = crm.tx((db) => db.get('SELECT name FROM users WHERE id = ?', [demoUserId]));
+      const name = nameRow?.['name'];
+      if (typeof name === 'string' && name.length > 0) currentUser = `${demoUserId} (${name})`;
+    } catch {
+      // no users table / lookup failure → bare id
+    }
     const tools = buildTurnTools({
       registry,
       cards,
@@ -207,6 +220,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       markTtfur,
       counters,
       planHash,
+      actingUserId: demoUserId,
     });
 
     const agent = new Agent({
@@ -220,18 +234,6 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     });
 
     const runner = createLoopRunner(sessionDeps.testFetch !== undefined ? { testFetch: sessionDeps.testFetch } : {});
-    // Acting-user identity (engine-wave E9 parity): "<id> (<name>)" so the
-    // model can resolve me/my/I — its absence dropped identity scoping in
-    // round-4 sales testing ("my open opportunities" answered org-wide).
-    const demoUserId = process.env['DEMO_USER_ID'] || 'user_1';
-    let currentUser = demoUserId;
-    try {
-      const nameRow = crm.tx((db) => db.get('SELECT name FROM users WHERE id = ?', [demoUserId]));
-      const name = nameRow?.['name'];
-      if (typeof name === 'string' && name.length > 0) currentUser = `${demoUserId} (${name})`;
-    } catch {
-      // no users table / lookup failure → bare id
-    }
     const prompt = buildLoopUserPrompt({
       userText,
       nowIso: clock.iso(),
@@ -250,6 +252,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
         deadlineMs,
         turnId,
         stopSignal: stopController.signal,
+        gateWaitMs: () => counters.gateWaitMs,
         onLlmCall: (u) => {
           llmCalls += 1;
           tokensIn += u.tokensIn;
@@ -284,7 +287,15 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       return yield* finalize('failed', 'I was unable to produce an answer. Please try again.');
     }
     if (finalText === MAX_TURNS_FALLBACK) {
-      return yield* finalize('failed', finalText);
+      // Round-4 billing C3: the cap message concealed 12 real sends. Always
+      // disclose what DID happen before the cap.
+      const disclosure =
+        exits.writesLanded > 0
+          ? ` Before stopping, ${counters.stepsOk} step(s) ran and ${exits.writesLanded} change(s) were made — those DID take effect.`
+          : counters.stepsOk > 0
+            ? ` Before stopping, ${counters.stepsOk} read step(s) completed; nothing was changed.`
+            : ' Nothing was changed.';
+      return yield* finalize('failed', finalText + disclosure);
     }
 
     // Deterministic status inference (quick-20 evidence, 2026-11-06): small

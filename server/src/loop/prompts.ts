@@ -53,6 +53,22 @@ Dates and times:
   yourself — the resolved dates are given to you and echoed back in tool
   results.
 
+Filters and numbers:
+- NEVER invent filters the user did not ask for, and never fill unused
+  filter params with placeholders like "*" or "all" — to match everything,
+  OMIT the parameter entirely.
+- NEVER do arithmetic yourself (no summing, averaging, or date math in
+  your head) — every result with 2 or more rows carries a [ref ...]; use
+  data__aggregate_ref / data__sort_ref / data__filter_ref for exact
+  numbers, even for small sets.
+- Never answer a data question from memory of earlier turns — re-run the
+  search. Conversation history is context, not a data source; numbers in
+  it may be stale.
+- For a write that should hit EVERY record in a result set ("send a
+  reminder for each overdue invoice"), use data__apply_to_ref with the
+  result's ref — one confirmation covers the whole set. Never loop a write
+  action record-by-record.
+
 Result sets, counts, and totals:
 - Search results carry a "total" field and may include only a sample of
   rows. Always state counts from the total in the result metadata, and

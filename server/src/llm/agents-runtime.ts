@@ -50,6 +50,11 @@ interface TurnCallContext {
   /** Checked before every model call — an exit tool's abort must stop the
    * loop even when the transport (e.g. a test mock fetch) ignores signals. */
   signal?: AbortSignal;
+  /** Checked before every model call; throws LoopDeadlineError when the
+   * ACTIVE time (wall clock minus human confirmation waits) is spent —
+   * round-4: a hard AbortSignal.timeout failed turns while users were
+   * still deciding at a gate. */
+  checkDeadline?: () => void;
 }
 
 const turnContext = new AsyncLocalStorage<TurnCallContext>();
@@ -77,6 +82,7 @@ class MeteredModel implements Model {
     if (ctx?.signal?.aborted) {
       throw new Error('Run aborted before model call');
     }
+    ctx?.checkDeadline?.();
     const spans = getDefaultSpans();
     const handle = spans.start({ turnId: ctx?.turnId ?? 'unknown', kind: 'llm', name: 'loop' });
     const startedAt = performance.now();
@@ -169,6 +175,9 @@ export interface RunLoopOnceOptions {
    * `LoopStoppedError` — a benign, caller-interpreted stop. */
   stopSignal?: AbortSignal;
   onLlmCall?: TurnCallContext['onLlmCall'];
+  /** Time spent suspended at confirmation gates — EXCLUDED from the
+   * deadline so human decision time never fails a turn. */
+  gateWaitMs?: () => number;
 }
 
 export const MAX_TURNS_FALLBACK =
@@ -186,14 +195,27 @@ export class LoopStoppedError extends Error {
  * `BudgetExceededError` on $ cap; maxTurns exhaustion returns the honest
  * `MAX_TURNS_FALLBACK` final output WITHOUT another model call. */
 export async function runLoopOnce(opts: RunLoopOnceOptions): Promise<RunResult<undefined, Agent>> {
-  const deadline = AbortSignal.timeout(opts.deadlineMs);
-  const signal = opts.stopSignal ? AbortSignal.any([deadline, opts.stopSignal]) : deadline;
-  const ctx: TurnCallContext = { turnId: opts.turnId, signal, ...(opts.onLlmCall ? { onLlmCall: opts.onLlmCall } : {}) };
+  // The deadline is ACTIVE time: wall clock minus gate-wait. Enforced as a
+  // pre-model-call check (not an AbortSignal.timeout) so a human taking two
+  // minutes at a confirmation never kills the turn; per-call hangs are
+  // bounded separately by modelSettings.timeoutMs.
+  const startedAt = performance.now();
+  const checkDeadline = (): void => {
+    const active = performance.now() - startedAt - (opts.gateWaitMs?.() ?? 0);
+    if (active > opts.deadlineMs) throw new LoopDeadlineError(opts.deadlineMs);
+  };
+  const signal = opts.stopSignal;
+  const ctx: TurnCallContext = {
+    turnId: opts.turnId,
+    checkDeadline,
+    ...(signal ? { signal } : {}),
+    ...(opts.onLlmCall ? { onLlmCall: opts.onLlmCall } : {}),
+  };
   try {
     return await turnContext.run(ctx, () =>
       opts.runner.run(opts.agent, opts.input as string, {
         maxTurns: opts.maxTurns,
-        signal,
+        ...(signal ? { signal } : {}),
         // Defense when a provider ignores parallel_tool_calls: local tool
         // execution stays serial, so gate/step events can never interleave.
         toolExecution: { maxFunctionToolConcurrency: 1 },
@@ -204,7 +226,6 @@ export async function runLoopOnce(opts: RunLoopOnceOptions): Promise<RunResult<u
     );
   } catch (err) {
     if (opts.stopSignal?.aborted) throw new LoopStoppedError();
-    if (deadline.aborted) throw new LoopDeadlineError(opts.deadlineMs);
     throw err;
   }
 }

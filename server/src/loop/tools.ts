@@ -28,6 +28,7 @@ import { retrieve, renderCards, type Card, type SessionCtx } from '../agent/retr
 import { shouldGate, type ConfirmBroker } from '../agent/executor.js';
 import type { ConfirmationScope, Event } from '../events/types.js';
 import { coerceDateParams, widenDateFields } from './date-rail.js';
+import { DATE_FIELD_RE } from '../agent/date-expr.js';
 
 // --- stuck detection (OpenHands StuckDetector-lite) ---------------------------
 
@@ -124,9 +125,30 @@ function describeError(err: unknown): { code: string; message: string } {
   return { code: 'VALIDATION', message: err instanceof Error ? err.message : String(err) };
 }
 
-/** Pluralize an entity noun without double-s ("tasks" stays "tasks"). */
+/** Deep-copy with every date-shaped numeric field rendered as ISO — what
+ * the MODEL sees (round-4: models hand-convert epoch ms in answers and get
+ * it wrong by months/years; they read ISO strings fine). Events/UI keep
+ * the raw values. */
+function renderDatesForModel(value: unknown, keyOfParent?: string): unknown {
+  if (Array.isArray(value)) return value.map((v) => renderDatesForModel(v, keyOfParent));
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof v === 'number' && DATE_FIELD_RE.test(k) && v > 10_000_000_000) {
+        out[k] = new Date(v).toISOString();
+      } else {
+        out[k] = renderDatesForModel(v, k);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
+/** Natural count phrasing: entity nouns are plural table names ("invoices"),
+ * so singular counts strip the s and plural counts never double it. */
 function pluralNoun(noun: string, count: number): string {
-  if (count === 1) return noun;
+  if (count === 1) return noun.endsWith('s') ? noun.slice(0, -1) : noun;
   return noun.endsWith('s') ? noun : `${noun}s`;
 }
 
@@ -166,9 +188,18 @@ export interface BuildTurnToolsInput {
   exits: LoopExits;
   stuck: StuckTracker;
   markTtfur: () => void;
-  counters: { stepsOk: number; stepsFailed: number; step: number };
+  counters: { stepsOk: number; stepsFailed: number; step: number; gateWaitMs: number };
   planHash: string;
+  /** Resolved acting user id — literal "me"/"current_user" param values in
+   * identity-shaped fields are substituted with this (round-4 billing C1:
+   * host_user_id:"me" went to SQL literally). */
+  actingUserId: string;
 }
+
+const IDENTITY_FIELD_RE = /(user|assignee|owner|host|creator)_id$/;
+const IDENTITY_PLACEHOLDER_RE = /^(me|myself|current[ _]?user)$/i;
+/** Bulk-apply honest-refusal ceiling (same as the old executor's narrow-it-down rule). */
+const APPLY_MAX_RECORDS = 1000;
 
 /** Hard ceiling on tools bound to one turn (initial shortlist + dynamic
  * additions) — selection accuracy degrades past ~40 tools in context. */
@@ -215,6 +246,10 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         const scrubbed: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(args)) {
           if (typeof v === 'string' && /^(\*+|all|any)?$/i.test(v.trim())) continue;
+          if (typeof v === 'string' && IDENTITY_FIELD_RE.test(k) && IDENTITY_PLACEHOLDER_RE.test(v.trim())) {
+            scrubbed[k] = input.actingUserId;
+            continue;
+          }
           scrubbed[k] = v;
         }
 
@@ -243,7 +278,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           };
           markTtfur();
           emit({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+          const gateStartedAt = performance.now();
           const approved = await confirm.request({ turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+          counters.gateWaitMs += performance.now() - gateStartedAt;
           emit({ t: 'confirmation.resolved', turnId, confirmId, approved });
           if (!approved) {
             exits.denied = true;
@@ -275,7 +312,30 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
 
           let finalResult: unknown = output;
           let spillRef: string | undefined;
+          let inlineRef: string | undefined;
           let count = countRows(output);
+          if (!isSpill(output) && output !== null && typeof output === 'object') {
+            // Round-4 support finding: small inline lists never got a ref,
+            // so aggregate/sort/filter were unusable and the model summed by
+            // hand (fabricating totals). Mint a handle for any complete
+            // inline list of 2+ identifiable rows.
+            const items = (output as Record<string, unknown>)['items'];
+            if (Array.isArray(items) && items.length >= 2 && items.length >= count) {
+              const ids = items.map(rowId).filter((id): id is string => id !== undefined);
+              if (ids.length === items.length) {
+                const handle = refs.put({
+                  action: action.slug,
+                  turnId,
+                  stepId,
+                  entityType: action.entities[0] ?? action.module,
+                  total: items.length,
+                  idList: ids,
+                  sample: items.slice(0, SPILL_SAMPLE_ROWS),
+                });
+                inlineRef = handle.ref;
+              }
+            }
+          }
           if (isSpill(output)) {
             // Executor parity (executor.ts spillToRef): prefer the producer's
             // COMPLETE idList; fall back to sample ids (hydrate then honestly
@@ -298,7 +358,8 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           }
 
           const noun = action.entities[0] ?? 'record';
-          const refNote = spillRef ? ` [ref ${spillRef}]` : '';
+          const refForModel = spillRef ?? inlineRef;
+          const refNote = refForModel ? ` [ref ${refForModel}]` : '';
           const summary = `${action.name}: ${isWrite ? affectedCount : count} ${pluralNoun(noun, isWrite ? affectedCount : count)}${refNote}`;
           const finishedEv: Extract<Event, { t: 'step.finished' }> = { t: 'step.finished', turnId, stepId, summary, ms };
           if (spillRef !== undefined) {
@@ -312,7 +373,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           if (isWrite) exits.writesLanded += 1;
 
           const echo = resolved.length > 0 ? ` [resolved dates: ${resolved.join('; ')}]` : '';
-          const body = JSON.stringify(finalResult ?? null).slice(0, OBSERVATION_CAP);
+          const body = JSON.stringify(renderDatesForModel(finalResult) ?? null).slice(0, OBSERVATION_CAP);
           return `${summary}.${echo} result=${body}`;
         } catch (err) {
           const ms = performance.now() - startedAt;
@@ -483,6 +544,93 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
+  const applyToRef = tool({
+    name: 'data__apply_to_ref',
+    description:
+      'Apply ONE write action to EVERY record behind a ref (e.g. send a reminder for each overdue invoice found earlier). One confirmation covers the whole set. Provide the tool name of the write action and which of its params receives each record id. Use this for bulk writes instead of calling the action record-by-record.',
+    parameters: z.object({
+      ref: z.string(),
+      action: z.string().describe('tool name of the write action, e.g. invoices__send_invoice_reminder'),
+      id_param: z.string().describe('the action param that takes each record id, e.g. "id"'),
+      params_json: z.string().optional().describe('JSON object of extra params shared by every call'),
+    }),
+    execute: async ({ ref, action: actionName, id_param, params_json }): Promise<string> => {
+      const slug = actionName.replace('__', '.');
+      const target = registry.get(slug);
+      if (!target) return `Unknown action "${actionName}" — check the tool name.`;
+      if (target.risk === 'read') return `"${actionName}" is a read action — call it directly, apply_to_ref is for writes.`;
+      let extra: Record<string, unknown> = {};
+      if (params_json !== undefined && params_json !== '') {
+        try {
+          const parsed: unknown = JSON.parse(params_json);
+          if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) extra = parsed as Record<string, unknown>;
+        } catch {
+          return 'params_json is not valid JSON — fix it and retry.';
+        }
+      }
+      const { rows, complete, total } = hydrateRows(ref);
+      if (!complete) {
+        return `The set behind ${ref} is incomplete on the server — a bulk write over it would miss records. Narrow the original search instead.`;
+      }
+      if (total > APPLY_MAX_RECORDS) {
+        return `That would affect ${total} records — more than the ${APPLY_MAX_RECORDS}-record limit for one bulk action. Ask the user to narrow the set.`;
+      }
+      const ids = rows.map(rowId).filter((id): id is string => id !== undefined);
+
+      counters.step += 1;
+      const stepId = `s${counters.step}`;
+      const noun = target.entities[0] ?? 'record';
+      const confirmId = `cf_${randomUUID()}`;
+      const scope: ConfirmationScope = {
+        actions: [target.slug],
+        affectedCount: ids.length,
+        targetSample: ids.slice(0, 5),
+        description: `${target.name} — ${ids.length} ${pluralNoun(noun, ids.length)}.`,
+      };
+      markTtfur();
+      emit({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+      const gateStartedAt = performance.now();
+      const approved = await confirm.request({ turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+      counters.gateWaitMs += performance.now() - gateStartedAt;
+      emit({ t: 'confirmation.resolved', turnId, confirmId, approved });
+      if (!approved) {
+        exits.denied = true;
+        return `DENIED by the user — "${target.name}" was NOT executed for any of the ${ids.length} records. Nothing was changed; say so plainly.`;
+      }
+
+      emit({ t: 'step.started', turnId, stepId, action: target.slug, resolvedParams: [{ ref, id_param, count: ids.length }] });
+      const startedAt = performance.now();
+      let ok = 0;
+      const errors: string[] = [];
+      for (const [i, id] of ids.entries()) {
+        const params = { ...extra, [id_param]: id };
+        const parsed = target.inputSchema.safeParse(coerceDateParams(params, clock.now()).params);
+        if (!parsed.success) {
+          errors.push(`${id}: invalid params`);
+          continue;
+        }
+        try {
+          await crm.tx((db) =>
+            target.handler(parsed.data as Record<string, unknown>, { db, clock, idempotencyKey: `${turnId}:0:${stepId}:${i}`, format: 'concise' } satisfies ActionContext),
+          );
+          ok += 1;
+        } catch (err) {
+          const e = describeError(err);
+          if (errors.length < 5) errors.push(`${id}: ${e.code}`);
+        }
+      }
+      const ms = performance.now() - startedAt;
+      const failed = ids.length - ok;
+      if (ok > 0) {
+        counters.stepsOk += 1;
+        exits.writesLanded += ok;
+      }
+      if (failed > 0 && ok === 0) counters.stepsFailed += 1;
+      emit({ t: 'step.finished', turnId, stepId, summary: `${target.name}: ${ok}/${ids.length} ${pluralNoun(noun, ids.length)} processed`, ms });
+      return `Applied "${target.name}" to ${ids.length} ${pluralNoun(noun, ids.length)}: ${ok} succeeded, ${failed} failed${errors.length > 0 ? ` (examples: ${errors.join('; ')})` : ''}.`;
+    },
+  });
+
   const askUser = tool({
     name: 'session__ask_user',
     description: 'Ask the user ONE specific question when you need their decision to proceed (ambiguity, missing required detail). This ends your turn.',
@@ -505,6 +653,6 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
-  tools.push(searchActions, sortRef, filterRef, aggregateRef, askUser, refuse);
+  tools.push(searchActions, sortRef, filterRef, aggregateRef, applyToRef, askUser, refuse);
   return tools;
 }

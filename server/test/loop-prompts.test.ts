@@ -59,6 +59,19 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/never ask permission/i);
   });
 
+  it('bans answering data questions from conversation memory', () => {
+    expect(system).toMatch(/never answer .*from memory|re-run the search/i);
+  });
+
+  it('names the bulk apply tool', () => {
+    expect(system).toContain('data__apply_to_ref');
+  });
+
+  it('bans invented filter values and self-done arithmetic', () => {
+    expect(system).toMatch(/never (add|invent) filters?/i);
+    expect(system).toMatch(/never do arithmetic|never (sum|add up) .*yourself/i);
+  });
+
   it('tells the model to ACT on problem statements, not just report counts', () => {
     expect(system).toMatch(/describes a problem/i);
   });

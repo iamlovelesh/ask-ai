@@ -134,11 +134,14 @@ describe('agents-runtime', () => {
     expect(seen.length).toBe(5);
   });
 
-  it('deadline exceeded raises LoopDeadlineError without waiting out the model call', async () => {
+  it('deadline (active time) exceeded raises LoopDeadlineError before the next model call', async () => {
+    // Deadline is checked pre-model-call; a slow first round pushes the
+    // second call past it. Per-call hangs are modelSettings.timeoutMs's job.
     const seen: SeenRequest[] = [];
-    const runner = createLoopRunner({ testFetch: scriptedFetch([textResponse('late')], seen, 1500) });
+    const runner = createLoopRunner({ testFetch: scriptedFetch([toolCallResponse('crm__search', { query: 'x' }), textResponse('late')], seen, 120) });
     await expect(
-      runLoopOnce({ runner, agent: makeAgent(), input: 'hello', maxTurns: 2, deadlineMs: 150, turnId: 't_rt4' }),
+      runLoopOnce({ runner, agent: makeAgent(), input: 'hello', maxTurns: 3, deadlineMs: 100, turnId: 't_rt4' }),
     ).rejects.toThrow(LoopDeadlineError);
+    expect(seen.length).toBe(1);
   });
 });
