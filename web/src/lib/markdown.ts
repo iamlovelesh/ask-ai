@@ -43,10 +43,36 @@ function renderInline(escaped: string): string {
 const ORDERED_RE = /^\s*\d+[.)]\s+/;
 const BULLET_RE = /^\s*[-*•]\s+/;
 const HEADING_RE = /^\s*#{1,6}\s+/;
+// A GFM table delimiter row: cells of dashes with optional alignment colons.
+const TABLE_DELIM_RE = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/;
+
+/** Split a pipe-table row into trimmed cells, dropping the empty edges that
+ * optional leading/trailing pipes produce. */
+function splitRow(line: string): string[] {
+  const cells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|');
+  return cells.map((c) => c.trim());
+}
+
+/** GFM pipe table → <table>. Requires a header row followed by a dash
+ * delimiter row (so ordinary prose containing a stray `|` is never a
+ * table). Cells carry full inline rendering (chips, bold, code). */
+function renderTable(lines: string[]): string {
+  const header = splitRow(lines[0] as string);
+  const bodyRows = lines.slice(2).map(splitRow);
+  const th = header.map((c) => `<th>${renderInline(c)}</th>`).join('');
+  const trs = bodyRows
+    .map((row) => `<tr>${row.map((c) => `<td>${renderInline(c)}</td>`).join('')}</tr>`)
+    .join('');
+  return `<table class="answer-table"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
+}
 
 function renderBlock(block: string): string {
   const lines = block.split('\n').filter((l) => l.trim() !== '');
   if (lines.length === 0) return '';
+
+  if (lines.length >= 2 && lines[0]?.includes('|') && TABLE_DELIM_RE.test(lines[1] as string)) {
+    return renderTable(lines);
+  }
 
   if (lines.every((l) => ORDERED_RE.test(l))) {
     const items = lines.map((l) => `<li>${renderInline(l.replace(ORDERED_RE, ''))}</li>`).join('');

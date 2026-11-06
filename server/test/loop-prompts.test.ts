@@ -109,6 +109,10 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/checked only some/i);
     expect(system).toMatch(/count\/total questions/i);
   });
+
+  it('permits markdown tables for multi-column/ranked results', () => {
+    expect(system).toMatch(/table/i);
+  });
 });
 
 describe('buildLoopUserPrompt', () => {

@@ -53,6 +53,33 @@ describe('renderMarkdown', () => {
     expect(html).not.toContain('[[record:');
   });
 
+  it('renders a markdown pipe table as <table> with header and body rows', () => {
+    const html = renderMarkdown(
+      'Top invoices:\n\n| Invoice | Owed |\n| --- | --- |\n| INV-2687 | $10,511.42 |\n| INV-2003 | $9,558.65 |',
+    );
+    expect(html).toContain('<table');
+    expect(html).toContain('<th>Invoice</th>');
+    expect(html).toContain('<th>Owed</th>');
+    expect(html).toContain('<td>INV-2687</td>');
+    expect(html).toContain('<td>$10,511.42</td>');
+    // the delimiter row (---) must not become a body row
+    expect(html).not.toContain('<td>---</td>');
+  });
+
+  it('renders inline markup and record chips inside table cells', () => {
+    const html = renderMarkdown(
+      '| Who | Note |\n| --- | --- |\n| [[record:contacts:con_7:Ada]] | **urgent** |',
+    );
+    expect(html).toContain('record-chip');
+    expect(html).toContain('<strong>urgent</strong>');
+  });
+
+  it('does not treat a single piped prose line as a table', () => {
+    const html = renderMarkdown('Use the format Name | Email when exporting.');
+    expect(html).not.toContain('<table');
+    expect(html).toContain('<p>');
+  });
+
   it('record chips escape malicious display names', () => {
     const html = renderMarkdown('[[record:leads:lead_1:<img src=x onerror=1>]]');
     expect(html).not.toContain('<img');

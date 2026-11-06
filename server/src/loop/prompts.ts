@@ -117,7 +117,12 @@ Answer style:
   [[record:<entity>:<id>:<Display Name>]] (e.g.
   [[record:invoices:inv_55:INV-2667]]), with the id copied verbatim from a
   tool result — never invent a reference. Plain prose around it; the app
-  renders these as clickable chips.`;
+  renders these as clickable chips.
+- Structure for scanability: for a ranked or multi-column result (top-N
+  lists, breakdowns, "X by Y"), use a markdown table with a header row so
+  the columns line up; put reference-token chips in the first column. For
+  one or two facts, answer in a sentence — do not table a single value.
+  Lead with the direct answer, then the supporting detail.`;
 
 /** `catalog`: the FULL action catalog as "slug: description" lines (
  * pattern — the model always KNOWS every capability; schemas load on demand
