@@ -6,6 +6,8 @@
  * plain text, showing literal `**` to users. This renders exactly that
  * subset and nothing more — input is HTML-escaped FIRST, and the only tags
  * this module can emit are <p> <br> <strong> <em> <code> <ol> <ul> <li>,
+ * GFM pipe tables, and an inline bar chart (<div>/<span> with a computed,
+ * clamped width) derived from a numeric 2-column table,
  * so no model output can smuggle markup through. No dependency: a full
  * markdown library is a bigger surface than the answers need.
  */
@@ -66,9 +68,63 @@ function splitRow(line: string): string[] {
   return cells.map((c) => c.trim());
 }
 
+/** Plain text of a table cell (for chart labels/values): record tokens →
+ * their display name, markdown emphasis/code markers stripped. Operates on
+ * the already-HTML-escaped cell, so the result is safe as text content. */
+function cellPlainText(escaped: string): string {
+  return escaped
+    .replace(/\[\[record:((?:(?!\]\])[^\n])+)\]\]/g, (_m, inner: string) => {
+      const parts = inner.split(':');
+      return (parts[parts.length - 1] ?? '').trim();
+    })
+    .replace(/[*`]/g, '')
+    .trim();
+}
+
+/** Parse a numeric measure from a cell ("1,362", "$10,511.42", "52%") or null. */
+function parseChartValue(cell: string): number | null {
+  const cleaned = cell.replace(/[^0-9.\-]/g, '');
+  if (!/[0-9]/.test(cleaned)) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+const CHART_MAX_ROWS = 12;
+
+/** A 2-column table whose second column is non-negative numbers across every
+ * body row (a breakdown/ranking: "leads by status", "deals per owner") →
+ * an inline horizontal bar chart built FROM the grounded table values, so it
+ * adds no new fabrication surface. Returns null when the shape doesn't fit. */
+function renderBarChart(header: string[], bodyRows: string[][]): string | null {
+  if (header.length !== 2 || bodyRows.length < 2) return null;
+  const values = bodyRows.map((r) => parseChartValue(r[1] ?? ''));
+  if (values.some((v) => v === null || (v as number) < 0)) return null;
+  const nums = values as number[];
+  const max = Math.max(...nums);
+  if (!(max > 0)) return null;
+  const rows = bodyRows.slice(0, CHART_MAX_ROWS).map((r, i) => {
+    const label = cellPlainText(r[0] ?? '');
+    const valueText = cellPlainText(r[1] ?? '');
+    const pct = Math.max(1, Math.round(((nums[i] as number) / max) * 1000) / 10);
+    return (
+      `<div class="answer-chart-row">` +
+      `<span class="answer-chart-label" title="${label}">${label}</span>` +
+      `<span class="answer-chart-track"><span class="answer-chart-bar" style="width:${pct}%"></span></span>` +
+      `<span class="answer-chart-value">${valueText}</span>` +
+      `</div>`
+    );
+  });
+  const more =
+    bodyRows.length > CHART_MAX_ROWS
+      ? `<div class="answer-chart-more">+${bodyRows.length - CHART_MAX_ROWS} more</div>`
+      : '';
+  return `<div class="answer-chart" role="img" aria-label="Bar chart of ${header[1]} by ${header[0]}">${rows.join('')}${more}</div>`;
+}
+
 /** GFM pipe table → <table>. Requires a header row followed by a dash
  * delimiter row (so ordinary prose containing a stray `|` is never a
- * table). Cells carry full inline rendering (chips, bold, code). */
+ * table). Cells carry full inline rendering (chips, bold, code). A numeric
+ * 2-column breakdown also gets an inline bar chart rendered from its values. */
 function renderTable(lines: string[]): string {
   const header = splitRow(lines[0] as string);
   const bodyRows = lines.slice(2).map(splitRow);
@@ -76,7 +132,9 @@ function renderTable(lines: string[]): string {
   const trs = bodyRows
     .map((row) => `<tr>${row.map((c) => `<td>${renderInline(c)}</td>`).join('')}</tr>`)
     .join('');
-  return `<table class="answer-table"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
+  const table = `<table class="answer-table"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
+  const chart = renderBarChart(header, bodyRows);
+  return chart !== null ? chart + table : table;
 }
 
 function renderBlock(block: string): string {

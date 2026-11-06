@@ -80,6 +80,39 @@ describe('renderMarkdown', () => {
     expect(html).toContain('<p>');
   });
 
+  it('renders an inline bar chart for a 2-column numeric breakdown, keeping the table', () => {
+    const html = renderMarkdown(
+      'Leads by status:\n\n| Status | Count |\n| --- | --- |\n| new | 1,362 |\n| contacted | 1,252 |\n| qualified | 681 |',
+    );
+    expect(html).toContain('answer-chart');
+    expect(html).toContain('<table'); // table still rendered
+    // the largest value (1,362) fills the bar; a smaller one is proportionally shorter
+    expect(html).toMatch(/width:\s*100(\.0)?%/);
+    expect(html).toContain('1,362'); // original value label preserved
+    // bar count = body rows
+    expect((html.match(/answer-chart-bar/g) || []).length).toBe(3);
+  });
+
+  it('does NOT chart a 2-column table whose second column is non-numeric', () => {
+    const html = renderMarkdown('| Who | Role |\n| --- | --- |\n| Ada | Admin |\n| Ben | Member |');
+    expect(html).not.toContain('answer-chart');
+    expect(html).toContain('<table');
+  });
+
+  it('does NOT chart a 3-column table', () => {
+    const html = renderMarkdown('| Invoice | Owed | Owner |\n| --- | --- | --- |\n| INV-1 | $10 | Ada |\n| INV-2 | $20 | Ben |');
+    expect(html).not.toContain('answer-chart');
+  });
+
+  it('chart labels strip record-chip tokens to the plain display name', () => {
+    const html = renderMarkdown(
+      '| Owner | Deals |\n| --- | --- |\n| [[record:users:user_2:Nora Haddad]] | 12 |\n| [[record:users:user_6:Marcus Kowalski]] | 8 |',
+    );
+    expect(html).toContain('answer-chart');
+    expect(html).toContain('Nora Haddad');
+    expect(html).not.toMatch(/answer-chart[\s\S]*\[\[record:/); // no raw token inside the chart
+  });
+
   it('degrades a malformed record token to plain display-name text, not a broken span', () => {
     // entity/id that do not fit the safe charset must not emit a chip span
     const html = renderMarkdown('See [[record:Bad Entity:not an id:Ada Lovelace]] for details.');
