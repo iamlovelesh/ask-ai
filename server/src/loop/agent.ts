@@ -52,6 +52,9 @@ import {
   resolveRecordNames,
   ENTITY_NAME_SQL,
 } from './name-resolve.js';
+import type { MemoryStore } from '../memory/store.js';
+import { renderMemories } from '../memory/render.js';
+import { runMemoryExtraction, type MemoryExtractionInput } from '../memory/extract.js';
 
 export interface LoopSessionDeps {
   registry: Registry;
@@ -73,6 +76,19 @@ export interface LoopSessionDeps {
   /** OpenRouter model slug for this turn (user model-picker). Defaults to
    * `plannerModel()` when unset. Must be validated upstream (allowlist). */
   model?: string;
+  /** Durable user memory (memory-layer design §4). When present and enabled,
+   * memories are recalled into the user prompt and the memory tools are bound. */
+  memory?: MemoryStore;
+  /** False/off → no recall injection, no tool, no extraction. Default (undefined)
+   * is treated as enabled when a `memory` store is present. */
+  memoryEnabled?: boolean;
+  /** False → recall still reads, but writes (tool + extractor) are suppressed
+   * (incognito). Defaults to writable. */
+  memoryWritable?: boolean;
+  /** Cheap model slug for the background extractor. Defaults to `turnModel`. */
+  extractModel?: string;
+  /** Test seam: the post-turn extraction fn (defaults to `runMemoryExtraction`). */
+  runExtraction?: (input: MemoryExtractionInput) => Promise<void>;
 }
 
 export interface RunLoopTurnInput {
@@ -213,6 +229,27 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
    * metrics (persisted → shown in the trace) use one source of truth. */
   const turnModel = sessionDeps.model ?? plannerModel();
 
+  // Acting-user identity (engine-wave E9 parity): "<id> (<name>)" for the
+  // prompt, bare id for identity-param substitution and memory scoping.
+  // Hoisted above finalize so the post-turn extractor can read demoUserId.
+  const demoUserId = process.env['DEMO_USER_ID'] || 'user_1';
+  let currentUser = demoUserId;
+  try {
+    const nameRow = crm.tx((db) => db.get('SELECT name FROM users WHERE id = ?', [demoUserId]));
+    const name = nameRow?.['name'];
+    if (typeof name === 'string' && name.length > 0) currentUser = `${demoUserId} (${name})`;
+  } catch {
+    // no users table / lookup failure → bare id
+  }
+
+  // Durable user memory (design §4.6): recall is on unless explicitly disabled;
+  // writes (tool + extractor) additionally require not-incognito.
+  const memoryStore = sessionDeps.memory;
+  const memoryOn = memoryStore !== undefined && sessionDeps.memoryEnabled !== false;
+  const memoryWritable = memoryOn && sessionDeps.memoryWritable !== false;
+  const recalled = memoryOn ? renderMemories(memoryStore!.listLive(demoUserId)) : '';
+  const recalledEvidence = recalled !== '' ? [recalled] : [];
+
   const buffer: Event[] = [];
   const record = (e: Event): void => {
     eventLog.append(sessionId, e);
@@ -280,6 +317,27 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     yield snapEv;
 
     eventLog.touchSession(sessionId, { turns: 1, tokens: tokensIn + tokensOut, costUsd });
+
+    // Post-turn memory extraction (design §4.4) — only on substantive, SUCCESSFUL
+    // turns, and only when writes are allowed (not incognito / globally off).
+    // Fire-and-forget: it runs on a cheap model AFTER the answer is sent, so it
+    // adds zero latency; it is best-effort and can never throw into the turn.
+    // Lifecycle caveat: this detached work is not tracked by SessionRuntime, so
+    // a new turn may begin while it runs (safe — sqlite writes are atomic and
+    // the store is keyed by user_id) and process shutdown mid-extraction drops
+    // that one write (the next turn re-reads fresh material).
+    if (status === 'done' && memoryWritable && memoryStore !== undefined) {
+      const extract = sessionDeps.runExtraction ?? runMemoryExtraction;
+      void extract({
+        memory: memoryStore,
+        userId: demoUserId,
+        sessionId,
+        turnId,
+        userText,
+        answerText: finalText,
+        model: sessionDeps.extractModel ?? turnModel,
+      }).catch(() => {});
+    }
     return { status, metrics };
   }
 
@@ -289,17 +347,6 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     const priorEvents = eventLog.list(sessionId).map((se) => se.event);
     const sessionCtx = buildSessionCtx(priorEvents);
     const cards = pickCards(userText, registry, sessionCtx);
-    // Acting-user identity (engine-wave E9 parity): "<id> (<name>)" for the
-    // prompt, bare id for the identity-param substitution rail.
-    const demoUserId = process.env['DEMO_USER_ID'] || 'user_1';
-    let currentUser = demoUserId;
-    try {
-      const nameRow = crm.tx((db) => db.get('SELECT name FROM users WHERE id = ?', [demoUserId]));
-      const name = nameRow?.['name'];
-      if (typeof name === 'string' && name.length > 0) currentUser = `${demoUserId} (${name})`;
-    } catch {
-      // no users table / lookup failure → bare id
-    }
     // Provenance firewall seed: ids the USER typed + ids from prior turns.
     const knownIds = new Set<string>();
     harvestIds(userText, knownIds);
@@ -321,6 +368,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       planHash,
       actingUserId: demoUserId,
       knownIds,
+      ...(memoryStore !== undefined ? { memory: memoryStore, memoryWritable } : {}),
     });
 
     // P1 (pattern): the full catalog rides in the (cacheable) system
@@ -356,6 +404,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       dateAnchors: buildDateAnchors(clock.now()),
       recentTurns: renderRecentTurns(priorEvents),
       currentUser,
+      recalledMemories: recalled,
     });
 
     let finalText: string | undefined;
@@ -419,10 +468,16 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       //    must exist in or derive from this turn's tool outputs.
       const canRetry = finalText !== MAX_TURNS_FALLBACK && exits.clarify === undefined && exits.refused === undefined;
       if (canRetry) {
-        if (needsGrounding(finalText, counters.step + counters.virtualReads)) {
+        // Memory is a trusted source (design §4.6.1): a zero-step answer whose
+        // figures/dates are all supported by recalled memory is grounded —
+        // skip the forced re-run. Audit-style scope claims are NEVER grounded
+        // by memory (they are CRM-scope assertions), so they still re-run.
+        const groundedByMemory =
+          recalled !== '' && !AUDIT_CLAIM_RE.test(finalText) && numberCheck(finalText, [], userText, recalledEvidence).ok;
+        if (needsGrounding(finalText, counters.step + counters.virtualReads) && !groundedByMemory) {
           finalText = await runOnce(`${prompt}\n\n${GROUNDING_NOTE}`, groundedAgent);
-        } else {
-          const check = numberCheck(finalText, exits.toolOutputs, userText);
+        } else if (!groundedByMemory) {
+          const check = numberCheck(finalText, exits.toolOutputs, userText, recalledEvidence);
           if (!check.ok) {
             finalText = await runOnce(
               `${prompt}\n\nIMPORTANT: your previous draft stated figures I could not find in any tool result this turn: ${check.unsupported.slice(0, 8).join(', ')}. Re-read the data with tools, use data__aggregate_ref (with subtract_field for owed/outstanding amounts) for any total — never do arithmetic yourself — and answer using ONLY figures that appear verbatim in tool results. Do NOT show intermediate calculations or scratch work in the answer.`,
@@ -432,7 +487,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
         }
         // Persistent unsupported figures get an explicit, honest caution.
         if (exits.clarify === undefined && exits.refused === undefined && finalText !== MAX_TURNS_FALLBACK) {
-          const finalCheck = numberCheck(finalText, exits.toolOutputs, userText);
+          const finalCheck = numberCheck(finalText, exits.toolOutputs, userText, recalledEvidence);
           if (!finalCheck.ok) {
             // Cap the caution (round-7b N2): a 33-item scratch list buries
             // the one real warning and reads as leaked internal state.
@@ -459,8 +514,11 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
           // cannot (non-numeric claims) and makes the guarantee explicit,
           // independent of figure-matching. Observed live: an optimized turn
           // answered "251 leads" with stepsOk:0 and no caution.
+          const groundedByMemoryBelt =
+            recalled !== '' && !AUDIT_CLAIM_RE.test(finalText) && numberCheck(finalText, [], userText, recalledEvidence).ok;
           if (
             needsGrounding(finalText, counters.step + counters.virtualReads) &&
+            !groundedByMemoryBelt &&
             !/could not verify|double-check this/i.test(finalText)
           ) {
             finalText += `\n\n⚠ I could not verify this against your records — no data was read this turn. Please ask again so I can look it up.`;
