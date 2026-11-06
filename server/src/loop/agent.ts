@@ -280,10 +280,15 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     //    it arrived through;
     //  - a turn whose every dispatched action failed is a failed turn even
     //    when the model narrates the failure gracefully.
+    const asksQuestion =
+      finalText.trimEnd().endsWith('?') ||
+      /\b(i need to (know|clarify)|could you (provide|tell|confirm|specify)|please (provide|specify|confirm)|which (one|of these)? ?(do you mean|would you like))\b/i.test(
+        finalText,
+      );
     const status: TurnStatus =
       exits.denied && exits.writesLanded === 0
         ? 'cancelled'
-        : finalText.trimEnd().endsWith('?')
+        : asksQuestion
           ? 'clarify'
           : counters.stepsFailed > 0 && counters.stepsOk === 0
             ? 'failed'

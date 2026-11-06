@@ -286,6 +286,14 @@ describe('runLoopTurn — honest exits', () => {
 });
 
 describe('runLoopTurn — deterministic status inference', () => {
+  it('a question-shaped answer WITHOUT a trailing question mark still completes as clarify', async () => {
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const events = await drive(registry, 'add a note to the contact', [
+      textResponse('I need to clarify which contact you mean. Could you provide either:\n- the name\n- the email'),
+    ]);
+    expect(completedOf(events).status).toBe('clarify');
+  });
+
   it('a plain-text final answer that is a question completes as clarify', async () => {
     const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
     const events = await drive(registry, 'reschedule the appointment', [
@@ -487,6 +495,40 @@ describe('runLoopTurn — sort_ref typed ordering (I8)', () => {
     const obs = seen.bodies[1] ?? '';
     expect(obs).not.toMatch(/Sorted 3 records/);
     expect(obs).toMatch(/no .*values|not present|missing/i);
+  });
+});
+
+describe('runLoopTurn — data__filter_ref', () => {
+  const rows = Array.from({ length: 60 }, (_, i) => ({ id: `con_${i}`, last_activity_at: i * 1000, status: i % 2 === 0 ? 'open' : 'closed' }));
+  function refsWithHydrate(): RefStore {
+    const put = refs.put.bind(refs);
+    return {
+      put, get: refs.get.bind(refs),
+      resolve: () => ({ ids: rows.map((r) => String(r.id)), missing: 0, total: rows.length }),
+      hydrate: (): HydrateResult => ({ rows, complete: true, total: rows.length }),
+      markAllStale: () => {},
+    };
+  }
+
+  it('filters the complete set server-side and reports the exact count', async () => {
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'contacts inactive since x',
+      sessionDeps: {
+        registry: buildRegistry([[action('contacts.search', 'read', async () => ({ items: [], total: 60 }))]], []),
+        crm: fakeCrm, refs: refsWithHydrate(), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__filter_ref', { ref: 'r_t1_s1', field: 'last_activity_at', op: 'lt', value: 10_000 }),
+          textResponse('10 inactive contacts.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).toContain('10');
+    expect(obs).toMatch(/matched/i);
+    expect(completedOf(events).status).toBe('done');
   });
 });
 

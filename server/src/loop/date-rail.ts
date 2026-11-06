@@ -107,7 +107,15 @@ export function buildDateAnchors(nowMs: number): string {
  * nested ISO string must not be rejected by the SDK's strict validation
  * before our coercion ever runs). */
 function widenField(key: string, field: z.ZodType): z.ZodType {
-  if (DATE_FIELD_RE.test(key)) return z.union([field, z.string(), z.array(z.string())]);
+  // Date fields are STRINGS ONLY at the model boundary (live evidence
+  // 2026-11-06: the model wrote start_after=1730688000000, an epoch for
+  // 2024, sailing past the string-coercion rail; same policy as the
+  // plan-DSL validator's literal-epoch rejection). Coercion turns the
+  // strings into epoch ms before the ORIGINAL schema validates.
+  if (DATE_FIELD_RE.test(key)) {
+    const stringOnly = z.union([z.string(), z.array(z.string())]);
+    return field instanceof z.ZodOptional || field instanceof z.ZodNullable ? stringOnly.optional() : stringOnly;
+  }
   if (field instanceof z.ZodOptional) return widenField(key, (field.def as { innerType: z.ZodType }).innerType).optional();
   if (field instanceof z.ZodNullable) return widenField(key, (field.def as { innerType: z.ZodType }).innerType).nullable();
   if (field instanceof z.ZodDefault) return field; // default wrapper: leave as-is (rare in params)

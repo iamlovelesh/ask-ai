@@ -403,6 +403,52 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
+  const filterRef = tool({
+    name: 'data__filter_ref',
+    description:
+      'Filter the COMPLETE result set behind a ref by a field condition, server-side. Use for conditions over large sets ("inactive since June", "status is open") instead of judging from samples. Returns a NEW ref for the matching subset plus the exact count and a sample.',
+    parameters: z.object({
+      ref: z.string(),
+      field: z.string(),
+      op: z.enum(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'contains', 'empty', 'not_empty']),
+      value: z.union([z.string(), z.number(), z.boolean()]).optional(),
+    }),
+    execute: async ({ ref, field, op, value }): Promise<string> => {
+      const { rows, complete, total } = hydrateRows(ref);
+      if (!complete) {
+        return `The set behind ${ref} is incomplete on the server, so an exact filter is not possible. Narrow the original search with filters instead.`;
+      }
+      // Date-shaped comparison values arrive as ISO/@-relative strings.
+      const cmpValue = typeof value === 'string' && DATE_FIELD_RE.test(field) ? coerceDateParams({ [field]: value }, clock.now()).params[field] : value;
+      const matches = rows.filter((row) => {
+        const v = row[field];
+        switch (op) {
+          case 'eq': return v === cmpValue;
+          case 'neq': return v !== cmpValue;
+          case 'gt': return Number(v) > Number(cmpValue);
+          case 'gte': return Number(v) >= Number(cmpValue);
+          case 'lt': return Number(v) < Number(cmpValue);
+          case 'lte': return Number(v) <= Number(cmpValue);
+          case 'contains': return String(v ?? '').toLowerCase().includes(String(cmpValue ?? '').toLowerCase());
+          case 'empty': return v === null || v === undefined || v === '';
+          case 'not_empty': return !(v === null || v === undefined || v === '');
+        }
+      });
+      const ids = matches.map(rowId).filter((id): id is string => id !== undefined);
+      const source = refs.get(ref);
+      const handle = refs.put({
+        action: 'data.filter_ref',
+        turnId,
+        stepId: `f${counters.step += 1}`,
+        entityType: source?.entityType ?? 'record',
+        total: matches.length,
+        idList: ids,
+        sample: matches.slice(0, SPILL_SAMPLE_ROWS),
+      });
+      return `Filter ${field} ${op} ${JSON.stringify(value ?? null)} over ${total} records: ${matches.length} matched [ref ${handle.ref}]. Sample: ${JSON.stringify(matches.slice(0, 5)).slice(0, OBSERVATION_CAP)}`;
+    },
+  });
+
   const aggregateRef = tool({
     name: 'data__aggregate_ref',
     description:
@@ -448,6 +494,6 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
-  tools.push(searchActions, sortRef, aggregateRef, askUser, refuse);
+  tools.push(searchActions, sortRef, filterRef, aggregateRef, askUser, refuse);
   return tools;
 }

@@ -59,6 +59,10 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/never ask permission/i);
   });
 
+  it('tells the model to ACT on problem statements, not just report counts', () => {
+    expect(system).toMatch(/describes a problem/i);
+  });
+
   it('names the catalog search escape hatch', () => {
     expect(system).toContain('catalog__search_actions');
   });

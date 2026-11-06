@@ -90,10 +90,14 @@ describe('widenDateFields', () => {
     limit: z.number().optional(),
   });
 
-  it('lets date-shaped numeric fields also accept strings', () => {
+  it('date fields accept strings ONLY — model-written epoch numbers are rejected at the schema', () => {
+    // Live evidence 2026-11-06: the model sent start_after=1730688000000
+    // (epoch for 2024) straight past the string-coercion rail. Policy
+    // matches the plan-DSL validator: the MODEL never writes epoch numbers.
     const wide = widenDateFields(schema);
     expect(wide.safeParse({ created_after: '2026-11-04T10:00:00Z' }).success).toBe(true);
-    expect(wide.safeParse({ created_after: NOW }).success).toBe(true);
+    expect(wide.safeParse({ created_after: '@today' }).success).toBe(true);
+    expect(wide.safeParse({ created_after: NOW }).success).toBe(false);
   });
 
   it('leaves non-date fields untouched', () => {
@@ -110,6 +114,7 @@ describe('widenDateFields', () => {
     const wide = widenDateFields(nested);
     expect(wide.safeParse({ filter: { due_date: '2026-11-04T00:00:00Z' } }).success).toBe(true);
     expect(wide.safeParse({ windows: [{ start_at: '@today' }] }).success).toBe(true);
-    expect(wide.safeParse({ filter: { due_date: 1793786400000 } }).success).toBe(true);
+    // strings-only policy applies at every depth
+    expect(wide.safeParse({ filter: { due_date: 1793786400000 } }).success).toBe(false);
   });
 });
