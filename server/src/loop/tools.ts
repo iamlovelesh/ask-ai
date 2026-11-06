@@ -456,6 +456,10 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         }
         const affectedCount = isWrite ? Math.max(maxArrayLength(params), idValues.size, 1) : Math.max(maxArrayLength(params), idValues.size);
         const isMutation = isWrite && !CREATE_WRITE_VERB_RE.test(action.slug);
+        // The arguments the handler actually runs with — `params`, unless the
+        // user edits them at the approval gate (#6), in which case the edited,
+        // re-validated set replaces it below.
+        let effectiveParams = params;
         // Value-based policy (#7): gate high-value/financial writes by their
         // arguments, independent of risk class and record count.
         const policyHit = isWrite ? approvalPolicy(action.slug, params) : null;
@@ -478,6 +482,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
             affectedCount,
             targetSample,
             description: `${action.name} — ${affectedCount} ${pluralNoun(noun, affectedCount)}.${policyHit ? ` Requires approval: ${policyHit.reason}.` : ''}`,
+            params,
           };
           // P3 (snapshot-and-recheck): freeze the targeted records'
           // CURRENT values at proposal time; after approval, re-read and
@@ -501,8 +506,10 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           markTtfur();
           emit({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
           const gateStartedAt = performance.now();
-          const approved = await confirm.request({ turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+          const verdict = await confirm.request({ turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
           counters.gateWaitMs += performance.now() - gateStartedAt;
+          const approved = typeof verdict === 'boolean' ? verdict : verdict.approved;
+          const editedParams = typeof verdict === 'boolean' ? undefined : verdict.editedParams;
           emit({ t: 'confirmation.resolved', turnId, confirmId, approved });
           if (!approved) {
             exits.denied = true;
@@ -518,6 +525,22 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
               return `CONFLICT: the targeted record(s) changed while awaiting approval — "${action.name}" was NOT executed (the user approved the OLD state). Re-read the record and, if the action still applies, propose it again.`;
             }
           }
+          // Approval-arg editing (#6): the user approved an EDITED set — merge
+          // over the proposal, re-validate against the ORIGINAL action schema
+          // (same date coercion as the initial parse), and run with that. A
+          // failed re-validation never reaches the handler.
+          if (editedParams && Object.keys(editedParams).length > 0) {
+            const merged = { ...params, ...editedParams };
+            const reparsed = action.inputSchema.safeParse(coerceDateParams(merged, clock.now()).params);
+            if (!reparsed.success) {
+              counters.stepsFailed += 1;
+              counters.step += 1;
+              const bad = reparsed.error.issues.map((i) => i.path.join('.')).join(', ');
+              emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'PARAM_SCHEMA', message: `edited arguments invalid: ${bad}` }, ms: 0 });
+              return `The edited arguments for "${action.name}" are invalid (${bad}) — nothing was changed. Ask the user to correct them, or proceed with the original values.`;
+            }
+            effectiveParams = reparsed.data as Record<string, unknown>;
+          }
         }
 
         // 3. dispatch
@@ -529,14 +552,14 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           }
         }
         markTtfur();
-        emit({ t: 'step.started', turnId, stepId, action: action.slug, resolvedParams: [params] });
+        emit({ t: 'step.started', turnId, stepId, action: action.slug, resolvedParams: [effectiveParams] });
         const key = `${turnId}:0:${stepId}:0`;
         const startedAt = performance.now();
         try {
           // TRANSIENT errors get ONE deterministic in-place retry (old
           // executor parity, LLD §5.3) before the model ever sees them.
           const dispatch = (): Promise<unknown> =>
-            crm.tx((db) => action.handler(params, { db, clock, idempotencyKey: key, format: 'concise' } satisfies ActionContext));
+            crm.tx((db) => action.handler(effectiveParams, { db, clock, idempotencyKey: key, format: 'concise' } satisfies ActionContext));
           let output: unknown;
           try {
             output = await dispatch();
@@ -1004,8 +1027,11 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       markTtfur();
       emit({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
       const gateStartedAt = performance.now();
-      const approved = await confirm.request({ turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+      const verdict = await confirm.request({ turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
       counters.gateWaitMs += performance.now() - gateStartedAt;
+      // Bulk apply-to-ref does not support per-record arg editing; take the
+      // approval boolean only (#6 editing is for single-action gates).
+      const approved = typeof verdict === 'boolean' ? verdict : verdict.approved;
       emit({ t: 'confirmation.resolved', turnId, confirmId, approved });
       if (!approved) {
         exits.denied = true;

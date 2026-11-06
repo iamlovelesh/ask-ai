@@ -39,6 +39,9 @@ const messageBodySchema = z.object({
 
 const confirmBodySchema = z.object({
   approved: z.boolean(),
+  /** Approval-arg editing (#6): user-edited arguments for the gated action,
+   * re-validated server-side before the handler runs. */
+  editedParams: z.record(z.string(), z.unknown()).optional(),
 });
 
 interface SessionParams {
@@ -242,7 +245,7 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
       return;
     }
 
-    resolution.resolve(parsed.data.approved);
+    resolution.resolve(parsed.data.approved, parsed.data.editedParams);
     reply.code(204).send();
   });
 

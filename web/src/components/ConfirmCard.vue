@@ -1,14 +1,52 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import type { PendingConfirm } from '../lib/fold.js';
 import { deriveGateReason } from '../lib/gate-reason.js';
 import { useCatalogStore } from '../stores/catalog.js';
 
 const props = defineProps<{ confirm: PendingConfirm }>();
-const emit = defineEmits<{ resolve: [confirmId: string, approved: boolean] }>();
+const emit = defineEmits<{ resolve: [confirmId: string, approved: boolean, editedParams?: Record<string, unknown>] }>();
 
 const catalog = useCatalogStore();
 onMounted(() => void catalog.load());
+
+// Approval-arg editing (#6): render scalar params as editable fields. Complex
+// values (arrays/objects) are shown read-only — only scalars can be edited.
+function isScalar(v: unknown): v is string | number | boolean {
+  return typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
+}
+const editableKeys = computed(() =>
+  Object.entries(props.confirm.scope.params ?? {})
+    .filter(([, v]) => isScalar(v))
+    .map(([k]) => k),
+);
+const hasEditable = computed(() => editableKeys.value.length > 0);
+const editing = ref(false);
+// String-backed drafts (inputs are text); coerced back to the original type on submit.
+const drafts = reactive<Record<string, string>>({});
+function resetDrafts(): void {
+  const params = props.confirm.scope.params ?? {};
+  for (const k of editableKeys.value) drafts[k] = String(params[k]);
+}
+function toggleEdit(): void {
+  editing.value = !editing.value;
+  if (editing.value) resetDrafts();
+}
+
+/** Drafts that differ from the original, coerced back to the original type. */
+function collectEdits(): Record<string, unknown> {
+  const params = props.confirm.scope.params ?? {};
+  const edits: Record<string, unknown> = {};
+  for (const k of editableKeys.value) {
+    const orig = params[k];
+    const raw = drafts[k] ?? '';
+    let next: unknown = raw;
+    if (typeof orig === 'number') next = Number(raw);
+    else if (typeof orig === 'boolean') next = raw === 'true';
+    if (next !== orig && !(typeof orig === 'number' && Number.isNaN(next as number))) edits[k] = next;
+  }
+  return edits;
+}
 
 const reason = computed(() => deriveGateReason(props.confirm.scope));
 
@@ -31,7 +69,8 @@ const actionNames = computed(() =>
 );
 
 function approve(): void {
-  emit('resolve', props.confirm.confirmId, true);
+  const edits = editing.value ? collectEdits() : {};
+  emit('resolve', props.confirm.confirmId, true, Object.keys(edits).length > 0 ? edits : undefined);
 }
 function deny(): void {
   emit('resolve', props.confirm.confirmId, false);
@@ -56,9 +95,22 @@ function deny(): void {
       </li>
     </ul>
 
+    <!-- Approval-arg editing (#6): edit the proposed values before approving -->
+    <div v-if="editing && hasEditable" class="confirm-edit">
+      <div v-for="k in editableKeys" :key="k" class="confirm-edit-row">
+        <label :for="`edit-${confirm.confirmId}-${k}`">{{ k }}</label>
+        <input :id="`edit-${confirm.confirmId}-${k}`" v-model="drafts[k]" type="text" />
+      </div>
+    </div>
+
     <div v-if="!confirm.resolved" class="confirm-actions">
-      <button class="btn-approve" :disabled="confirm.resolved" @click="approve">Approve</button>
+      <button class="btn-approve" :disabled="confirm.resolved" @click="approve">
+        {{ editing ? 'Approve with edits' : 'Approve' }}
+      </button>
       <button class="btn-deny" :disabled="confirm.resolved" @click="deny">Deny</button>
+      <button v-if="hasEditable" class="btn-edit" :disabled="confirm.resolved" @click="toggleEdit">
+        {{ editing ? 'Cancel edit' : 'Edit values' }}
+      </button>
     </div>
     <div v-else class="confirm-resolved">
       {{ confirm.approved ? 'Approved' : 'Denied' }}

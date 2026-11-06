@@ -337,6 +337,52 @@ describe('runLoopTurn — value-based approval policy (#7)', () => {
   });
 });
 
+describe('runLoopTurn — approval-arg editing (#6)', () => {
+  it('runs the handler with the user-edited arguments on approval', async () => {
+    let got: Record<string, unknown> | undefined;
+    const registry = buildRegistry(
+      [[{ ...action('orders.create_order', 'write', async (input) => { got = input; return { id: 'ord_1' }; }, z.object({ contact_id: z.string(), amount: z.number() })), entities: ['orders'] }]],
+      [],
+    );
+    const editBroker: ConfirmBroker = { request: async () => ({ approved: true, editedParams: { amount: 100_000 } }) };
+    await drive(registry, 'create a $9,000 order for con_5', [
+      toolCallResponse('orders__create_order', { contact_id: 'con_5', amount: 900_000 }),
+      textResponse('done'),
+    ], { confirm: editBroker });
+    expect(got?.['amount']).toBe(100_000);
+    expect(got?.['contact_id']).toBe('con_5');
+  });
+
+  it('rejects invalid edited arguments without running the handler', async () => {
+    let ran = false;
+    const registry = buildRegistry(
+      [[{ ...action('orders.create_order', 'write', async () => { ran = true; return { id: 'ord_1' }; }, z.object({ contact_id: z.string(), amount: z.number() })), entities: ['orders'] }]],
+      [],
+    );
+    const badEdit: ConfirmBroker = { request: async () => ({ approved: true, editedParams: { amount: 'lots' } }) };
+    const events = await drive(registry, 'create a $9,000 order for con_5', [
+      toolCallResponse('orders__create_order', { contact_id: 'con_5', amount: 900_000 }),
+      textResponse('done'),
+    ], { confirm: badEdit });
+    expect(ran).toBe(false);
+    expect(events.some((e) => e.t === 'step.failed')).toBe(true);
+  });
+
+  it('includes the proposed params in the confirmation scope so the client can edit them', async () => {
+    const registry = buildRegistry(
+      [[{ ...action('orders.create_order', 'write', async () => ({ id: 'ord_1' }), z.object({ contact_id: z.string(), amount: z.number() })), entities: ['orders'] }]],
+      [],
+    );
+    const events = await drive(registry, 'create a $9,000 order for con_5', [
+      toolCallResponse('orders__create_order', { contact_id: 'con_5', amount: 900_000 }),
+      textResponse('done'),
+    ]);
+    const req = events.find((e) => e.t === 'confirmation.required');
+    const params = req && req.t === 'confirmation.required' ? req.scope.params : undefined;
+    expect(params?.['amount']).toBe(900_000);
+  });
+});
+
 describe('runLoopTurn — identity param substitution (round-4 billing C1)', () => {
   it("replaces literal 'me' in *_user_id/assignee/owner params with the acting user id", async () => {
     let got: Record<string, unknown> | undefined;

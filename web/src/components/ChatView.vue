@@ -233,8 +233,8 @@ async function onCancel(): Promise<void> {
   await store.cancel();
 }
 
-async function onResolveConfirm(confirmId: string, approved: boolean): Promise<void> {
-  await store.confirm(confirmId, approved);
+async function onResolveConfirm(confirmId: string, approved: boolean, editedParams?: Record<string, unknown>): Promise<void> {
+  await store.confirm(confirmId, approved, editedParams);
 }
 
 async function onRetryConnection(): Promise<void> {

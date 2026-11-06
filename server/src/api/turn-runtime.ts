@@ -21,7 +21,7 @@ import type { Crm } from '../store/db.js';
 import type { SessionsDb } from '../store/sessions-db.js';
 import type { EventLog } from '../events/log.js';
 import { createRefStore, type RefStore } from '../agent/refs.js';
-import type { ConfirmBroker, ConfirmRequest } from '../agent/executor.js';
+import type { ConfirmBroker, ConfirmRequest, ConfirmVerdict } from '../agent/executor.js';
 import type { Playbook } from '../playbooks/loader.js';
 import { runTurn, type SessionDeps } from '../agent/pipeline.js';
 import { runBaselineTurn, type BaselineSessionDeps } from '../baseline/agent.js';
@@ -45,14 +45,14 @@ export function sessionExists(sessionsDb: SessionsDb, sessionId: string): boolea
 
 interface PendingConfirm {
   req: ConfirmRequest;
-  resolve: (approved: boolean) => void;
+  resolve: (verdict: boolean | ConfirmVerdict) => void;
 }
 
 class HttpConfirmBroker implements ConfirmBroker {
   private readonly pending = new Map<string, PendingConfirm>();
 
-  request(req: ConfirmRequest): Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
+  request(req: ConfirmRequest): Promise<boolean | ConfirmVerdict> {
+    return new Promise<boolean | ConfirmVerdict>((resolve) => {
       this.pending.set(req.confirmId, { req, resolve });
     });
   }
@@ -78,11 +78,11 @@ class HttpConfirmBroker implements ConfirmBroker {
    * immediately — `resolveConfirmation` checks `isPending`, not whether
    * the `confirmation.resolved` EVENT has been appended yet (that happens
    * on a later microtask, once the executor's `await` resumes). */
-  resolve(confirmId: string, approved: boolean): boolean {
+  resolve(confirmId: string, approved: boolean, editedParams?: Record<string, unknown>): boolean {
     const p = this.pending.get(confirmId);
     if (!p) return false;
     this.pending.delete(confirmId);
-    p.resolve(approved);
+    p.resolve(editedParams && Object.keys(editedParams).length > 0 ? { approved, editedParams } : approved);
     return true;
   }
 }
@@ -112,7 +112,7 @@ export interface StartTurnInput {
 export type ConfirmResolution =
   | { outcome: 'not_found' }
   | { outcome: 'conflict' }
-  | { outcome: 'ok'; resolve: (approved: boolean) => void };
+  | { outcome: 'ok'; resolve: (approved: boolean, editedParams?: Record<string, unknown>) => void };
 
 export class SessionRuntime {
   private readonly refsCache = new Map<string, RefStore>();
@@ -344,8 +344,8 @@ export class SessionRuntime {
 
     return {
       outcome: 'ok',
-      resolve: (approved: boolean) => {
-        broker.resolve(confirmId, approved);
+      resolve: (approved: boolean, editedParams?: Record<string, unknown>) => {
+        broker.resolve(confirmId, approved, editedParams);
       },
     };
   }

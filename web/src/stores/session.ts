@@ -419,7 +419,7 @@ export const useSessionStore = defineStore('session', {
       chat.reconnecting = false;
     },
 
-    async confirm(confirmId: string, approved: boolean): Promise<void> {
+    async confirm(confirmId: string, approved: boolean, editedParams?: Record<string, unknown>): Promise<void> {
       const id = this.activeId;
       if (!id) return;
       const chat = this.chats[id];
@@ -429,10 +429,11 @@ export const useSessionStore = defineStore('session', {
       // channel is open) confirms/corrects this shortly after.
       if (turn?.pendingConfirm) turn.pendingConfirm.resolved = true;
       try {
+        const body = editedParams && Object.keys(editedParams).length > 0 ? { approved, editedParams } : { approved };
         const res = await fetch(`/api/sessions/${id}/confirm/${confirmId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ approved }),
+          body: JSON.stringify(body),
         });
         if (!res.ok) this.pushToast(`Could not resolve confirmation (HTTP ${res.status}).`);
       } catch {

@@ -42,6 +42,9 @@ export interface ConfirmationScope {
   affectedCount: number;
   targetSample: string[];
   description: string;
+  /** Proposed arguments for the gated action (#6) — the user may edit these
+   * before approving; edited values are sent back and re-validated server-side. */
+  params?: Record<string, unknown>;
 }
 
 export interface PlanStep {
