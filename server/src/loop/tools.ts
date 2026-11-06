@@ -164,6 +164,9 @@ function pluralNoun(noun: string, count: number): string {
 }
 
 const OBSERVATION_CAP = 2000;
+/** Ref-tool rows get a larger budget: these rows ARE the answer to a
+ * ranking question, and hiding any of them seeds fabrication (7c N8). */
+const REF_ROWS_CAP = 4000;
 const SPILL_SAMPLE_ROWS = 20;
 
 /** Row-aware observation body (round-6 marketing R6-1 / review M5): the old
@@ -203,7 +206,7 @@ function renderObservationBody(result: unknown, refNote: string, cap = OBSERVATI
  * compacted (long free-text fields dropped, ids/numbers/short scalars and
  * the ranking fields kept), then truncated only on whole-row boundaries
  * with an explicit omission count. */
-function renderRefRows(rows: unknown[], keyFields: readonly string[], cap = OBSERVATION_CAP): string {
+function renderRefRows(rows: unknown[], keyFields: readonly string[], cap = REF_ROWS_CAP): string {
   const rendered = renderDatesForModel(rows) as unknown[];
   const full = JSON.stringify(rendered);
   if (full.length <= cap) return full;
@@ -211,6 +214,7 @@ function renderRefRows(rows: unknown[], keyFields: readonly string[], cap = OBSE
     if (row === null || typeof row !== 'object' || Array.isArray(row)) return row;
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(row as Record<string, unknown>)) {
+      if (v === null || v === undefined) continue;
       const keep =
         k === 'id' ||
         keyFields.includes(k) ||
@@ -696,7 +700,24 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       });
       const top = sorted.slice(0, limit);
       const sortLabel = subtract_field ? `${field} - ${subtract_field}` : field;
-      const obs = `Sorted ${total} records by ${sortLabel} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length}: ${renderRefRows(top, subtract_field ? [field, subtract_field] : [field])}${statusComposition(rows)}`;
+      // The top-N subset gets its OWN ref and a tool-computed sum (7c N8:
+      // "combined value of the 10 biggest" had no tool path — aggregate_ref
+      // sums the WHOLE ref — so the model hand-summed and fabricated).
+      const topIds = top.map(rowId).filter((id): id is string => id !== undefined);
+      const source = refs.get(ref);
+      const topHandle = refs.put({
+        action: 'data.sort_ref',
+        turnId,
+        stepId: `f${counters.step += 1}`,
+        entityType: source?.entityType ?? 'record',
+        total: top.length,
+        idList: topIds,
+        sample: top.slice(0, SPILL_SAMPLE_ROWS),
+      });
+      const subsetSum = numeric
+        ? ` Sum of ${sortLabel} over these top ${top.length}: ${top.reduce((acc, r) => acc + (Number(r[field] ?? 0) - (subtract_field ? Number(r[subtract_field] ?? 0) : 0)), 0)}.`
+        : '';
+      const obs = `Sorted ${total} records by ${sortLabel} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length} [ref ${topHandle.ref}]: ${renderRefRows(top, subtract_field ? [field, subtract_field] : [field])}.${subsetSum}${statusComposition(rows)}`;
       publishObs(obs);
       return obs;
     },

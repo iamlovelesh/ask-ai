@@ -661,6 +661,9 @@ describe('runLoopTurn — ref data tools', () => {
     const followUp = seen.bodies[1] ?? '';
     // every ranked row's identity must be visible to the model
     for (let i = 20; i < 30; i += 1) expect(followUp).toContain(`INV-${1000 + i}`);
+    // "combined value of the top N" must come from the tool, not model math:
+    // sum of (21..30)*1000 = 255000
+    expect(followUp).toContain('Sum of total_cents over these top 10: 255000');
     expect(completedOf(events).status).toBe('done');
   });
 
