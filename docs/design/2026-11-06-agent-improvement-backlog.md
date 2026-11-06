@@ -32,11 +32,14 @@ Each item: **what / source / what it buys / effort / where it lands in our code*
 
 ## P1 — felt experience (what made the OSS reference CRM feel good)
 
-### 2. True answer streaming
+### 2. True answer streaming — ⚠️ INFRA BUILT, BLOCKED on a provider issue (2026-11-07)
 - **Source:** the OSS reference CRM (`streamText` first-class: TTFT metrics, per-step events, token streaming).
 - **Why:** we compute the full answer then replay chunked `answer.delta`s — the single biggest feel gap vs the OSS reference CRM.
-- **Do:** use the Agents SDK streamed run (`getStreamedResponse` path / `runner.run(..., {stream: true})`); forward text deltas to `answer.delta` events as they arrive; MeteredModel needs streamed-usage metering (currently delegates unmetered — fix that then).
-- **Effort:** M. **Lands in:** `llm/agents-runtime.ts`, `loop/agent.ts`, metering.
+- **Status:** `runLoopStreamed` + metered `getStreamedResponse` are built and tested (SSE-mock integration test proves live deltas + usage metering), wired as Live+correct (reset marker per attempt; verified `answer.final` supersedes the preview), behind `LoopSessionDeps.stream` / `SessionRuntime(streamAnswers)` — **DEFAULT OFF**.
+- **BLOCKER:** running the WHOLE agent loop in `stream:true` breaks tool-call argument assembly with our provider (OpenRouter→Anthropic over chat-completions) — tools stop executing (`stepsOk` 1→0), confirmed by live A/B repro. The answer-only case streams fine (198 live frames over SSE).
+- **Do next:** stream ONLY the final-answer turn, not tool-call turns. Options: (a) detect the terminal turn and run just it streamed; (b) try the Responses API (`useResponses:true`) or a provider/model where streamed tool-call args assemble correctly; (c) `fixResponse`/arg-repair must also be wired into the streamed path. Until then, chunked replay stays.
+- **Partial win SHIPPED:** live tool-activity tracker for loop turns (`ChatView` renders the step tracker whenever a turn has steps) — the safe part of the "feels alive" UX.
+- **Effort:** M–L. **Lands in:** `llm/agents-runtime.ts`, `loop/agent.ts`, metering.
 
 ### 3. Clickable record chips
 - **Source:** the OSS reference CRM (chips navigate to the record).
