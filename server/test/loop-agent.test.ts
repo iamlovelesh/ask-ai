@@ -501,7 +501,7 @@ describe('runLoopTurn — ref data tools', () => {
     };
   }
 
-  const rows = Array.from({ length: 60 }, (_, i) => ({ id: `opp_${i}`, value_cents: (i + 1) * 100 }));
+  const rows = Array.from({ length: 60 }, (_, i) => ({ id: `opp_${i}`, value_cents: (i + 1) * 100, issued_at: 1784292987854 }));
 
   it('data__sort_ref returns the true max row from the hydrated full set', async () => {
     const seen: Seen = { bodies: [] };
@@ -521,6 +521,9 @@ describe('runLoopTurn — ref data tools', () => {
     const followUp = seen.bodies[1] ?? '';
     expect(followUp).toContain('opp_59');
     expect(followUp).toContain('6000');
+    // round-6c: ref-tool observations must carry ISO dates, never raw epochs
+    expect(followUp).not.toContain('1784292987854');
+    expect(followUp).toContain('2026-07-17');
     expect(completedOf(events).status).toBe('done');
   });
 
@@ -596,7 +599,7 @@ describe('runLoopTurn — ref data tools', () => {
 
 describe('runLoopTurn — spill-to-ref full-set hydration (C1)', () => {
   it('a spill carrying idList hydrates complete through the REAL ref store and sort_ref answers exactly', async () => {
-    const rows = Array.from({ length: 60 }, (_, i) => ({ id: `opp_${i}`, value_cents: (i + 1) * 100 }));
+    const rows = Array.from({ length: 60 }, (_, i) => ({ id: `opp_${i}`, value_cents: (i + 1) * 100, issued_at: 1784292987854 }));
     const byId = new Map(rows.map((r) => [r.id, r]));
     const realTx: StoreTx = {
       all: (sql: string, params?: unknown[]) =>

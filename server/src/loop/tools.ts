@@ -563,7 +563,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         return direction === 'asc' ? cmp : -cmp;
       });
       const top = sorted.slice(0, limit);
-      return `Sorted ${total} records by ${field} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length}: ${JSON.stringify(top).slice(0, OBSERVATION_CAP)}`;
+      return `Sorted ${total} records by ${field} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length}: ${JSON.stringify(renderDatesForModel(top)).slice(0, OBSERVATION_CAP)}`;
     },
   });
 
@@ -609,7 +609,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         idList: ids,
         sample: matches.slice(0, SPILL_SAMPLE_ROWS),
       });
-      return `Filter ${field} ${op} ${JSON.stringify(value ?? null)} over ${total} records: ${matches.length} matched [ref ${handle.ref}]. Sample: ${JSON.stringify(matches.slice(0, 5)).slice(0, OBSERVATION_CAP)}`;
+      return `Filter ${field} ${op} ${JSON.stringify(value ?? null)} over ${total} records: ${matches.length} matched [ref ${handle.ref}]. Sample: ${JSON.stringify(renderDatesForModel(matches.slice(0, 5))).slice(0, OBSERVATION_CAP)}`;
     },
   });
 
