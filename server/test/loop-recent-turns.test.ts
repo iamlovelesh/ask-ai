@@ -76,4 +76,29 @@ describe('renderRecentTurns', () => {
   it('returns empty string for no completed turns', () => {
     expect(renderRecentTurns([], 3)).toBe('');
   });
+
+  it('collapses the oldest kept turns to fit a maxChars budget (context compaction)', () => {
+    const big = 'x'.repeat(400);
+    const long: Event[] = [
+      ...turnEvents(1, 'first question', `first answer ${big}`),
+      ...turnEvents(2, 'second question', `second answer ${big}`),
+      ...turnEvents(3, 'third question', `third answer ${big}`),
+    ];
+    // keepLastN would render all three in full, but a 600-char budget only
+    // fits the newest; the older two demote to collapsed [earlier] lines.
+    const out = renderRecentTurns(long, 3, 600);
+    expect(out).toContain('third question'); // newest kept in full
+    expect(out).toContain('[earlier] user: first question');
+    expect(out).toContain('[earlier] user: second question');
+    // only one full "user:" block (the newest) — collapsed lines use "[earlier] user:"
+    const fullBlocks = out.split('\n').filter((l) => l.startsWith('user: '));
+    expect(fullBlocks).toHaveLength(1);
+  });
+
+  it('always keeps the newest turn in full even when it alone exceeds the budget', () => {
+    const huge = 'y'.repeat(5000);
+    const out = renderRecentTurns([...turnEvents(1, 'only question', `only answer ${huge}`)], 3, 100);
+    expect(out).toContain('user: only question');
+    expect(out).toContain('only answer');
+  });
 });
