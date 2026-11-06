@@ -155,6 +155,37 @@ function pluralNoun(noun: string, count: number): string {
 const OBSERVATION_CAP = 2000;
 const SPILL_SAMPLE_ROWS = 20;
 
+/** Row-aware observation body (round-6 marketing R6-1 / review M5): the old
+ * char-slice cut JSON mid-token, so the model saw a broken half-list,
+ * treated it as complete, and declared the cut-off records nonexistent.
+ * Lists now keep WHOLE rows within budget and say exactly how many more
+ * exist and where the full set lives. */
+function renderObservationBody(result: unknown, refNote: string, cap = OBSERVATION_CAP): string {
+  const rendered = renderDatesForModel(result);
+  const full = JSON.stringify(rendered ?? null);
+  if (full.length <= cap) return full;
+  if (rendered !== null && typeof rendered === 'object') {
+    const o = rendered as Record<string, unknown>;
+    const listKey = Array.isArray(o['items']) ? 'items' : Array.isArray(o['sample']) ? 'sample' : undefined;
+    if (listKey) {
+      const rows = o[listKey] as unknown[];
+      const kept: unknown[] = [];
+      let size = full.length - JSON.stringify(rows).length + 2;
+      for (const row of rows) {
+        const rowJson = JSON.stringify(row);
+        if (size + rowJson.length > cap && kept.length > 0) break;
+        kept.push(row);
+        size += rowJson.length + 1;
+      }
+      const omitted = rows.length - kept.length;
+      const trimmed = JSON.stringify({ ...o, [listKey]: kept });
+      const where = refNote !== '' ? `the full set is behind ${refNote.trim()}` : 'narrow the search or fetch records by id for the rest';
+      return `${trimmed} … +${omitted} more rows not shown (shown ${kept.length} of ${rows.length} returned) — ${where}.`;
+    }
+  }
+  return `${full.slice(0, cap)} …[remainder omitted — fetch the record by id for full details]`;
+}
+
 /** Model-facing parameters for an action: strict widened zod when the SDK
  * can convert it, else non-strict stripped JSON Schema (z.record cases). */
 function toolParameters(action: ActionDef): { parameters: unknown; strict: boolean } {
@@ -420,7 +451,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
               windowNote = ` WARNING: ${k} equals ${sibling} — that zero-width window matches nothing; use the full-day bounds from the date anchors (e.g. 00:00:00 to 23:59:59).`;
             }
           }
-          const body = JSON.stringify(renderDatesForModel(finalResult) ?? null).slice(0, OBSERVATION_CAP);
+          const body = renderObservationBody(finalResult, refNote);
           harvestIds(JSON.stringify(finalResult ?? ''), input.knownIds);
           return `${summary}.${echo}${windowNote} result=${body}`;
         } catch (err) {

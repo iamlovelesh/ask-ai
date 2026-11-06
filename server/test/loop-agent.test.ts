@@ -886,6 +886,30 @@ describe('runLoopTurn — follow-up tool binding (I10)', () => {
   });
 });
 
+describe('runLoopTurn — row-aware observation truncation (round-6 marketing R6-1 / review M5)', () => {
+  it('long list results keep whole rows and state exactly how many were omitted', async () => {
+    const rows = Array.from({ length: 30 }, (_, i) => ({ id: `struct_${i}`, name: `Campaign ${i}`, status: 'active', padding: 'x'.repeat(120) }));
+    const registry = buildRegistry([[action('campaigns.list_campaigns', 'read', async () => ({ items: rows, total: 30 }))]], []);
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'list all campaigns',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([toolCallResponse('campaigns__list_campaigns', {}), textResponse('ok')], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    // never a mid-token cut: the rows section must be valid JSON
+    const m = obs.match(/result=(\{.*\})(?: \[|$)/s) ?? obs.match(/rows=(\[.*?\])/s);
+    expect(obs).toMatch(/\+\d+ more rows? not shown/i);
+    expect(obs).toMatch(/\[ref r_t\d+_s1\]|full set/i);
+    // a whole row near the cut is intact (no dangling quote)
+    expect(obs).not.toMatch(/"padding":"x+$/);
+  });
+});
+
 describe('runLoopTurn — zero-width date window hint (round-6 sales F38)', () => {
   it('warns the model when an _after/_before pair is equal (matches nothing)', async () => {
     const registry = buildRegistry(
