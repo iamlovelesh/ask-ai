@@ -886,6 +886,33 @@ describe('runLoopTurn — follow-up tool binding (I10)', () => {
   });
 });
 
+describe('runLoopTurn — SDK arg-rejection observability (round-5b N1)', () => {
+  it('emits step.failed and a specific observation when the SDK rejects tool args pre-execute', async () => {
+    const registry = buildRegistry(
+      [[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }), z.object({ limit: z.number() }))]],
+      [],
+    );
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'find leads',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('leads__search_leads', { limit: 'fifty' as unknown as number }),
+          textResponse('ok'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const failed = events.filter((e) => e.t === 'step.failed');
+    expect(failed.length).toBeGreaterThanOrEqual(1);
+    expect(failed[0] && failed[0].t === 'step.failed' ? failed[0].error.code : '').toBe('ARG_SCHEMA');
+    const feedback = seen.bodies[1] ?? '';
+    expect(feedback).toMatch(/limit/);
+  });
+});
+
 describe('StuckTracker', () => {
   it('escalates ok -> ok -> hint -> stop for identical action+error+params', () => {
     const tracker = new StuckTracker();

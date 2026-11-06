@@ -244,6 +244,16 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       description: action.description.slice(0, 1024),
       strict: strict as false,
       parameters: parameters as never,
+      // Pre-execution failures (SDK arg validation) used to be INVISIBLE —
+      // no event, no stuck-tracking, model flailing silently until it
+      // apologized about a fake "system issue" (round-5b N1). Surface them.
+      errorFunction: (_ctx: unknown, err: unknown): string => {
+        const message = err instanceof Error ? err.message : String(err);
+        counters.stepsFailed += 1;
+        counters.step += 1;
+        emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'ARG_SCHEMA', message: message.slice(0, 300) }, ms: 0 });
+        return applyStuck(action.slug, 'ARG_SCHEMA', '', `INVALID ARGUMENTS for ${action.name}: ${message.slice(0, 300)}. Fix the arguments and retry — do not repeat the same call unchanged.`);
+      },
       execute: async (rawArgs: unknown): Promise<string> => {
         counters.step += 1;
         const stepId = `s${counters.step}`;
