@@ -348,6 +348,29 @@ describe('runLoopTurn — scheduled follow-up (#8)', () => {
   });
 });
 
+describe('runLoopTurn — record-id chips resolve on a CLARIFY answer', () => {
+  it('wraps cited ids as named chips even when the answer ends with a question', async () => {
+    // crm stub that resolves con_1 -> a real name (the real rail queries the CRM).
+    const resolvingCrm = {
+      tx: (fn: (db: unknown) => unknown) =>
+        fn({
+          all: (_sql: string, params: string[]) => params.map((id) => ({ id, nm: id === 'con_1' ? 'Ada Lovelace' : null })),
+          get: () => undefined,
+          run: () => ({ changes: 0 }),
+        }),
+      close: () => {},
+    } as unknown as typeof fakeCrm;
+    const registry = buildRegistry([[action('contacts.search', 'read', async () => ({ items: [{ id: 'con_1' }], total: 1 }))]], []);
+    const events = await drive(registry, 'find a contact', [
+      toolCallResponse('contacts__search', {}),
+      textResponse('I found con_1. Would you like more details about this contact?'),
+    ], { crm: resolvingCrm });
+    const ans = events.find((e) => e.t === 'answer.final');
+    expect(completedOf(events).status).toBe('clarify'); // ends with '?'
+    expect(ans && ans.t === 'answer.final' ? ans.text : '').toContain('[[record:contacts:con_1:Ada Lovelace]]');
+  });
+});
+
 describe('runLoopTurn — value-based approval policy (#7)', () => {
   it('gates a high-value single-record write that risk and count alone would wave through', async () => {
     const registry = buildRegistry(

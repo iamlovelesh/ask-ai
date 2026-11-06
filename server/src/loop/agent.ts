@@ -610,8 +610,12 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       finalText += `\n\n— Changes this turn: ${exits.writesLanded} (${parts})`;
     }
     // Strip leaked internal monologue ("Perfect! Let me create a table…")
-    // then resolve cited record ids → named chips. Both only on a real answer.
-    if (status === 'done') {
+    // then resolve cited record ids → named chips. Applies to any real,
+    // user-facing answer — NOT only 'done': a 'clarify' answer (one that ends
+    // with a question) still cites records that must render as hoverable chips
+    // (reported: team_2 / user ids rendered as plain text because the answer
+    // ended with a question).
+    if (status === 'done' || status === 'clarify') {
       finalText = stripMonologue(finalText);
       finalText = resolveNamesInText(finalText, crm);
     }
