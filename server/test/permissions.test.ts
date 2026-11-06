@@ -4,6 +4,7 @@ import {
   permittedRisks,
   defaultPrincipal,
   resolvePrincipal,
+  routeAgentForRole,
   type Principal,
 } from '../src/agent/permissions';
 
@@ -53,5 +54,15 @@ describe('permissions (#1)', () => {
     expect(resolvePrincipal({ role: 'member', userId: 'user_42' })).toEqual({ role: 'member', userId: 'user_42' });
     expect(resolvePrincipal({ role: 'root' }).role).toBe('admin'); // unknown -> safe default
     expect(resolvePrincipal(undefined).role).toBe('admin');
+  });
+
+  it('routes non-admin principals to the permission-aware "optimized" agent only', () => {
+    // admin keeps whatever it asked for (unrestricted)
+    expect(routeAgentForRole('admin', 'baseline')).toBe('baseline');
+    expect(routeAgentForRole('admin', 'plandsl')).toBe('plandsl');
+    // non-admin can never reach the un-pruned legacy paths
+    expect(routeAgentForRole('member', 'baseline')).toBe('optimized');
+    expect(routeAgentForRole('viewer', 'plandsl')).toBe('optimized');
+    expect(routeAgentForRole('viewer', 'optimized')).toBe('optimized');
   });
 });

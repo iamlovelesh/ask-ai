@@ -16,11 +16,18 @@ describe('ScheduledTaskStore (#8 suspension/wait)', () => {
     store = openScheduledTasks(db);
   });
 
-  function schedule(dueAt: number, instruction: string): string {
+  function schedule(dueAt: number, instruction: string, role = 'admin', userId = 'user_1'): string {
     const id = `task_${randomUUID()}`;
-    store.schedule({ id, sessionId: sid, dueAt, instruction, createdAt: NOW });
+    store.schedule({ id, sessionId: sid, dueAt, instruction, createdAt: NOW, role, userId });
     return id;
   }
+
+  it('persists the scheduling principal (role + userId) for non-escalating resume', () => {
+    schedule(NOW - DAY, 'viewer reminder', 'viewer', 'user_7');
+    const [task] = store.due(NOW);
+    expect(task?.role).toBe('viewer');
+    expect(task?.userId).toBe('user_7');
+  });
 
   it('returns only tasks whose due time has passed from due()', () => {
     schedule(NOW - DAY, 'overdue one');
@@ -61,7 +68,7 @@ describe('ScheduledTaskStore (#8 suspension/wait)', () => {
     const path = `/tmp/sched-${randomUUID()}.db`;
     const db1 = openSessions(path);
     db1.run('INSERT INTO sessions (id, created_at, updated_at) VALUES (?, ?, ?)', ['s2', NOW, NOW]);
-    openScheduledTasks(db1).schedule({ id: 'task_x', sessionId: 's2', dueAt: NOW - DAY, instruction: 'survive', createdAt: NOW });
+    openScheduledTasks(db1).schedule({ id: 'task_x', sessionId: 's2', dueAt: NOW - DAY, instruction: 'survive', createdAt: NOW, role: 'admin', userId: 'user_1' });
     const store2 = openScheduledTasks(openSessions(path));
     expect(store2.due(NOW).map((t) => t.instruction)).toContain('survive');
   });

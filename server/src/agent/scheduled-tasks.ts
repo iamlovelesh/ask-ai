@@ -26,6 +26,10 @@ export interface ScheduledTask {
   instruction: string;
   status: ScheduledTaskStatus;
   createdAt: number;
+  /** The principal that scheduled it (review CRITICAL): the resumed turn runs
+   * as THIS role/user, never escalating to admin. */
+  role: string;
+  userId: string;
 }
 
 export interface ScheduleInput {
@@ -34,6 +38,8 @@ export interface ScheduleInput {
   dueAt: number;
   instruction: string;
   createdAt: number;
+  role: string;
+  userId: string;
 }
 
 export interface ScheduledTaskStore {
@@ -52,9 +58,18 @@ const DDL = [
      due_at INTEGER NOT NULL,
      instruction TEXT NOT NULL,
      status TEXT NOT NULL DEFAULT 'pending',
-     created_at INTEGER NOT NULL
+     created_at INTEGER NOT NULL,
+     role TEXT NOT NULL DEFAULT 'admin',
+     user_id TEXT NOT NULL DEFAULT 'user_1'
    )`,
   `CREATE INDEX IF NOT EXISTS idx_sched_status_due ON scheduled_tasks (status, due_at)`,
+];
+
+// Idempotent migrations for a table created before the principal columns
+// existed — ADD COLUMN throws "duplicate column" once present, which we ignore.
+const MIGRATIONS = [
+  `ALTER TABLE scheduled_tasks ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`,
+  `ALTER TABLE scheduled_tasks ADD COLUMN user_id TEXT NOT NULL DEFAULT 'user_1'`,
 ];
 
 function rowToTask(r: Record<string, unknown>): ScheduledTask {
@@ -65,18 +80,27 @@ function rowToTask(r: Record<string, unknown>): ScheduledTask {
     instruction: String(r['instruction']),
     status: r['status'] as ScheduledTaskStatus,
     createdAt: Number(r['created_at']),
+    role: String(r['role'] ?? 'admin'),
+    userId: String(r['user_id'] ?? 'user_1'),
   };
 }
 
 export function openScheduledTasks(db: SessionsDb): ScheduledTaskStore {
   for (const stmt of DDL) db.run(stmt);
+  for (const stmt of MIGRATIONS) {
+    try {
+      db.run(stmt);
+    } catch {
+      /* column already exists — expected on an up-to-date table */
+    }
+  }
 
   return {
     schedule(input: ScheduleInput): ScheduledTask {
       db.run(
-        `INSERT INTO scheduled_tasks (id, session_id, due_at, instruction, status, created_at)
-         VALUES (?, ?, ?, ?, 'pending', ?)`,
-        [input.id, input.sessionId, input.dueAt, input.instruction, input.createdAt],
+        `INSERT INTO scheduled_tasks (id, session_id, due_at, instruction, status, created_at, role, user_id)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        [input.id, input.sessionId, input.dueAt, input.instruction, input.createdAt, input.role, input.userId],
       );
       return { ...input, status: 'pending' };
     },

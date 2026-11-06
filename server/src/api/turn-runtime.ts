@@ -27,7 +27,7 @@ import { runTurn, type SessionDeps } from '../agent/pipeline.js';
 import { runBaselineTurn, type BaselineSessionDeps } from '../baseline/agent.js';
 import { modelStreamsTools, defaultModelId } from '../llm/models.js';
 import { runLoopTurn, type LoopSessionDeps } from '../loop/agent.js';
-import type { Principal } from '../agent/permissions.js';
+import { resolvePrincipal, type Principal } from '../agent/permissions.js';
 import { openScheduledTasks, type ScheduledTaskStore } from '../agent/scheduled-tasks.js';
 import type { Event } from '../events/types.js';
 
@@ -376,18 +376,24 @@ export class SessionRuntime {
    */
   fireDueScheduledTasks(
     nowMs: number,
-    start: (sessionId: string, instruction: string) => void = (sessionId, instruction) =>
-      void this.startTurn({ sessionId, userText: instruction, agent: 'optimized' }),
+    start: (task: { sessionId: string; instruction: string; principal: Principal }) => void = ({ sessionId, instruction, principal }) =>
+      void this.startTurn({ sessionId, userText: instruction, agent: 'optimized', principal }),
   ): number {
     let fired = 0;
     for (const task of this.scheduler().due(nowMs)) {
       if (this.isRunning(task.sessionId)) continue; // retry next tick
       try {
-        start(task.sessionId, task.instruction);
+        // Resume as the principal that SCHEDULED it (review CRITICAL) — never
+        // escalate an unattended turn to admin. An unrecognized stored role
+        // resolves back to a safe concrete principal.
+        const principal = resolvePrincipal({ role: task.role, userId: task.userId });
+        start({ sessionId: task.sessionId, instruction: task.instruction, principal });
         this.scheduler().markFired(task.id);
         fired += 1;
-      } catch {
-        /* leave pending; retry next tick */
+      } catch (err) {
+        // Leave pending to retry next tick — but surface it, so a task that
+        // always throws is observable instead of silently looping forever.
+        console.error(`[scheduler] failed to fire task ${task.id} (session ${task.sessionId}):`, err);
       }
     }
     return fired;

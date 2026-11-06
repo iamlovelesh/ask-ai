@@ -13,7 +13,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { openSse } from './sse.js';
 import { sessionExists } from './turn-runtime.js';
 import { listPickerModels, defaultModelId, isSelectableModel, resolveAutoModel, AUTO_MODEL_ID } from '../llm/models.js';
-import { resolvePrincipal } from '../agent/permissions.js';
+import { resolvePrincipal, routeAgentForRole } from '../agent/permissions.js';
 import { fetchModelCatalog, catalogHas } from '../llm/model-catalog.js';
 import { llmCall } from '../llm/client.js';
 import { generateTitle, TITLE_MAX_CHARS } from './title.js';
@@ -222,7 +222,11 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
     conn.onClientGone(unsub);
 
     const principal = resolvePrincipal({ role: parsed.data.role });
-    turnId = runtime.startTurn({ sessionId, userText: text, agent, model, principal });
+    // Security (review CRITICAL): the legacy baseline/plandsl agents do not
+    // enforce principal permissions, so a non-admin is forced onto the
+    // permission-aware "optimized" loop regardless of the requested agent.
+    const routedAgent = routeAgentForRole(principal.role, agent) as typeof agent;
+    turnId = runtime.startTurn({ sessionId, userText: text, agent: routedAgent, model, principal });
   });
 
   // --- GET /api/sessions/:id/scheduled (pending follow-ups, #8) -----------

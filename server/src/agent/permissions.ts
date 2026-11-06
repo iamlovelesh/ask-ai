@@ -53,3 +53,12 @@ export function resolvePrincipal(spec: { role?: unknown; userId?: unknown } | un
   const userId = typeof spec?.userId === 'string' && spec.userId !== '' ? spec.userId : base.userId;
   return { userId, role };
 }
+
+/** Only the "optimized" tool-loop enforces principal-scoped permissions; the
+ * legacy "baseline"/"plandsl" agents do NOT. So any NON-admin principal is
+ * routed to "optimized" regardless of the agent they requested — a restricted
+ * role can never reach an unpruned dispatch path. Admins are unrestricted and
+ * keep their requested agent. */
+export function routeAgentForRole(role: Role, requestedAgent: string): string {
+  return role === 'admin' ? requestedAgent : 'optimized';
+}

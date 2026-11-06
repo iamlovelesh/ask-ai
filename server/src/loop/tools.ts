@@ -328,6 +328,35 @@ export function harvestIds(text: string, ids: Set<string>): void {
   for (const m of text.matchAll(RECORD_ID_RE)) ids.add(m[0]);
 }
 
+/** Provenance firewall core: the first `key=value` whose id-shaped value in an
+ * id-targeting field was never seen (not in `knownIds`), or undefined if all
+ * targeted ids are known. Shared by the pre-dispatch check and the #6
+ * approval-edit re-check so both enforce the SAME rule. */
+export function firstUnseenId(params: Record<string, unknown>, knownIds: ReadonlySet<string>): string | undefined {
+  for (const [k, v] of Object.entries(params)) {
+    if (!/id(s)?$/.test(k)) continue;
+    for (const x of Array.isArray(v) ? v : [v]) {
+      if (typeof x !== 'string') continue;
+      const idLike = x.match(RECORD_ID_RE);
+      if (idLike && idLike[0] === x && !knownIds.has(x)) return `${k}=${x}`;
+    }
+  }
+  return undefined;
+}
+
+/** An edited field that would RETARGET a write (an id/target field, or any new
+ * value that is itself id-shaped) — forbidden at approval time (#6 hardening:
+ * an edit must never move the write off the record the human approved). */
+export function forbiddenTargetEdit(editedParams: Record<string, unknown>): string | undefined {
+  for (const [k, v] of Object.entries(editedParams)) {
+    if (/id(s)?$/.test(k)) return k;
+    for (const x of Array.isArray(v) ? v : [v]) {
+      if (typeof x === 'string' && /^[a-z][a-z_]*_\d+$/.test(x)) return k;
+    }
+  }
+  return undefined;
+}
+
 const IDENTITY_FIELD_RE = /(user|assignee|owner|host|creator)_id$/;
 /** Support round-7b F7 ruling (hardened after review HIGH-1): writes that
  * MUTATE an existing record confirm even at one target; only genuine
@@ -444,21 +473,15 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         // prior results). Unseen id -> look it up first.
         const isWrite = action.risk !== 'read';
         {
-          for (const [k, v] of Object.entries(params)) {
-            if (!/id(s)?$/.test(k)) continue;
-            // support 7c N6: fabricated ids arrived inside an ARRAY param
-            // ("check all 12" invented 8 contact ids) — arrays are checked
-            // element-by-element, same rule as scalars.
-            for (const x of Array.isArray(v) ? v : [v]) {
-              if (typeof x !== 'string') continue;
-              const idLike = x.match(RECORD_ID_RE);
-              if (idLike && idLike[0] === x && !input.knownIds.has(x)) {
-                counters.stepsFailed += 1;
-                counters.step += 1;
-                emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'UNKNOWN_ID', message: `${k}=${x} not seen in any result` }, ms: 0 });
-                return `BLOCKED: the id ${x} never appeared in any search result or the user's message this conversation — do not guess record ids. Search for the record first, then use the id from the result.`;
-              }
-            }
+          // support 7c N6: fabricated ids arrive in scalars AND arrays — the
+          // shared firewall checks both element-by-element.
+          const bad = firstUnseenId(params, input.knownIds);
+          if (bad) {
+            counters.stepsFailed += 1;
+            counters.step += 1;
+            emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'UNKNOWN_ID', message: `${bad} not seen in any result` }, ms: 0 });
+            const idOnly = bad.slice(bad.indexOf('=') + 1);
+            return `BLOCKED: the id ${idOnly} never appeared in any search result or the user's message this conversation — do not guess record ids. Search for the record first, then use the id from the result.`;
           }
         }
 
@@ -547,6 +570,16 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           // (same date coercion as the initial parse), and run with that. A
           // failed re-validation never reaches the handler.
           if (editedParams && Object.keys(editedParams).length > 0) {
+            // Security (review CRITICAL): an approval-time edit must NEVER
+            // retarget the write — changing an id/target field would slip past
+            // the provenance firewall and void the snapshot the human approved.
+            const targetEdit = forbiddenTargetEdit(editedParams);
+            if (targetEdit) {
+              counters.stepsFailed += 1;
+              counters.step += 1;
+              emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'EDIT_FORBIDDEN', message: `cannot retarget via edited field ${targetEdit}` }, ms: 0 });
+              return `The record being acted on cannot be changed at approval time (you tried to edit "${targetEdit}"). Only values like amounts, dates, or text may be edited — nothing was changed.`;
+            }
             const merged = { ...params, ...editedParams };
             const reparsed = action.inputSchema.safeParse(coerceDateParams(merged, clock.now()).params);
             if (!reparsed.success) {
@@ -557,6 +590,15 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
               return `The edited arguments for "${action.name}" are invalid (${bad}) — nothing was changed. Ask the user to correct them, or proceed with the original values.`;
             }
             effectiveParams = reparsed.data as Record<string, unknown>;
+            // Defense-in-depth: the edited set passes the SAME provenance
+            // firewall as the original (an id that slipped in some other way).
+            const unseen = firstUnseenId(effectiveParams, input.knownIds);
+            if (unseen) {
+              counters.stepsFailed += 1;
+              counters.step += 1;
+              emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'UNKNOWN_ID', message: `${unseen} not seen in any result` }, ms: 0 });
+              return `BLOCKED: an edited argument referenced a record (${unseen}) never seen this conversation — nothing was changed.`;
+            }
           }
         }
 
@@ -1138,7 +1180,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   // refusing it.
   const sessionId = input.sessionId;
   const scheduler = input.scheduler;
-  if (scheduler && sessionId !== undefined) {
+  // Scheduling defers WORK, so it is a write-class capability — a read-only
+  // viewer cannot schedule (review CRITICAL: the tool used to bypass pruning).
+  if (scheduler && sessionId !== undefined && canUseAction(principal, { risk: 'write' })) {
     const scheduleFollowUp = tool({
       name: 'session__schedule_follow_up',
       description:
@@ -1161,7 +1205,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         if (dueAt <= now) {
           return `"${when}" is not in the future — schedule follow-ups for a later time only, or do the task now.`;
         }
-        scheduler.schedule({ id: `task_${randomUUID()}`, sessionId, dueAt, instruction, createdAt: now });
+        scheduler.schedule({ id: `task_${randomUUID()}`, sessionId, dueAt, instruction, createdAt: now, role: principal.role, userId: principal.userId });
         return `Scheduled a follow-up for ${new Date(dueAt).toISOString()}: ${instruction}`;
       },
     });

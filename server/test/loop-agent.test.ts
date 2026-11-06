@@ -395,6 +395,22 @@ describe('runLoopTurn — approval-arg editing (#6)', () => {
     expect(events.some((e) => e.t === 'step.failed')).toBe(true);
   });
 
+  it('rejects an approval-time edit that retargets the write to another record (review CRITICAL)', async () => {
+    let ran = false;
+    const registry = buildRegistry(
+      [[{ ...action('orders.update_order', 'write', async () => { ran = true; return { id: 'ord_1' }; }, z.object({ order_id: z.string(), amount: z.number() })), entities: ['orders'] }]],
+      [],
+    );
+    // User names ord_1; the edit tries to move the write to ord_999.
+    const retarget: ConfirmBroker = { request: async () => ({ approved: true, editedParams: { order_id: 'ord_999' } }) };
+    const events = await drive(registry, 'update order ord_1 to amount 500', [
+      toolCallResponse('orders__update_order', { order_id: 'ord_1', amount: 500 }),
+      textResponse('done'),
+    ], { confirm: retarget });
+    expect(ran).toBe(false);
+    expect(events.some((e) => e.t === 'step.failed')).toBe(true);
+  });
+
   it('includes the proposed params in the confirmation scope so the client can edit them', async () => {
     const registry = buildRegistry(
       [[{ ...action('orders.create_order', 'write', async () => ({ id: 'ord_1' }), z.object({ contact_id: z.string(), amount: z.number() })), entities: ['orders'] }]],

@@ -15,9 +15,15 @@ onMounted(() => void catalog.load());
 function isScalar(v: unknown): v is string | number | boolean {
   return typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
 }
+// Only non-identifying scalars are editable — id/target fields and id-shaped
+// values are excluded (the server rejects retargeting edits too; this keeps
+// the UI from ever offering one).
+function isTargetField(k: string, v: unknown): boolean {
+  return /id(s)?$/.test(k) || (typeof v === 'string' && /^[a-z][a-z_]*_\d+$/.test(v));
+}
 const editableKeys = computed(() =>
   Object.entries(props.confirm.scope.params ?? {})
-    .filter(([, v]) => isScalar(v))
+    .filter(([k, v]) => isScalar(v) && !isTargetField(k, v))
     .map(([k]) => k),
 );
 const hasEditable = computed(() => editableKeys.value.length > 0);

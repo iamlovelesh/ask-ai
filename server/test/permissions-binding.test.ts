@@ -4,6 +4,9 @@ import { buildRegistry } from '../src/catalog/registry';
 import { buildTurnTools, StuckTracker, type LoopExits } from '../src/loop/tools';
 import { buildCatalogSummary } from '../src/baseline/catalog-summary';
 import { VirtualClock } from '../src/store/clock';
+import { openSessions } from '../src/store/sessions-db';
+import { openScheduledTasks } from '../src/agent/scheduled-tasks';
+import { randomUUID } from 'node:crypto';
 import type { Crm } from '../src/store/db';
 import type { ActionDef, Risk } from '../src/catalog/types';
 import type { RefStore } from '../src/agent/refs';
@@ -53,6 +56,8 @@ function toolNamesFor(principal: Principal): string[] {
     actingUserId: principal.userId,
     knownIds: new Set<string>(),
     principal,
+    sessionId: 'sess_x',
+    scheduler: openScheduledTasks(openSessions(`/tmp/permsched-${randomUUID()}.db`)),
   });
   return tools.map((t) => t.name);
 }
@@ -70,6 +75,11 @@ describe('permission-pruned tool binding (#1)', () => {
     expect(names).toContain('leads__search_leads');
     expect(names).toContain('leads__update_lead');
     expect(names).not.toContain('leads__delete_lead');
+  });
+
+  it('the schedule-follow-up tool is write-class: members get it, viewers do not (review CRITICAL)', () => {
+    expect(toolNamesFor(member)).toContain('session__schedule_follow_up');
+    expect(toolNamesFor(viewer)).not.toContain('session__schedule_follow_up');
   });
 
   it('the model-facing catalog summary is pruned to the principal’s permissions', () => {
