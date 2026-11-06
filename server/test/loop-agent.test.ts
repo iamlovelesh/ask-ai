@@ -1583,6 +1583,35 @@ describe('runLoopTurn — support round-7b rails (denied-cache, scope disclosure
     expect(events.filter((e) => e.t === 'confirmation.required')).toHaveLength(1);
   });
 
+  it('N10: epoch-ms under ANY key (bare `at` timeline fields) renders as ISO, never raw', async () => {
+    // Support 7d HIGH: timeline entries use bare `at`, DATE_FIELD_RE only
+    // matches `_at` — raw epochs leaked and the model converted them months
+    // wrong in-head. Value-range conversion closes the whole class.
+    const timeline = action('contacts.view_timeline', 'read', async () => ({
+      items: [{ type: 'message', id: 'msg_647', at: 1757921435000, summary: 'email sent' }],
+      total: 1,
+    }));
+    const registry = buildRegistry([[timeline]], []);
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'when did we last reach out?',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('contacts__view_timeline', {}),
+          textResponse('Last outreach was September 15, 2025.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const followUp = seen.bodies[1] ?? '';
+    expect(followUp).not.toContain('1757921435000');
+    expect(followUp).toContain('2025-09-15');
+    // cents-scale numbers must stay numeric
+    expect(JSON.stringify(seen.bodies)).not.toContain('"total":"');
+  });
+
   it('N6: fabricated ids inside ARRAY params are firewalled like scalar ids', async () => {
     // Support 7c CRITICAL: "check all 12" invented 8 contact ids in an id
     // array — the firewall only inspected scalar string params.

@@ -104,6 +104,9 @@ Writes and honesty:
 - For count/total questions ("how many X in total?"), pass NO optional
   filters beyond what the user asked; if any filter was applied, name it
   in the answer instead of calling the figure a total.
+- "Last contact/outreach" means a message that was actually SENT — drafts
+  and queued messages are not outreach; check each message's status field
+  before counting it.
 
 Answer style:
 - Plain language for a business user. Never show internal ids like refs

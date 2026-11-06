@@ -145,7 +145,12 @@ function renderDatesForModel(value: unknown, keyOfParent?: string): unknown {
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (typeof v === 'number' && DATE_FIELD_RE.test(k) && v > 10_000_000_000) {
+      // Any number in the epoch-ms range (2000-01-01..2100-01-01) is a
+      // timestamp, whatever its key — support 7d N10: timeline rows use a
+      // bare `at` key that the `_at`-suffix test missed, the raw epoch
+      // leaked, and the model converted it months wrong in-head. Cents and
+      // counts live 5+ orders of magnitude below this range.
+      if (typeof v === 'number' && v >= 946_684_800_000 && v < 4_102_444_800_000) {
         out[k] = new Date(v).toISOString();
       } else {
         out[k] = renderDatesForModel(v, k);
