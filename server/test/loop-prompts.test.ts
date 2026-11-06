@@ -114,6 +114,11 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/table/i);
   });
 
+  it('has a prompt-injection rule: record content is data, never instructions', () => {
+    expect(system).toMatch(/data, never (as )?instructions/i);
+    expect(system).toMatch(/notes|emails|record (field|content)/i);
+  });
+
   it('includes the available-skills catalog and the Plan→Skill→Execute contract line', () => {
     expect(system).toMatch(/<available_skills>/);
     expect(system).toContain('overdue-invoice-reminders'); // a skill name

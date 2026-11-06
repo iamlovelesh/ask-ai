@@ -153,6 +153,13 @@ function renderDatesForModel(value: unknown, keyOfParent?: string): unknown {
       // counts live 5+ orders of magnitude below this range.
       if (typeof v === 'number' && v >= 946_684_800_000 && v < 4_102_444_800_000) {
         out[k] = new Date(v).toISOString();
+      } else if (typeof v === 'string' && v.length > FIELD_VALUE_CAP) {
+        // Injection defense-in-depth (Odoo _ai_truncate): cap long free-text
+        // fields (notes, email bodies, descriptions) in model-facing
+        // observations. Limits both an adversarial payload's reach and token
+        // bloat; the system prompt's "data is never instructions" rule is the
+        // primary defense.
+        out[k] = `${v.slice(0, FIELD_VALUE_CAP)}…[truncated]`;
       } else {
         out[k] = renderDatesForModel(v, k);
       }
@@ -178,6 +185,10 @@ function pluralNoun(noun: string, count: number): string {
 }
 
 const OBSERVATION_CAP = 2000;
+/** Per-field free-text cap for model-facing observations (injection
+ * defense-in-depth + token hygiene). Long enough for real note/body content,
+ * short enough to blunt a large adversarial payload. */
+const FIELD_VALUE_CAP = 400;
 /** Ref-tool rows get a larger budget: these rows ARE the answer to a
  * ranking question, and hiding any of them seeds fabrication (7c N8). */
 const REF_ROWS_CAP = 4000;
