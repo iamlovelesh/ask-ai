@@ -1243,30 +1243,68 @@ button {
   align-items: flex-end;
 }
 
-.composer-model {
+/* --- model picker (5-stop capability slider, the OSS reference CRM-style) ---------- */
+.model-picker {
   max-width: 760px;
-  margin: 8px auto 0;
+  margin: 10px auto 0;
+}
+.model-picker-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  margin-bottom: 4px;
 }
-.composer-model-label {
+.model-picker-current {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.model-picker-rec {
+  font-weight: 400;
+  color: var(--petrol);
+}
+.model-picker-badge {
+  font-size: 0.72rem;
+  color: var(--petrol);
+  border: 1px solid color-mix(in srgb, var(--petrol) 35%, transparent);
+  background: color-mix(in srgb, var(--petrol) 10%, transparent);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+.model-picker-slider {
+  width: 100%;
+  accent-color: var(--petrol);
+  cursor: pointer;
+}
+.model-picker-slider:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.model-picker-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--ink-dim, #6b7280);
+  margin-top: 1px;
+}
+.model-picker-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+.model-picker-desc {
   font-size: 0.78rem;
   color: var(--ink-dim, #6b7280);
 }
-.composer-model-select {
-  font: inherit;
-  font-size: 0.82rem;
-  padding: 3px 8px;
-  border: 1px solid var(--hair);
-  border-radius: 7px;
-  background: var(--paper);
-  color: var(--ink);
-  cursor: pointer;
-}
-.composer-model-select:disabled {
-  opacity: 0.55;
-  cursor: default;
+.model-picker-scores {
+  display: flex;
+  gap: 12px;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  color: var(--ink-dim, #6b7280);
+  letter-spacing: 1px;
 }
 
 .composer textarea {

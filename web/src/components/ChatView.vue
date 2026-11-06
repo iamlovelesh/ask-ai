@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useSessionStore } from '../stores/session.js';
 import TaskTracker from './TaskTracker.vue';
+import ModelPicker from './ModelPicker.vue';
 import ConfirmCard from './ConfirmCard.vue';
 import ClarifyCard from './ClarifyCard.vue';
 import CostBadge from './CostBadge.vue';
@@ -376,12 +377,7 @@ async function onCopyLink(): Promise<void> {
         <button v-if="chat.running" class="btn-cancel" @click="onCancel">Cancel</button>
         <button v-else class="btn-send" :disabled="!draft.trim()" @click="onSend">Send</button>
       </div>
-      <div v-if="store.models.length > 0" class="composer-model">
-        <label class="composer-model-label">Model</label>
-        <select v-model="store.selectedModel" :disabled="chat.running" class="composer-model-select">
-          <option v-for="m in store.models" :key="m.id" :value="m.id">{{ m.label }}</option>
-        </select>
-      </div>
+      <ModelPicker :disabled="chat.running" />
     </div>
 
     <!-- inspector drawer: slides over the transcript -->

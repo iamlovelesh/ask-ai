@@ -2,6 +2,7 @@
 import { nextTick, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useSessionStore } from '../stores/session.js';
+import ModelPicker from './ModelPicker.vue';
 
 defineEmits<{ 'toggle-nav': [] }>();
 const store = useSessionStore();
@@ -105,12 +106,7 @@ watch(draft, () => void nextTick(autosizeTextarea));
         ></textarea>
         <button class="btn-send" :disabled="!draft.trim() || starting" @click="onSend">Send</button>
       </div>
-      <div v-if="store.models.length > 0" class="composer-model">
-        <label class="composer-model-label">Model</label>
-        <select v-model="store.selectedModel" :disabled="starting" class="composer-model-select">
-          <option v-for="m in store.models" :key="m.id" :value="m.id">{{ m.label }}</option>
-        </select>
-      </div>
+      <ModelPicker :disabled="starting" />
     </div>
   </div>
 </template>

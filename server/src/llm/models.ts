@@ -1,29 +1,87 @@
 /**
- * User-selectable model allowlist (model-picker feature).
+ * User-selectable model tiers (model-picker feature).
  *
- * The chat UI lets a user pick which model runs their turn; the client sends
- * a model id, but we NEVER trust it — only ids in this allowlist are honored
- * (an arbitrary string could route to an unavailable or expensive model), and
- * anything else falls back to the default. All ids are OpenRouter slugs.
+ * Users don't want raw slugs — they want a capability choice: how fast vs how
+ * smart. We expose five tiers (extra-fast → extra-smart), each mapped to a
+ * concrete OpenRouter model. The client sends a model id, but we NEVER trust
+ * it — only allowlisted ids are honored (an arbitrary string could route to an
+ * unavailable or expensive model); anything else falls back to the default.
  *
  * `streamsTools`: whether this model's tool calls assemble correctly when the
- * run is driven in stream:true mode. Live A/B (2026-11-07): OpenAI models over
- * chat-completions stream tool-call arguments correctly; Anthropic-via-
+ * run is driven in stream:true mode. Live A/B (2026-11-07): OpenAI AND Google
+ * models over OpenRouter stream tool-call arguments correctly; Anthropic-via-
  * OpenRouter does NOT (tools stop executing). So answer-token streaming is
  * enabled per-model from this flag, never globally.
+ *
+ * `speed` / `intelligence` are 1–5 relative scores (UI badges, not SLAs) —
+ * monotonic across the tier order so the picker can show the tradeoff.
  */
+export type ModelTier = 'extra-fast' | 'fast' | 'balanced' | 'smart' | 'extra-smart';
+
 export interface SelectableModel {
   id: string;
+  tier: ModelTier;
   label: string;
+  description: string;
   provider: 'openai' | 'anthropic' | 'google';
   streamsTools: boolean;
+  speed: number;
+  intelligence: number;
+  recommended?: boolean;
 }
 
 export const SELECTABLE_MODELS: readonly SelectableModel[] = [
-  { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5 (default)', provider: 'anthropic', streamsTools: false },
-  { id: 'anthropic/claude-sonnet-4.5', label: 'Claude Sonnet 4.5', provider: 'anthropic', streamsTools: false },
-  { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini (streams)', provider: 'openai', streamsTools: true },
-  { id: 'openai/gpt-4o', label: 'GPT-4o (streams)', provider: 'openai', streamsTools: true },
+  {
+    id: 'google/gemini-2.5-flash-lite',
+    tier: 'extra-fast',
+    label: 'Extra fast',
+    description: 'Quickest replies for simple lookups and counts. Streams live.',
+    provider: 'google',
+    streamsTools: true,
+    speed: 5,
+    intelligence: 2,
+  },
+  {
+    id: 'openai/gpt-4o-mini',
+    tier: 'fast',
+    label: 'Fast',
+    description: 'Snappy and accurate for everyday CRM questions. Streams live.',
+    provider: 'openai',
+    streamsTools: true,
+    speed: 4,
+    intelligence: 3,
+  },
+  {
+    id: 'anthropic/claude-haiku-4.5',
+    tier: 'balanced',
+    label: 'Balanced',
+    description: 'The tuned default — reliable multi-step tool use across the full catalog.',
+    provider: 'anthropic',
+    streamsTools: false,
+    speed: 3,
+    intelligence: 4,
+    recommended: true,
+  },
+  {
+    id: 'anthropic/claude-sonnet-4.5',
+    tier: 'smart',
+    label: 'Smart',
+    description: 'Stronger reasoning for complex, multi-step or ambiguous requests.',
+    provider: 'anthropic',
+    streamsTools: false,
+    speed: 2,
+    intelligence: 5,
+  },
+  {
+    id: 'anthropic/claude-opus-4.5',
+    tier: 'extra-smart',
+    label: 'Extra smart',
+    description: 'Maximum reasoning for the hardest analysis. Slowest and priciest.',
+    provider: 'anthropic',
+    streamsTools: false,
+    speed: 1,
+    intelligence: 5,
+  },
 ];
 
 const BY_ID = new Map(SELECTABLE_MODELS.map((m) => [m.id, m]));
@@ -36,12 +94,13 @@ export function isSelectableModel(id: string): boolean {
   return BY_ID.has(id);
 }
 
-/** The default model id. Honors PLANNER_MODEL if it is itself allowlisted,
- * else the first entry — so the picker default tracks the deployed default. */
+/** The default model id: the PLANNER_MODEL env if it is itself allowlisted,
+ * else the tier marked `recommended`. Keeps the picker default in sync with
+ * the deployed default. */
 export function defaultModelId(): string {
   const envModel = process.env['PLANNER_MODEL'];
   if (envModel && BY_ID.has(envModel)) return envModel;
-  return SELECTABLE_MODELS[0]!.id;
+  return (SELECTABLE_MODELS.find((m) => m.recommended) ?? SELECTABLE_MODELS[0]!).id;
 }
 
 export function modelStreamsTools(id: string): boolean {

@@ -20,6 +20,20 @@ export interface SessionSummary {
   cost_usd: number;
 }
 
+/** A selectable model tier from GET /api/models (mirrors the server's
+ * SelectableModel). */
+export interface ModelOption {
+  id: string;
+  tier: string;
+  label: string;
+  description: string;
+  provider: string;
+  streamsTools: boolean;
+  speed: number;
+  intelligence: number;
+  recommended?: boolean;
+}
+
 /** Sidebar page size. The DB can hold hundreds of eval-generated sessions;
  * we render the newest page and reveal older ones on demand via the
  * cursor-based `GET /api/sessions?limit&cursor` the server already supports
@@ -82,9 +96,9 @@ export const useSessionStore = defineStore('session', {
     sessionsLoadingMore: false,
     toasts: [] as { id: number; text: string }[],
     toastSeq: 0,
-    /** Model-picker: the allowlist from GET /api/models and the id the user
-     * has chosen (sent with each message; '' = server default). */
-    models: [] as { id: string; label: string; streamsTools: boolean }[],
+    /** Model-picker: the tier allowlist from GET /api/models and the id the
+     * user has chosen (sent with each message; '' = server default). */
+    models: [] as ModelOption[],
     selectedModel: '' as string,
   }),
 
@@ -113,10 +127,7 @@ export const useSessionStore = defineStore('session', {
       try {
         const res = await fetch('/api/models');
         if (!res.ok) return;
-        const body = (await res.json()) as {
-          models: { id: string; label: string; streamsTools: boolean }[];
-          default: string;
-        };
+        const body = (await res.json()) as { models: ModelOption[]; default: string };
         this.models = body.models;
         if (this.selectedModel === '') this.selectedModel = body.default;
       } catch {
