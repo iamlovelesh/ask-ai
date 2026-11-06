@@ -46,8 +46,14 @@ function close(a: number, b: number): boolean {
   return Math.abs(a - b) <= Math.max(EPS, Math.abs(b) * 1e-6);
 }
 
-export function numberCheck(draft: string, toolOutputs: readonly string[]): NumberCheckResult {
+const RECORD_TOKEN_RE = /\[\[record:([a-z_]+):([a-z_]+_\d+):((?:(?!\]\])[^\n])+)\]\]/g;
+const BARE_ID_RE = /\b[a-z][a-z]*(?:_[a-z]+)*_\d+\b/g;
+
+export function numberCheck(draft: string, toolOutputs: readonly string[], userText = ''): NumberCheckResult {
   const outputs = toolOutputs.join('\n');
+  // ids/names the USER typed are legitimate evidence too
+  const evidence = `${outputs}\n${userText}`;
+  const evidenceLower = evidence.toLowerCase();
 
   // candidate pool: every number in outputs plus cents/dollars variants
   const pool: number[] = [];
@@ -73,15 +79,36 @@ export function numberCheck(draft: string, toolOutputs: readonly string[]): Numb
 
   // ISO dates available in outputs, as month-day(-year) tuples
   const outputDates = new Set<string>();
+  const dateMs: number[] = [];
   for (const m of outputs.matchAll(ISO_DATE_RE)) {
     outputDates.add(`${Number(m[2])}-${Number(m[3])}-${m[1]}`);
     outputDates.add(`${Number(m[2])}-${Number(m[3])}`);
+    const ms = Date.parse(`${m[1]}-${m[2]}-${m[3]}T00:00:00Z`);
+    if (Number.isFinite(ms) && dateMs.length < 60) dateMs.push(ms);
   }
+  // day-count claims ("89 days overdue") derivable as |date_i - date_j|
+  const DAY = 86_400_000;
+  const dayDiffs = new Set<number>();
+  for (let i = 0; i < dateMs.length; i += 1) {
+    for (let j = i + 1; j < dateMs.length; j += 1) {
+      const d = Math.abs((dateMs[i] as number) - (dateMs[j] as number)) / DAY;
+      dayDiffs.add(Math.floor(d));
+      dayDiffs.add(Math.ceil(d));
+    }
+  }
+  for (const d of dayDiffs) pool.push(d);
 
   const unsupported: string[] = [];
 
-  // strip times and month-day phrases from the numeric scan (handled separately)
-  const numericDraft = draft.replace(MONTH_DAY_RE, ' ').replace(TIME_RE, ' ').replace(ISO_DATE_RE, (iso) => {
+  // strip times, month-day phrases, reference tokens, and record ids from
+  // the numeric scan (each handled separately — id digit suffixes like
+  // ticket_555 must not be treated as numeric claims)
+  const numericDraft = draft
+    .replace(RECORD_TOKEN_RE, ' ')
+    .replace(BARE_ID_RE, ' ')
+    .replace(MONTH_DAY_RE, ' ')
+    .replace(TIME_RE, ' ')
+    .replace(ISO_DATE_RE, (iso) => {
     const m = /(\d{4})-(\d{2})-(\d{2})/.exec(iso);
     if (m && !outputDates.has(`${Number(m[2])}-${Number(m[3])}-${m[1]}`)) unsupported.push(iso);
     return ' ';
@@ -103,6 +130,24 @@ export function numberCheck(draft: string, toolOutputs: readonly string[]): Numb
     const key = year ? `${month}-${day}-${year}` : `${month}-${day}`;
     const keyNoYear = `${month}-${day}`;
     if (!outputDates.has(key) && !outputDates.has(keyNoYear)) unsupported.push(m[0]);
+  }
+
+  // Entity verification (round-7 support): reference tokens must cite an id
+  // AND display name that actually appear in the evidence; bare record ids
+  // in prose must come from the evidence too. Fabricated names/ids are the
+  // numeral-free siblings of fabricated figures.
+  const tokenIds = new Set<string>();
+  for (const m of draft.matchAll(RECORD_TOKEN_RE)) {
+    const id = m[2] as string;
+    const name = (m[3] as string).trim();
+    tokenIds.add(id);
+    if (!evidence.includes(id)) unsupported.push(`[[record:…:${id}]]`);
+    else if (name.length > 1 && !evidenceLower.includes(name.toLowerCase())) unsupported.push(name);
+  }
+  const draftSansTokens = draft.replace(RECORD_TOKEN_RE, ' ');
+  for (const m of draftSansTokens.matchAll(BARE_ID_RE)) {
+    const id = m[0];
+    if (!tokenIds.has(id) && !evidence.includes(id)) unsupported.push(id);
   }
 
   return { ok: unsupported.length === 0, unsupported };

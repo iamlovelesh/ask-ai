@@ -36,7 +36,31 @@ describe('numberCheck', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('F5: accepts day-count claims derivable as differences between output dates', () => {
+    const outs = ['due_date 2026-08-07T00:00:00.000Z now 2026-11-04T10:00:00.000Z'];
+    expect(numberCheck('That invoice is 89 days overdue.', outs).ok).toBe(true);
+    expect(numberCheck('That invoice is 43 days overdue.', outs).ok).toBe(false);
+  });
+
   it('a draft with no numeric claims passes trivially', () => {
     expect(numberCheck('Okay — I stopped. Nothing further was changed.', []).ok).toBe(true);
+  });
+
+  it('round-7 support: record reference tokens are verified — id AND name must appear in outputs', () => {
+    const outs = ['result={"items":[{"id":"con_77","name":"Sofia Osei"}],"total":1}'];
+    expect(numberCheck('The thread belongs to [[record:contacts:con_77:Sofia Osei]].', outs).ok).toBe(true);
+    const wrongName = numberCheck('The thread belongs to [[record:contacts:con_77:Liam Volkov]].', outs);
+    expect(wrongName.ok).toBe(false);
+    expect(wrongName.unsupported.join(' ')).toContain('Liam Volkov');
+    const wrongId = numberCheck('See [[record:contacts:con_99:Sofia Osei]].', outs);
+    expect(wrongId.ok).toBe(false);
+  });
+
+  it('round-7 support: bare record ids in prose must come from outputs or the user', () => {
+    const outs = ['result={"items":[{"id":"ticket_141"}],"total":1}'];
+    expect(numberCheck('Your open ticket is ticket_141.', outs).ok).toBe(true);
+    expect(numberCheck('Also check ticket_999.', outs).ok).toBe(false);
+    // user-typed ids are legitimate evidence
+    expect(numberCheck('ticket_555 was not found.', outs, 'whats up with ticket_555').ok).toBe(true);
   });
 });

@@ -101,8 +101,15 @@ function buildSessionCtx(events: readonly Event[]): SessionCtx {
 const DATA_CLAIM_RE =
   /\$\s?\d|\d{4}-\d{2}-\d{2}|\b(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|jun(e)?|jul(y)?|aug(ust)?|sep(tember)?|oct(ober)?|nov(ember)?|dec(ember)?)\.?\s+\d{1,2}\b|\b\d+\s+(days?|weeks?|months?)\s+(overdue|ago|old)\b/i;
 
+/** Round-7 billing F1: prose SCOPE/AUDIT claims ("paid invoices are
+ * included", "none are voided", "all of them were counted") asserted with
+ * zero tool reads are the numeral-free branch of the fabrication family —
+ * NumberCheck can't see them, so they trigger grounding too. */
+const AUDIT_CLAIM_RE =
+  /\b(are|were|was|is)\s+(not\s+)?(included|excluded|counted|covered)\b|\b(all|none|every one)\s+(of\s+(them|those|these)\s+)?(are|were|have been)\b|\byes\s*[—,-]/i;
+
 function needsGrounding(finalText: string, stepsRun: number): boolean {
-  return stepsRun === 0 && DATA_CLAIM_RE.test(finalText);
+  return stepsRun === 0 && (DATA_CLAIM_RE.test(finalText) || AUDIT_CLAIM_RE.test(finalText));
 }
 
 const GROUNDING_NOTE =
@@ -311,7 +318,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
         if (needsGrounding(finalText, counters.step + counters.virtualReads)) {
           finalText = await runOnce(`${prompt}\n\n${GROUNDING_NOTE}`, groundedAgent);
         } else {
-          const check = numberCheck(finalText, exits.toolOutputs);
+          const check = numberCheck(finalText, exits.toolOutputs, userText);
           if (!check.ok) {
             finalText = await runOnce(
               `${prompt}\n\nIMPORTANT: your previous draft stated figures I could not find in any tool result this turn: ${check.unsupported.join(', ')}. Re-read the data with tools and answer using ONLY figures that appear in tool results.`,
@@ -321,7 +328,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
         }
         // Persistent unsupported figures get an explicit, honest caution.
         if (exits.clarify === undefined && exits.refused === undefined && finalText !== MAX_TURNS_FALLBACK) {
-          const finalCheck = numberCheck(finalText, exits.toolOutputs);
+          const finalCheck = numberCheck(finalText, exits.toolOutputs, userText);
           if (!finalCheck.ok) {
             finalText += `\n\n⚠ Please double-check these figures against the records — I could not verify them: ${finalCheck.unsupported.join(', ')}`;
           }

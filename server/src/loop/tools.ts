@@ -262,6 +262,8 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   // BIND discovered actions mid-run (langgraph-bigtool / Anthropic Tool
   // Search pattern: discovery leads to invocation, never a dead end).
   const tools: Tool[] = [];
+  // the acting user's own id is always legitimate evidence/target
+  input.knownIds.add(input.actingUserId);
   const seenSlugs = new Set<string>();
   const bindAction = (action: ActionDef): boolean => {
     if (seenSlugs.has(action.slug)) return false;
@@ -323,11 +325,12 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         }
         const params = parsed.data as Record<string, unknown>;
 
-        // 1b. provenance firewall: a WRITE may only target ids the model has
-        // actually SEEN (user text, prior results) — a plausible-but-invented
-        // id must be looked up first, never written to.
+        // 1b. provenance firewall: ANY id-targeting call (reads included —
+        // round-7 support: invented-but-real ids attributed one person's
+        // data to another) may only use ids the model has SEEN (user text,
+        // prior results). Unseen id -> look it up first.
         const isWrite = action.risk !== 'read';
-        if (isWrite) {
+        {
           for (const [k, v] of Object.entries(params)) {
             if (typeof v !== 'string' || !/id(s)?$/.test(k)) continue;
             const idLike = v.match(RECORD_ID_RE);
@@ -340,7 +343,16 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           }
         }
 
-        const affectedCount = isWrite ? Math.max(maxArrayLength(params), 1) : maxArrayLength(params);
+        // affectedCount: max of deepest array length and DISTINCT id-shaped
+        // values across params (round-7 support: a 12-contact merge gated as
+        // "1 contact" because the ids were spread across params).
+        const idValues = new Set<string>();
+        for (const v of Object.values(params)) {
+          for (const x of Array.isArray(v) ? v : [v]) {
+            if (typeof x === 'string' && /^[a-z][a-z_]*_\d+$/.test(x)) idValues.add(x);
+          }
+        }
+        const affectedCount = isWrite ? Math.max(maxArrayLength(params), idValues.size, 1) : Math.max(maxArrayLength(params), idValues.size);
         if (isWrite && shouldGate(action.risk, affectedCount)) {
           const confirmId = `cf_${randomUUID()}`;
           const noun = action.entities[0] ?? 'record';
@@ -560,6 +572,18 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
+  /** Round-7 billing G2: money answers silently включали void records. Any
+   * ref computation over status-bearing rows discloses the composition so
+   * the model (and the user) can see what the figure includes. */
+  const statusComposition = (rows: Record<string, unknown>[]): string => {
+    if (rows.length === 0 || rows[0]?.['status'] === undefined) return '';
+    const byStatus = new Map<string, number>();
+    for (const r of rows) byStatus.set(String(r['status']), (byStatus.get(String(r['status'])) ?? 0) + 1);
+    if (byStatus.size <= 1) return '';
+    const parts = [...byStatus.entries()].map(([k, n]) => `${n} ${k}`).join(', ');
+    return ` [status composition: ${parts} — figures include ALL of these; exclude void/cancelled with data__filter_ref if the user means receivables]`;
+  };
+
   const hydrateRows = (ref: string): { rows: Record<string, unknown>[]; complete: boolean; total: number } => {
     counters.virtualReads += 1; // ref reads ARE data reads (grounding check)
     return crm.tx((db) => refs.hydrate(ref, db));
@@ -574,8 +598,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       field: z.string(),
       direction: z.enum(['asc', 'desc']),
       limit: z.number().int().min(1).max(50).default(5),
+      subtract_field: z.string().nullable().optional().describe('optional numeric field subtracted from `field` per record before ranking — e.g. field=total_cents, subtract_field=amount_paid_cents to rank by amount OWED'),
     }),
-    execute: async ({ ref, field, direction, limit }): Promise<string> => {
+    execute: async ({ ref, field, direction, limit, subtract_field }): Promise<string> => {
       const { rows, complete, total } = hydrateRows(ref);
       if (!complete) {
         return `The set behind ${ref} is incomplete on the server (only a sample was captured), so an exact sort is not possible. Say so honestly or narrow the search with filters.`;
@@ -588,17 +613,20 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       if (present.length === 0) {
         return `Field "${field}" is not present on any of the ${total} records — it cannot be sorted. Check the field name against the sample rows.`;
       }
-      const numeric = present.every((v) => typeof v === 'number' || (typeof v === 'string' && v !== '' && Number.isFinite(Number(v))));
+      const derive = (r: Record<string, unknown>): number =>
+        Number(r[field] ?? Number.NEGATIVE_INFINITY) - (subtract_field ? Number(r[subtract_field] ?? 0) : 0);
+      const numeric = subtract_field
+        ? true
+        : present.every((v) => typeof v === 'number' || (typeof v === 'string' && v !== '' && Number.isFinite(Number(v))));
       const sorted = [...rows].sort((a, b) => {
-        const av = a[field];
-        const bv = b[field];
         const cmp = numeric
-          ? Number(av ?? Number.NEGATIVE_INFINITY) - Number(bv ?? Number.NEGATIVE_INFINITY)
-          : String(av ?? '').localeCompare(String(bv ?? ''));
+          ? derive(a) - derive(b)
+          : String(a[field] ?? '').localeCompare(String(b[field] ?? ''));
         return direction === 'asc' ? cmp : -cmp;
       });
       const top = sorted.slice(0, limit);
-      const obs = `Sorted ${total} records by ${field} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length}: ${JSON.stringify(renderDatesForModel(top)).slice(0, OBSERVATION_CAP)}`;
+      const sortLabel = subtract_field ? `${field} - ${subtract_field}` : field;
+      const obs = `Sorted ${total} records by ${sortLabel} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length}: ${JSON.stringify(renderDatesForModel(top)).slice(0, OBSERVATION_CAP)}${statusComposition(rows)}`;
       exits.toolOutputs.push(obs);
       return obs;
     },
@@ -675,7 +703,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const sum = values.reduce((a, b) => a + b, 0);
       const value = op === 'sum' ? sum : op === 'avg' ? sum / values.length : op === 'min' ? Math.min(...values) : Math.max(...values);
       const label = subtract_field ? `${field} - ${subtract_field}` : field;
-      const obs = `${op} of ${label} over ${values.length} records: ${value}`;
+      const obs = `${op} of ${label} over ${values.length} records: ${value}${statusComposition(rows)}`;
       exits.toolOutputs.push(obs);
       return obs;
     },

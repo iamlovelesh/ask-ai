@@ -253,6 +253,48 @@ describe('runLoopTurn — write-id provenance firewall (round-5 support CRITICAL
   });
 });
 
+describe('runLoopTurn — firewall covers READS too (round-7 support)', () => {
+  it('blocks a read whose id param was never seen (prevents wrong-entity attribution)', async () => {
+    let invoked = 0;
+    const registry = buildRegistry(
+      [[action('contacts.get_contact_details', 'read', async () => { invoked += 1; return { id: 'con_1', name: 'Someone Else' }; }, z.object({ id: z.string() }))]],
+      [],
+    );
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'tell me about the liam volkov duplicates',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('contacts__get_contact_details', { id: 'con_4242' }), // invented
+          textResponse('ok'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(invoked).toBe(0);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).toMatch(/never appeared|do not guess/i);
+  });
+});
+
+describe('runLoopTurn — gate affectedCount counts id-shaped params (round-7 support merge bug)', () => {
+  it('a write carrying 12 ids across params gates as 12, not 1', async () => {
+    const registry = buildRegistry(
+      [[{ ...action('contacts.merge_contacts', 'destructive', async () => ({}), z.object({ primary_id: z.string(), duplicate_ids: z.array(z.string()) })), entities: ['contacts'] }]],
+      [],
+    );
+    const ids = Array.from({ length: 11 }, (_, i) => `con_${i + 1}`);
+    const events = await drive(registry, `merge con_12 with ${ids.join(' ')}`, [
+      toolCallResponse('contacts__merge_contacts', { primary_id: 'con_12', duplicate_ids: ids }),
+      textResponse('ok'),
+    ]);
+    const req = events.find((e) => e.t === 'confirmation.required');
+    expect(req && req.t === 'confirmation.required' ? req.scope.affectedCount : 0).toBe(12);
+  });
+});
+
 describe('runLoopTurn — identity param substitution (round-4 billing C1)', () => {
   it("replaces literal 'me' in *_user_id/assignee/owner params with the acting user id", async () => {
     let got: Record<string, unknown> | undefined;
@@ -1136,6 +1178,96 @@ describe('runLoopTurn — zero-width date window hint (round-6 sales F38)', () =
   });
 });
 
+describe('runLoopTurn — round-7 billing rails', () => {
+  it('F1: a zero-step AUDIT claim ("...are included") forces a grounded re-run', async () => {
+    let fetched = 0;
+    const registry = buildRegistry(
+      [[action('invoices.search', 'read', async () => { fetched += 1; return { items: [{ id: 'inv_1', status: 'paid' }], total: 59 }; })]],
+      [],
+    );
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'did you count the ones that were already paid?',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          textResponse('Yes — paid invoices are included in that total.'), // zero-tool false audit claim
+          toolCallResponse('invoices__search', {}),
+          textResponse('I re-checked: the total covered 59 invoices including paid ones.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(fetched).toBe(1);
+    expect(finalOf(events)).toContain('re-checked');
+  });
+
+  it('F3: data__sort_ref supports subtract_field for owed-style rankings', async () => {
+    const rows = [
+      { id: 'a', total_cents: 5000, amount_paid_cents: 5000 }, // owed 0
+      { id: 'b', total_cents: 4000, amount_paid_cents: 0 },    // owed 4000
+      { id: 'c', total_cents: 4500, amount_paid_cents: 2000 }, // owed 2500
+    ];
+    const refsWith: RefStore = {
+      put: refs.put.bind(refs), get: refs.get.bind(refs),
+      resolve: () => ({ ids: rows.map((r) => r.id), missing: 0, total: 3 }),
+      hydrate: (): HydrateResult => ({ rows, complete: true, total: 3 }),
+      markAllStale: () => {},
+    };
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'top by owed',
+      sessionDeps: {
+        registry: buildRegistry([[action('invoices.search', 'read', async () => ({ items: [], total: 3 }))]], []),
+        crm: fakeCrm, refs: refsWith, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__sort_ref', { ref: 'r_t1_s1', field: 'total_cents', subtract_field: 'amount_paid_cents', direction: 'desc', limit: 2 }),
+          textResponse('b then c.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    const bIdx = obs.indexOf('\\"b\\"') >= 0 ? obs.indexOf('\\"b\\"') : obs.indexOf('"b"');
+    const aIdx = obs.indexOf('\\"a\\"') >= 0 ? obs.indexOf('\\"a\\"') : obs.indexOf('"a"');
+    expect(bIdx).toBeGreaterThan(-1);
+    expect(aIdx).toBe(-1); // owed-0 row not in top 2
+  });
+
+  it('G2: aggregates over status-bearing rows disclose the status composition', async () => {
+    const rows = [
+      { id: 'a', status: 'issued', total_cents: 1000 },
+      { id: 'b', status: 'void', total_cents: 500 },
+      { id: 'c', status: 'issued', total_cents: 2000 },
+    ];
+    const refsWith: RefStore = {
+      put: refs.put.bind(refs), get: refs.get.bind(refs),
+      resolve: () => ({ ids: rows.map((r) => r.id), missing: 0, total: 3 }),
+      hydrate: (): HydrateResult => ({ rows, complete: true, total: 3 }),
+      markAllStale: () => {},
+    };
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'total invoiced',
+      sessionDeps: {
+        registry: buildRegistry([[action('invoices.search', 'read', async () => ({ items: [], total: 3 }))]], []),
+        crm: fakeCrm, refs: refsWith, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__aggregate_ref', { ref: 'r_t1_s1', field: 'total_cents', op: 'sum' }),
+          textResponse('$35.00 total.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).toMatch(/status composition|includes.*void/i);
+    expect(obs).toContain('void');
+  });
+});
+
 describe('runLoopTurn — zero-step grounding check (round-6 billing G1)', () => {
   it('the grounded re-run FORCES a tool call via tool_choice required (round-6b item 1)', async () => {
     let fetched = 0;
@@ -1146,7 +1278,7 @@ describe('runLoopTurn — zero-step grounding check (round-6 billing G1)', () =>
     const seen: Seen = { bodies: [] };
     const events: Event[] = [];
     const input: RunLoopTurnInput = {
-      sessionId, turnId: `t_${randomUUID()}`, userText: 'when was the oldest one issued?',
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'when was invoice inv_55 issued?',
       sessionDeps: {
         registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
         testFetch: scriptedFetch([
