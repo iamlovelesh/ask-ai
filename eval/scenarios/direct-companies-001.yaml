@@ -28,4 +28,4 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM companies WHERE id='co_1' AND industry='Technology'"
           countDelta: 1
       behavior:
-        confirmation: false
+        confirmation: true

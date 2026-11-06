@@ -30,6 +30,6 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM subscriptions WHERE product_id='prod_11' AND status='paused'"
           countDelta: 4
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustNotClaim: [failed, error]

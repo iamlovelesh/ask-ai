@@ -1561,6 +1561,73 @@ describe('runLoopTurn — unknown-tool rescue (round-7b N1)', () => {
   });
 });
 
+describe('runLoopTurn — support round-7b rails (denied-cache, scope disclosure, mutation gating)', () => {
+  it('N3: a denied action cannot re-request confirmation in the same turn', async () => {
+    const calls: string[] = [];
+    const mergeAction = action('contacts.merge_contacts', 'destructive', async () => { calls.push('merged'); return { ok: true }; }, z.object({ primary_id: z.string(), duplicate_id: z.string() }));
+    const registry = buildRegistry([[mergeAction]], []);
+    const confirms: string[] = [];
+    const denyAndCount: ConfirmBroker = { request: async (req) => { confirms.push(req.confirmId); return false; } };
+    const events = await drive(registry, 'merge con_1 into con_2', [
+      toolCallResponse('contacts__merge_contacts', { primary_id: 'con_1', duplicate_id: 'con_2' }),
+      toolCallResponse('contacts__merge_contacts', { primary_id: 'con_2', duplicate_id: 'con_1' }),
+      textResponse('Okay, I did not merge them.'),
+    ], { confirm: denyAndCount });
+    expect(confirms).toHaveLength(1); // second attempt must NOT reach the broker
+    expect(calls).toHaveLength(0);
+    expect(events.filter((e) => e.t === 'confirmation.required')).toHaveLength(1);
+  });
+
+  it('N1: a totality answer computed with a filter the user never asked for gets a deterministic disclosure', async () => {
+    const search = action(
+      'support_tickets.search_tickets',
+      'read',
+      async () => ({ items: [{ id: 'ticket_1', status: 'open', priority: 'high' }], total: 23 }),
+      z.object({ status: z.string().optional(), priority: z.string().optional(), limit: z.number().optional() }),
+    );
+    const registry = buildRegistry([[search]], []);
+    const events = await drive(registry, 'how many open tickets in total?', [
+      toolCallResponse('support_tickets__search_tickets', { status: 'open', priority: 'high', limit: 1 }),
+      textResponse('You have **23 open support tickets** in total right now.'),
+    ]);
+    const final = finalOf(events);
+    expect(final).toMatch(/priority\s*=\s*"?high"?/i);
+    expect(final).toMatch(/not a total across all records/i);
+    // status:"open" is sanctioned by the user's own words — never flagged
+    expect(final).not.toMatch(/status\s*=\s*"?open"?.*not a total/i);
+  });
+
+  it('F7: a single-record mutation write (set_/update_ verbs) requires confirmation', async () => {
+    const wrote: string[] = [];
+    const setDue = action('tasks.set_task_due_date', 'write', async () => { wrote.push('w'); return { ok: true }; }, z.object({ id: z.string(), due_date: z.number() }));
+    const registry = buildRegistry([[setDue]], []);
+    const confirms: string[] = [];
+    const approveAndCount: ConfirmBroker = { request: async (req) => { confirms.push(req.confirmId); return true; } };
+    const events = await drive(registry, 'move due date of task_12 to 2026-11-10', [
+      toolCallResponse('tasks__set_task_due_date', { id: 'task_12', due_date: '2026-11-10T00:00:00Z' as unknown as number }),
+      textResponse('Done — due date moved.'),
+    ], { confirm: approveAndCount });
+    expect(confirms).toHaveLength(1);
+    expect(wrote).toHaveLength(1);
+    expect(events.some((e) => e.t === 'confirmation.required')).toBe(true);
+  });
+
+  it('F7 counter-case: a create with an association id stays ungated', async () => {
+    const wrote: string[] = [];
+    const create = action('tasks.create_task', 'write', async () => { wrote.push('w'); return { id: 'task_99' }; }, z.object({ title: z.string(), contact_id: z.string().optional() }));
+    const registry = buildRegistry([[create]], []);
+    const confirms: string[] = [];
+    const countBroker: ConfirmBroker = { request: async (req) => { confirms.push(req.confirmId); return true; } };
+    const events = await drive(registry, 'create a task for con_5 titled follow up', [
+      toolCallResponse('tasks__create_task', { title: 'follow up', contact_id: 'con_5' }),
+      textResponse('Created the task.'),
+    ], { confirm: countBroker });
+    expect(confirms).toHaveLength(0);
+    expect(wrote).toHaveLength(1);
+    expect(completedOf(events).status).toBe('done');
+  });
+});
+
 describe('runLoopTurn — SDK arg-rejection observability (round-5b N1)', () => {
   it('emits step.failed and a specific observation when the SDK rejects tool args pre-execute', async () => {
     const registry = buildRegistry(

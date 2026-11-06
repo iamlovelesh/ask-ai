@@ -26,4 +26,4 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM opportunities WHERE id='opp_7' AND value_cents=4500000"
           countDelta: 1
       behavior:
-        confirmation: false
+        confirmation: true

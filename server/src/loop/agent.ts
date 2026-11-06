@@ -42,6 +42,7 @@ import { renderRecentTurns } from './recent-turns.js';
 import { buildTurnTools, harvestIds, StuckTracker, type LoopExits } from './tools.js';
 import { numberCheck } from './number-check.js';
 import { rescueToolCalls } from './tool-call-rescue.js';
+import { unsanctionedFilters } from './scope-check.js';
 
 export interface LoopSessionDeps {
   registry: Registry;
@@ -166,6 +167,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     writesLanded: 0,
     writeActions: new Map(),
     toolOutputs: [],
+    appliedFilters: [],
     stop: () => stopController.abort(),
   };
   const cancelSignal = sessionDeps.cancelSignal;
@@ -348,6 +350,12 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
             const listed = finalCheck.unsupported.slice(0, 5);
             const rest = finalCheck.unsupported.length - listed.length;
             finalText += `\n\n⚠ Please double-check these figures against the records — I could not verify them: ${listed.join(', ')}${rest > 0 ? ` (and ${rest} more)` : ''}`;
+          }
+          // Scope-claim disclosure (support round-7b N1): a totality answer
+          // computed with filters the user never asked for must say so —
+          // deterministically, whatever the model claimed.
+          for (const f of unsanctionedFilters(finalText, userText, exits.appliedFilters)) {
+            finalText += `\n\n⚠ Note: this was computed with the filter ${f.key} = "${f.value}" applied — it is NOT a total across all records.`;
           }
         }
       }

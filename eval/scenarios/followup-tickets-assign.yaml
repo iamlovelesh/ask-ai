@@ -36,6 +36,6 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM support_tickets WHERE status='open' AND priority='high' AND assignee_id='user_9'"
           gte: 2
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustNotClaim: [failed, error]

@@ -27,6 +27,6 @@ turns:
         - query: "SELECT owner_id AS n FROM leads WHERE id='lead_1'"
           equals: user_5
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustNotClaim: [failed, error]

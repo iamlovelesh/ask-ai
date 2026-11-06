@@ -104,6 +104,11 @@ describe('buildLoopSystemPrompt', () => {
   it('bans internal ids and jargon in answers', () => {
     expect(system).toMatch(/internal id/i);
   });
+
+  it('round-7b support F2\'/N1: bans false coverage claims and uninvited count filters', () => {
+    expect(system).toMatch(/checked only some/i);
+    expect(system).toMatch(/count\/total questions/i);
+  });
 });
 
 describe('buildLoopUserPrompt', () => {

@@ -67,6 +67,11 @@ export interface LoopExits {
   /** Every observation string fed to the model this turn — the evidence
    * pool NumberCheck verifies draft answers against (P2). */
   toolOutputs: string[];
+  /** String-valued filter params passed to READ actions this turn — the
+   * scope-claim check (support round-7b N1: a hallucinated priority filter
+   * shrank "how many open tickets in total" from 76 to 23) compares these
+   * against the user's words when the answer claims totality. */
+  appliedFilters: { action: string; key: string; value: string }[];
   /** Aborts the in-flight run immediately (exit tools, stuck-stop). */
   stop: () => void;
 }
@@ -282,6 +287,12 @@ export function harvestIds(text: string, ids: Set<string>): void {
 }
 
 const IDENTITY_FIELD_RE = /(user|assignee|owner|host|creator)_id$/;
+/** Support round-7b F7 ruling: writes that MUTATE an existing record (verb
+ * prefix below) confirm even at one target; creates stay ungated. */
+const MUTATION_VERB_RE =
+  /^[a-z_]+\.(set|update|merge|archive|unarchive|cancel|close|reopen|pause|resume|reschedule|reassign|assign|change|mark|void|refund|complete|delete|remove)_/;
+/** Params that are pagination/shaping, never scope filters. */
+const NON_FILTER_KEYS = new Set(['limit', 'offset', 'cursor', 'page', 'sort', 'sort_by', 'order', 'order_by', 'direction', 'format']);
 const IDENTITY_PLACEHOLDER_RE = /^(me|myself|current[ _]?user)$/i;
 /** Bulk-apply honest-refusal ceiling (same as the old executor's narrow-it-down rule). */
 const APPLY_MAX_RECORDS = 1000;
@@ -299,6 +310,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   // BIND discovered actions mid-run (langgraph-bigtool / Anthropic Tool
   // Search pattern: discovery leads to invocation, never a dead end).
   const tools: Tool[] = [];
+  // One denial is final for the whole turn (support round-7b N3: a second
+  // merge gate fired seconds after the user declined the first).
+  const deniedActions = new Set<string>();
   // the acting user's own id is always legitimate evidence/target
   input.knownIds.add(input.actingUserId);
   const seenSlugs = new Set<string>();
@@ -390,7 +404,10 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           }
         }
         const affectedCount = isWrite ? Math.max(maxArrayLength(params), idValues.size, 1) : Math.max(maxArrayLength(params), idValues.size);
-        if (isWrite && shouldGate(action.risk, affectedCount)) {
+        if (isWrite && (shouldGate(action.risk, affectedCount) || MUTATION_VERB_RE.test(action.slug))) {
+          if (deniedActions.has(action.slug)) {
+            return `The user already DECLINED "${action.name}" this turn — do not retry or re-propose it. Acknowledge their decision, or ask what they would like instead.`;
+          }
           const confirmId = `cf_${randomUUID()}`;
           const noun = action.entities[0] ?? 'record';
           const targetSample: string[] = [];
@@ -433,7 +450,8 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           emit({ t: 'confirmation.resolved', turnId, confirmId, approved });
           if (!approved) {
             exits.denied = true;
-            return `DENIED by the user — "${action.name}" was NOT executed. Do not claim it happened; tell the user plainly that nothing was changed, or ask how to narrow the request.`;
+            deniedActions.add(action.slug);
+            return `DENIED by the user — "${action.name}" was NOT executed. Do not claim it happened and do NOT propose it again this turn; tell the user plainly that nothing was changed, or ask how to narrow the request.`;
           }
           if (snapshotBefore !== undefined) {
             const snapshotAfter = takeSnapshot();
@@ -447,6 +465,13 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         }
 
         // 3. dispatch
+        if (!isWrite) {
+          for (const [k, v] of Object.entries(params)) {
+            if (typeof v === 'string' && v !== '' && !NON_FILTER_KEYS.has(k)) {
+              exits.appliedFilters.push({ action: action.slug, key: k, value: v });
+            }
+          }
+        }
         markTtfur();
         emit({ t: 'step.started', turnId, stepId, action: action.slug, resolvedParams: [params] });
         const key = `${turnId}:0:${stepId}:0`;
@@ -841,6 +866,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         return obs;
       }
 
+      if (deniedActions.has(target.slug)) {
+        return `The user already DECLINED "${target.name}" this turn — do not retry or re-propose it. Acknowledge their decision, or ask what they would like instead.`;
+      }
       counters.step += 1;
       const stepId = `s${counters.step}`;
       const noun = target.entities[0] ?? 'record';
@@ -859,7 +887,8 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       emit({ t: 'confirmation.resolved', turnId, confirmId, approved });
       if (!approved) {
         exits.denied = true;
-        return `DENIED by the user — "${target.name}" was NOT executed for any of the ${ids.length} records. Nothing was changed; say so plainly.`;
+        deniedActions.add(target.slug);
+        return `DENIED by the user — "${target.name}" was NOT executed for any of the ${ids.length} records. Nothing was changed; do NOT propose it again this turn — say so plainly.`;
       }
 
       emit({ t: 'step.started', turnId, stepId, action: target.slug, resolvedParams: [{ ref, id_param, count: ids.length }] });

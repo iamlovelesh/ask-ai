@@ -107,3 +107,6 @@ their `response.mustMention` check in that one run:
 This does not change the applicability of the fix: `answer.final` still
 never contained the slug, so the original assertion was never satisfiable
 either, regardless of this residual.
+
+## 2026-11-06 — mutation-verb gating (support round-7b F7 ruling)
+Policy change: writes that MUTATE an existing record (slug verbs set_/update_/merge_/archive_/cancel_/close_/pause_/resume_/reschedule_/reassign_/assign_/change_/mark_/void_/refund_/complete_/delete_/remove_) now require confirmation even for a single target; creates stay ungated. 13 scenario turns' `behavior.confirmation` flipped false→true (or added) to match: conditional-subscriptions-001, conditional-tickets-001, direct-companies-001, direct-opportunities-001, failure-appointments-transient-exhausted, failure-leads-transient-retry, followup-tasks-complete-first (t2), followup-tasks-due-tomorrow (t2), followup-tickets-assign (t2), multistep-events-001, multistep-lead-sweep, multistep-tickets-001, typo-calendars-001.

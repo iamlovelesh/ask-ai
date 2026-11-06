@@ -38,6 +38,6 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM support_tickets WHERE assignee_id='user_38' AND status='resolved'"
           countDelta: 5
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustNotClaim: [failed, error]

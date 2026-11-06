@@ -44,7 +44,7 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM participations WHERE kind='event_registration' AND parent_type='event' AND parent_id='evt_9' AND waitlisted=1"
           countDelta: 1
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustMention: [waitlist]
         mustNotClaim: [failed, error]

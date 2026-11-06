@@ -37,6 +37,6 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM support_tickets WHERE contact_id='con_1' AND assignee_id='user_24' AND priority='high'"
           countDelta: 1
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustNotClaim: [failed, error]

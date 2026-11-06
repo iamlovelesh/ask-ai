@@ -13,7 +13,7 @@ turns:
       planActions:
         mustInclude: [calendars.update_calendar_details]
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         # CORRECTION (task-harness-fairness, see eval/SCENARIO-CORRECTIONS.md):
         # composer.ts's write-leaf renderer names the record by its own

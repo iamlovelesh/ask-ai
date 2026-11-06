@@ -35,5 +35,7 @@ turns:
           - tasks.create_task
         mustNotInclude: [leads.create_lead]
         orderFree: true
+      behavior:
+        confirmation: true
       response:
         mustNotClaim: [failed, error]

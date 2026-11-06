@@ -37,6 +37,6 @@ turns:
         - query: "SELECT COUNT(*) AS n FROM tasks WHERE owner_id='user_3' AND due_date=1793872800000"
           gte: 1
       behavior:
-        confirmation: false
+        confirmation: true
       response:
         mustNotClaim: [failed, error]
