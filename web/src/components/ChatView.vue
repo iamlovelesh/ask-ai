@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useSessionStore } from '../stores/session.js';
 import TaskTracker from './TaskTracker.vue';
 import ModelPicker from './ModelPicker.vue';
+import RolePicker from './RolePicker.vue';
 import ConfirmCard from './ConfirmCard.vue';
 import ClarifyCard from './ClarifyCard.vue';
 import CostBadge from './CostBadge.vue';
@@ -397,7 +398,10 @@ async function onCopyLink(): Promise<void> {
         <button v-if="chat.running" class="btn-cancel" @click="onCancel">Cancel</button>
         <button v-else class="btn-send" :disabled="!draft.trim()" @click="onSend">Send</button>
       </div>
-      <ModelPicker :disabled="chat.running" />
+      <div class="composer-controls">
+        <ModelPicker :disabled="chat.running" />
+        <RolePicker :disabled="chat.running" />
+      </div>
     </div>
 
     <!-- inspector drawer: slides over the transcript -->

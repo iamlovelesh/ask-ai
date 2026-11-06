@@ -1409,6 +1409,60 @@ button {
 }
 
 /* --- model picker (enterprise: compact trigger + popover) ----------- */
+.composer-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 760px;
+  margin: 10px auto 0;
+  flex-wrap: wrap;
+}
+.composer-controls .mp {
+  margin: 0;
+  flex: 1;
+  min-width: 220px;
+}
+
+/* Role selector (#1) */
+.role-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.role-picker-label {
+  font-size: 11px;
+  opacity: 0.55;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.role-seg {
+  display: inline-flex;
+  border: 1px solid var(--border, #2a2a33);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.role-seg-btn {
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  border-left: 1px solid var(--border, #2a2a33);
+}
+.role-seg-btn:first-child {
+  border-left: none;
+}
+.role-seg-btn.is-on {
+  background: color-mix(in srgb, var(--petrol, #6b8afd) 22%, transparent);
+  font-weight: 600;
+}
+.role-seg-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .mp {
   position: relative;
   max-width: 760px;

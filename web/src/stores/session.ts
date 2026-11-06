@@ -100,6 +100,25 @@ function writeStoredModel(id: string): void {
   }
 }
 
+/** The role choice (#1) persists across refreshes, same as the model. Empty
+ * string = no explicit role = the server's admin default. */
+const ROLE_STORAGE_KEY = 'ask-ai:selectedRole';
+export type SelectableRole = 'admin' | 'member' | 'viewer';
+function readStoredRole(): string {
+  try {
+    return localStorage.getItem(ROLE_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+function writeStoredRole(role: string): void {
+  try {
+    localStorage.setItem(ROLE_STORAGE_KEY, role);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 export const useSessionStore = defineStore('session', {
   state: () => ({
     sessions: [] as SessionSummary[],
@@ -131,6 +150,8 @@ export const useSessionStore = defineStore('session', {
     autoModel: null as ModelOption | null,
     /** Restored from localStorage so a refresh keeps the user's choice. */
     selectedModel: readStoredModel(),
+    /** Principal role sent with each message (#1); '' = server admin default. */
+    selectedRole: readStoredRole(),
     /** Advanced picker: the full OpenRouter catalog (lazy-loaded on first open)
      * and whether a load is in flight. */
     catalog: [] as CatalogModel[],
@@ -178,6 +199,12 @@ export const useSessionStore = defineStore('session', {
     selectModel(id: string): void {
       this.selectedModel = id;
       writeStoredModel(id);
+    },
+
+    /** Set the active principal role AND persist it (#1). '' clears to default. */
+    selectRole(role: string): void {
+      this.selectedRole = role;
+      writeStoredRole(role);
     },
 
     async loadCatalog(): Promise<void> {
@@ -314,7 +341,11 @@ export const useSessionStore = defineStore('session', {
         const frames = await fetchSse(`/api/sessions/${id}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(this.selectedModel ? { text, model: this.selectedModel } : { text }),
+          body: JSON.stringify({
+            text,
+            ...(this.selectedModel ? { model: this.selectedModel } : {}),
+            ...(this.selectedRole ? { role: this.selectedRole } : {}),
+          }),
         });
         for await (const frame of frames) {
           receivedAnyFrame = true;
