@@ -87,6 +87,11 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/find the ones about|narrow/i);
   });
 
+  it('warns never to narrow by filtering a sort_ref top-N result (ref-lineage fix)', () => {
+    expect(system).toMatch(/never narrow by filtering a data__sort_ref|only the few top-N rows/i);
+    expect(system).toMatch(/RE-RUN the original search|all filters combined/i);
+  });
+
   it('adds a role-permission note for non-admin principals, framing refusals as permission', () => {
     const viewer = buildLoopSystemPrompt(undefined, 'viewer');
     expect(viewer).toMatch(/acting as a viewer/i);

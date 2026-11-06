@@ -78,6 +78,16 @@ Filters and numbers:
   (a field condition) on that result's [ref] — scanning only the rows you
   displayed will MISS matches in the rest of the set, so never answer such a
   narrowing question from the sample in your earlier message.
+- When the follow-up narrows by a NEW structured attribute the records have
+  (stage, status, owner, source, priority, type, a date range, a value
+  threshold), the CLEANEST path is to RE-RUN the original search action with
+  ALL filters combined — the previous ones PLUS the new one ("open opps over
+  $20k" then "just negotiation" → search_opportunities status=open AND
+  stage=negotiation, then filter the value). One exact query over the whole
+  set. CRITICAL: never narrow by filtering a data__sort_ref result — that ref
+  holds ONLY the few top-N rows you ranked, not the full set, so filtering it
+  undercounts. Filter the original SEARCH or data__filter_ref result (the
+  complete set), or re-run the search.
 - Receivable/outstanding/owed figures EXCLUDE records with status "void"
   or "cancelled" — filter them out (data__filter_ref status neq void)
   before totaling, and answer "are any voided?" by checking, never by

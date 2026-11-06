@@ -777,7 +777,16 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
               ? (resultObj!['sample'] as Record<string, unknown>[])
               : undefined;
           const comp = compRows ? statusComposition(compRows) : '';
-          const observation = `${summary}.${echo}${windowNote} result=${body}${comp}`;
+          // Bulk nudge (persona eval: the model looped a per-record write across
+          // 20 records, hit the step ceiling, and failed half-done). After the
+          // 2nd individual write of the SAME action this turn, strongly redirect
+          // to one data__apply_to_ref call over the set's ref.
+          const writeCount = isWrite ? (exits.writeActions.get(action.name) ?? 0) : 0;
+          const bulkTip =
+            writeCount >= 2
+              ? ` ⚠ You have run "${action.name}" ${writeCount} times one-by-one this turn. If you are applying it to EVERY record in a result set, STOP looping now and make ONE data__apply_to_ref call on that set's [ref] (action="${action.slug}", id_param = the record-id parameter this action takes) to finish the rest in a single step — repeating this write per record will exhaust your step budget and leave the task half-done.`
+              : '';
+          const observation = `${summary}.${echo}${windowNote} result=${body}${comp}${bulkTip}`;
           exits.toolOutputs.push(observation);
           return observation;
         } catch (err) {
