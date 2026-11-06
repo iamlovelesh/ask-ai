@@ -95,12 +95,52 @@ export const SELECTABLE_MODELS: readonly SelectableModel[] = [
 
 const BY_ID = new Map(SELECTABLE_MODELS.map((m) => [m.id, m]));
 
+// --- Auto mode ("Auto" selection) ---------------------------------
+
+/** Sentinel id the client sends when the user picks "Auto". It is honored and
+ * persisted like a real model, but resolved per-turn to a concrete tier by
+ * `resolveAutoModel` before the run — the turn record stores what Auto chose. */
+export const AUTO_MODEL_ID = 'auto';
+
+const AUTO_PICKER_ENTRY: SelectableModel = {
+  id: AUTO_MODEL_ID,
+  tier: 'balanced',
+  label: 'Auto',
+  name: 'Auto',
+  description: 'Picks the model per question — the reliable default, stepping up to stronger reasoning for complex requests.',
+  provider: 'anthropic',
+  streamsTools: false,
+  speed: 3,
+  intelligence: 4,
+};
+
+// Complex/analytical requests get the smart tier; everything else stays on the
+// reliable balanced default. Auto deliberately never routes DOWN to a weaker/
+// cheaper tier — the eval showed non-Anthropic fast models miss core-
+// correctness scenarios, so the floor is `balanced`.
+const COMPLEX_RE =
+  /\b(compare|compari|versus|vs\.?|analy[sz]e|analysis|break ?down|trend|forecast|correlat|segment|cohort|for each|per (rep|user|agent|month|quarter|region|owner)|across (all|the)|why\b|explain\b|rank(ed|ing)?|distribution|year[- ]over[- ]year|quarter[- ]over[- ]quarter)\b/i;
+
+/** Resolve the Auto sentinel to a concrete tier id from the request text. */
+export function resolveAutoModel(userText: string): string {
+  const smart = SELECTABLE_MODELS.find((m) => m.tier === 'smart')!.id;
+  const balanced = (SELECTABLE_MODELS.find((m) => m.recommended) ?? SELECTABLE_MODELS.find((m) => m.tier === 'balanced'))!.id;
+  const complex = COMPLEX_RE.test(userText) || userText.length > 280;
+  return complex ? smart : balanced;
+}
+
 export function listModels(): readonly SelectableModel[] {
   return SELECTABLE_MODELS;
 }
 
+/** The picker's option list: Auto first, then the five tiers. Kept separate
+ * from `listModels` so the internal tier registry (and its tests) is unchanged. */
+export function listPickerModels(): readonly SelectableModel[] {
+  return [AUTO_PICKER_ENTRY, ...SELECTABLE_MODELS];
+}
+
 export function isSelectableModel(id: string): boolean {
-  return BY_ID.has(id);
+  return id === AUTO_MODEL_ID || BY_ID.has(id);
 }
 
 /** The default model id: the PLANNER_MODEL env if it is itself allowlisted,
@@ -124,5 +164,6 @@ export function modelStreamsTools(id: string): boolean {
  * back to the default. For arbitrary catalog models, callers additionally
  * accept ids that `catalogHas` (see the message handler). */
 export function resolveModelId(id: string | undefined): string {
+  if (id === AUTO_MODEL_ID) return AUTO_MODEL_ID;
   return id !== undefined && BY_ID.has(id) ? id : defaultModelId();
 }

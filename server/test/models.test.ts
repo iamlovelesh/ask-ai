@@ -2,10 +2,13 @@ import { describe, it, expect } from 'vitest';
 import {
   SELECTABLE_MODELS,
   listModels,
+  listPickerModels,
   isSelectableModel,
   modelStreamsTools,
   defaultModelId,
   resolveModelId,
+  resolveAutoModel,
+  AUTO_MODEL_ID,
 } from '../src/llm/models';
 
 const TIERS = ['extra-fast', 'fast', 'balanced', 'smart', 'extra-smart'] as const;
@@ -70,5 +73,39 @@ describe('model tier registry', () => {
     for (const m of listModels()) byProvider.set(m.provider, (byProvider.get(m.provider) ?? 0) + 1);
     expect(byProvider.size).toBeGreaterThanOrEqual(3);
     for (const [, n] of byProvider) expect(n).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('Auto model mode', () => {
+  const SMART = SELECTABLE_MODELS.find((m) => m.tier === 'smart')!.id;
+  const BALANCED = SELECTABLE_MODELS.find((m) => m.tier === 'balanced')!.id;
+
+  it('"auto" is honored as a selectable id (so it can be sent and persisted)', () => {
+    expect(isSelectableModel(AUTO_MODEL_ID)).toBe(true);
+    expect(resolveModelId(AUTO_MODEL_ID)).toBe(AUTO_MODEL_ID);
+  });
+
+  it('listPickerModels prepends Auto to the tier list; listModels is unchanged', () => {
+    expect(listPickerModels()[0]!.id).toBe(AUTO_MODEL_ID);
+    expect(listPickerModels()).toHaveLength(listModels().length + 1);
+    expect(listModels().some((m) => m.id === AUTO_MODEL_ID)).toBe(false);
+  });
+
+  it('routes a simple lookup to the reliable balanced default', () => {
+    expect(resolveAutoModel('how many open leads do I have?')).toBe(BALANCED);
+    expect(resolveAutoModel('show my overdue invoices')).toBe(BALANCED);
+    expect(resolveAutoModel('')).toBe(BALANCED);
+  });
+
+  it('escalates complex / analytical requests to the smart tier', () => {
+    expect(resolveAutoModel('compare Q3 and Q4 revenue by region and explain the trend')).toBe(SMART);
+    expect(resolveAutoModel('for each sales rep, break down win rate versus last quarter')).toBe(SMART);
+    expect(resolveAutoModel('analyze why churn increased across the enterprise segment')).toBe(SMART);
+  });
+
+  it('never downgrades below balanced (avoids the weaker-model correctness risk)', () => {
+    // whatever the heuristic picks, it is always one of the two safe tiers
+    const picks = ['hi', 'count leads', 'a very '.repeat(60), 'compare x and y'].map(resolveAutoModel);
+    for (const p of picks) expect([BALANCED, SMART]).toContain(p);
   });
 });

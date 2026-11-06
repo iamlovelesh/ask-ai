@@ -126,6 +126,9 @@ export const useSessionStore = defineStore('session', {
     /** Model-picker: the tier allowlist from GET /api/models and the id the
      * user has chosen (sent with each message; '' = server default). */
     models: [] as ModelOption[],
+    /** The "Auto" option (server picks a tier per question), kept out of the
+     * tier slider and shown as a separate pill. Null until /api/models loads. */
+    autoModel: null as ModelOption | null,
     /** Restored from localStorage so a refresh keeps the user's choice. */
     selectedModel: readStoredModel(),
     /** Advanced picker: the full OpenRouter catalog (lazy-loaded on first open)
@@ -160,7 +163,9 @@ export const useSessionStore = defineStore('session', {
         const res = await fetch('/api/models');
         if (!res.ok) return;
         const body = (await res.json()) as { models: ModelOption[]; default: string };
-        this.models = body.models;
+        // Split "Auto" out of the tier slider — it's an adaptive meta-option.
+        this.autoModel = body.models.find((m) => m.id === 'auto') ?? null;
+        this.models = body.models.filter((m) => m.id !== 'auto');
         // Keep any restored/persisted choice; only fall back to the server
         // default when the user has never chosen one.
         if (this.selectedModel === '') this.selectedModel = body.default;

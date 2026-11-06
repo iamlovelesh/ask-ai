@@ -1419,6 +1419,52 @@ button {
   letter-spacing: 1px;
   color: var(--petrol);
 }
+.mp-auto {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border, #2a2a33);
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+.mp-auto:hover {
+  border-color: var(--accent, #6b8afd);
+}
+.mp-auto.is-on {
+  border-color: var(--accent, #6b8afd);
+  background: color-mix(in srgb, var(--accent, #6b8afd) 12%, transparent);
+}
+.mp-auto-spark {
+  font-size: 15px;
+  line-height: 1;
+}
+.mp-auto-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+}
+.mp-auto-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.mp-auto-sub {
+  font-size: 11px;
+  opacity: 0.6;
+}
+.mp-auto-check {
+  color: var(--accent, #6b8afd);
+  font-weight: 700;
+}
+.mp-slider.is-muted {
+  opacity: 0.4;
+}
 .mp-slider {
   position: relative;
   height: 20px;

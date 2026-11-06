@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { openSse } from './sse.js';
 import { sessionExists } from './turn-runtime.js';
-import { listModels, defaultModelId, isSelectableModel } from '../llm/models.js';
+import { listPickerModels, defaultModelId, isSelectableModel, resolveAutoModel, AUTO_MODEL_ID } from '../llm/models.js';
 import { fetchModelCatalog, catalogHas } from '../llm/model-catalog.js';
 import type { AppDeps } from './types.js';
 
@@ -67,7 +67,7 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
   // --- GET /api/models (curated tiers) ----------------------------------
 
   app.get('/api/models', async (_req, reply) => {
-    reply.send({ models: listModels(), default: defaultModelId() });
+    reply.send({ models: listPickerModels(), default: defaultModelId() });
   });
 
   // --- GET /api/models/catalog (full OpenRouter list, advanced picker) --
@@ -126,7 +126,11 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
     // client model string.
     const requested = parsed.data.model;
     let model: string;
-    if (requested !== undefined && isSelectableModel(requested)) {
+    if (requested === AUTO_MODEL_ID) {
+      // "Auto": pick the tier per-turn from the request; the turn stores the
+      // concrete model, so the trace shows what Auto chose.
+      model = resolveAutoModel(text);
+    } else if (requested !== undefined && isSelectableModel(requested)) {
       model = requested;
     } else if (requested !== undefined) {
       await fetchModelCatalog();
