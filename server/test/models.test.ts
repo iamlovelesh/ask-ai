@@ -64,4 +64,11 @@ describe('model tier registry', () => {
     const ids = SELECTABLE_MODELS.map((m) => m.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it('tiers are provider-balanced — no single provider dominates (>=2 providers, max 2 tiers each)', () => {
+    const byProvider = new Map<string, number>();
+    for (const m of listModels()) byProvider.set(m.provider, (byProvider.get(m.provider) ?? 0) + 1);
+    expect(byProvider.size).toBeGreaterThanOrEqual(3);
+    for (const [, n] of byProvider) expect(n).toBeLessThanOrEqual(2);
+  });
 });
