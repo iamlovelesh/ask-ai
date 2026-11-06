@@ -10,3 +10,4 @@ server/data/*.db-journal
 web/node_modules
 *.log
 .DS_Store
+server/data/crm-evalrun-*
