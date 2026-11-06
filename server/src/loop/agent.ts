@@ -401,7 +401,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     const agent = new Agent({
       name: 'ask-ai',
       model: turnModel,
-      instructions: buildLoopSystemPrompt(catalogText),
+      instructions: buildLoopSystemPrompt(catalogText, principal.role),
       tools,
       // timeoutMs: per-model-call cap (review I9) so one hung provider call
       // cannot eat the whole 90s turn deadline.
@@ -414,7 +414,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     const groundedAgent = new Agent({
       name: 'ask-ai',
       model: turnModel,
-      instructions: buildLoopSystemPrompt(catalogText),
+      instructions: buildLoopSystemPrompt(catalogText, principal.role),
       tools,
       modelSettings: { parallelToolCalls: false, maxTokens: MAX_OUTPUT_TOKENS, timeoutMs: 60_000, toolChoice: 'required' },
     });

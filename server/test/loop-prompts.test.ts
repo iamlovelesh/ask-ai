@@ -82,6 +82,22 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/sort them|which of those|re-order|re-pick/i);
   });
 
+  it('directs find/narrow-within-a-list follow-ups to data__search_ref/filter_ref', () => {
+    expect(system).toMatch(/data__search_ref/);
+    expect(system).toMatch(/find the ones about|narrow/i);
+  });
+
+  it('adds a role-permission note for non-admin principals, framing refusals as permission', () => {
+    const viewer = buildLoopSystemPrompt(undefined, 'viewer');
+    expect(viewer).toMatch(/acting as a viewer/i);
+    expect(viewer).toMatch(/don't have permission|do NOT claim the capability/i);
+    const member = buildLoopSystemPrompt(undefined, 'member');
+    expect(member).toMatch(/acting as a member/i);
+    // admin (default) gets no permission block — unchanged prompt.
+    expect(buildLoopSystemPrompt(undefined, 'admin')).toBe(system);
+    expect(buildLoopSystemPrompt()).toBe(system);
+  });
+
   it('names the bulk apply tool', () => {
     expect(system).toContain('data__apply_to_ref');
   });

@@ -534,11 +534,18 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
               if (typeof x === 'string' && /^[a-z][a-z_]*_\d+$/.test(x) && targetSample.length < 5) targetSample.push(x);
             }
           }
+          // Surface the actual monetary value being approved (persona finding:
+          // a $2M write only said "amount ≥ $5,000", never the real figure).
+          // `*_cents` fields are money in cents.
+          const moneyEntry = Object.entries(params).find(([k, v]) => /_cents$/.test(k) && typeof v === 'number');
+          const moneyText = moneyEntry
+            ? ` Value: $${(Number(moneyEntry[1]) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
+            : '';
           const scope: ConfirmationScope = {
             actions: [action.slug],
             affectedCount,
             targetSample,
-            description: `${action.name} — ${affectedCount} ${pluralNoun(noun, affectedCount)}.${policyHit ? ` Requires approval: ${policyHit.reason}.` : ''}`,
+            description: `${action.name} — ${affectedCount} ${pluralNoun(noun, affectedCount)}.${moneyText}${policyHit ? ` Requires approval: ${policyHit.reason}.` : ''}`,
             params,
           };
           // P3 (snapshot-and-recheck): freeze the targeted records'
@@ -784,11 +791,17 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const fromScan = registry
         .all()
         .filter((a) => tokens.some((t) => a.slug.includes(t) || a.name.toLowerCase().includes(t) || a.description.toLowerCase().includes(t)));
-      const found = [...new Map([...fromRetrieval, ...fromScan].map((a) => [a.slug, a])).values()]
-        // Permission pruning (#1): a restricted principal never even sees
-        // actions it may not use in search results.
-        .filter((a) => canUseAction(principal, a));
-      if (found.length === 0) return 'No matching actions found in the catalog.';
+      const allMatches = [...new Map([...fromRetrieval, ...fromScan].map((a) => [a.slug, a])).values()];
+      // Permission pruning (#1): separate matches this principal MAY use from
+      // ones it may not — so a blocked role is told the action exists but is
+      // off-limits ("you don't have permission"), not that it doesn't exist.
+      const found = allMatches.filter((a) => canUseAction(principal, a));
+      const blocked = allMatches.filter((a) => !canUseAction(principal, a));
+      if (found.length === 0 && blocked.length === 0) return 'No matching actions found in the catalog.';
+      if (found.length === 0) {
+        const names = blocked.slice(0, 5).map((a) => a.name).join(', ');
+        return `PERMISSION: the matching action(s) (${names}) require more than your current role (${principal.role}) allows. Tell the user plainly that you don't have permission to do that as a ${principal.role}, and suggest they ask an admin — do not say the capability doesn't exist.`;
+      }
       const bound: string[] = [];
       for (const a of found) {
         if (bound.length >= MAX_BIND_PER_SEARCH || tools.length >= MAX_BOUND_TOOLS) break;
@@ -799,6 +812,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         bound.length > 0 ? `These actions are NOW AVAILABLE as tools (call them as ${bound.map((s) => s.replace(/\./g, '__')).join(', ')}):` : '',
         renderCards(found.slice(0, 12).map((a) => ({ slug: a.slug, text: `${a.slug} — ${a.name}: ${a.description.slice(0, 120)}`, score: 1 }))),
         already.length > 0 && bound.length === 0 ? 'These were already among your tools.' : '',
+        blocked.length > 0 ? `(${blocked.length} other matching action(s) are blocked by your ${principal.role} role — mention you lack permission if the user wanted those.)` : '',
       ].filter((l) => l !== '');
       return lines.join('\n');
     },

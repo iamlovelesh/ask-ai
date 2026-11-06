@@ -372,6 +372,21 @@ describe('runLoopTurn — record-id chips resolve on a CLARIFY answer', () => {
 });
 
 describe('runLoopTurn — value-based approval policy (#7)', () => {
+  it('surfaces the actual money value (from a *_cents field) in the confirm description', async () => {
+    const registry = buildRegistry(
+      [[{ ...action('opportunities.update_opportunity_value', 'write', async () => ({ id: 'opp_1' }), z.object({ id: z.string(), value_cents: z.number() })), entities: ['opportunities'] }]],
+      [],
+    );
+    const events = await drive(registry, 'set opportunity opp_1 value to 2,000,000 dollars', [
+      toolCallResponse('opportunities__update_opportunity_value', { id: 'opp_1', value_cents: 200_000_000 }),
+      textResponse('done'),
+    ]);
+    const req = events.find((e) => e.t === 'confirmation.required');
+    const desc = req && req.t === 'confirmation.required' ? req.scope.description : '';
+    expect(desc).toContain('$2,000,000.00');
+    expect(desc).toContain('opportunity'); // not "opportunitie"
+  });
+
   it('gates a high-value single-record write that risk and count alone would wave through', async () => {
     const registry = buildRegistry(
       [[{ ...action('orders.create_order', 'write', async () => ({ id: 'ord_1' }), z.object({ contact_id: z.string(), amount: z.number() })), entities: ['orders'] }]],

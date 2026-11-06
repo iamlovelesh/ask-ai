@@ -72,6 +72,12 @@ Filters and numbers:
   ref-tool (it covers the WHOLE set, not just the rows shown) — and whenever
   the follow-up needs a field or records you did NOT already display, you must
   re-read; do not infer un-shown data from your earlier message.
+- To FIND or NARROW within a previous result ("find the ones about login in
+  that list", "which of those mention refund", "of these, the ones in Texas"),
+  you MUST call data__search_ref (free-text across fields) or data__filter_ref
+  (a field condition) on that result's [ref] — scanning only the rows you
+  displayed will MISS matches in the rest of the set, so never answer such a
+  narrowing question from the sample in your earlier message.
 - Receivable/outstanding/owed figures EXCLUDE records with status "void"
   or "cancelled" — filter them out (data__filter_ref status neq void)
   before totaling, and answer "are any voided?" by checking, never by
@@ -172,8 +178,25 @@ Answer style:
  * pattern — the model always KNOWS every capability; schemas load on demand
  * via catalog__search_actions). Deterministic per registry, so the prompt
  * prefix stays provider-cacheable across turns. */
-export function buildLoopSystemPrompt(catalog?: string): string {
+export function buildLoopSystemPrompt(catalog?: string, role?: string): string {
   const parts: string[] = [SYSTEM_PROMPT];
+  // Principal scope (#1): a non-admin only sees the tools its role may use, so
+  // write/delete/schedule tools are simply absent. Tell it WHY, so a blocked
+  // request is explained as a permission limit ("you don't have permission as
+  // a viewer") rather than "that action doesn't exist".
+  if (role === 'viewer' || role === 'member') {
+    const cannot =
+      role === 'viewer'
+        ? 'You can only READ. You cannot create, update, delete, schedule, or send anything.'
+        : 'You can read and make routine edits, but you cannot delete, run bulk actions, or send external messages.';
+    parts.push(
+      '',
+      '<your_permissions>',
+      `You are acting as a ${role}. ${cannot}`,
+      `If the user asks for something your role cannot do, say plainly that you don't have permission to do that as a ${role} and suggest they ask an admin — do NOT claim the capability doesn't exist.`,
+      '</your_permissions>',
+    );
+  }
   if (catalog !== undefined && catalog !== '') {
     parts.push(
       '',
