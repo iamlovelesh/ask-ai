@@ -14,7 +14,17 @@ import { openSse } from './sse.js';
 import { sessionExists } from './turn-runtime.js';
 import { listPickerModels, defaultModelId, isSelectableModel, resolveAutoModel, AUTO_MODEL_ID } from '../llm/models.js';
 import { fetchModelCatalog, catalogHas } from '../llm/model-catalog.js';
+import { llmCall } from '../llm/client.js';
+import { generateTitle, TITLE_MAX_CHARS } from './title.js';
 import type { AppDeps } from './types.js';
+
+// Fast, cheap model for the cosmetic thread title. Off under tests (keeps
+// them hermetic) and when explicitly disabled by ops.
+const TITLE_MODEL = 'google/gemini-2.5-flash-lite';
+const TITLE_SYSTEM =
+  'Write a short, specific title (max 6 words, no quotes, no trailing period) for a CRM chat that starts with the user message below. Reply with ONLY the title.';
+const autoTitleEnabled = (): boolean =>
+  process.env['VITEST'] === undefined && process.env['DISABLE_AUTO_TITLE'] !== '1';
 
 const SESSION_TITLE_MAX_CHARS = 40;
 
@@ -153,10 +163,28 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
     // cheap to guard anyway) race of two first messages.
     const hasAnyTurn = eventLog.list(sessionId).some((se) => se.event.t === 'turn.started');
     if (!hasAnyTurn) {
-      sessionsDb.run(`UPDATE sessions SET title = ? WHERE id = ? AND title IS NULL`, [
-        text.slice(0, SESSION_TITLE_MAX_CHARS),
-        sessionId,
-      ]);
+      const placeholder = text.slice(0, SESSION_TITLE_MAX_CHARS);
+      sessionsDb.run(`UPDATE sessions SET title = ? WHERE id = ? AND title IS NULL`, [placeholder, sessionId]);
+      // Upgrade to an LLM-generated title in the background (#12). Best-effort:
+      // never blocks or fails the turn, and only overwrites the exact
+      // placeholder we just set (so a user rename is never clobbered).
+      if (autoTitleEnabled()) {
+        void generateTitle(text, {
+          complete: async (msg) => {
+            const r = await llmCall({
+              stage: 'compose', model: TITLE_MODEL, system: TITLE_SYSTEM,
+              prompt: msg.slice(0, 500), turnId: `title-${sessionId}`, maxOutputTokens: 24,
+            });
+            return typeof r.value === 'string' ? r.value : '';
+          },
+        })
+          .then((title) => {
+            if (title && title !== placeholder && title.length <= TITLE_MAX_CHARS) {
+              sessionsDb.run(`UPDATE sessions SET title = ? WHERE id = ? AND title = ?`, [title, sessionId, placeholder]);
+            }
+          })
+          .catch(() => { /* cosmetic — keep the placeholder */ });
+      }
     }
 
     // Subscribe BEFORE starting the turn — `startTurn` synchronously drives
