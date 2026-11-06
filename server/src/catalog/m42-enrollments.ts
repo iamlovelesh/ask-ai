@@ -225,7 +225,7 @@ const searchEnrollments: ActionDef<SearchEnrollmentsInput, SearchEnrollmentsOutp
       params.push(input.course_id);
     }
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     const limit = input.limit ?? 50;

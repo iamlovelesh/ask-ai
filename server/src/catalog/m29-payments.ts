@@ -376,7 +376,7 @@ const searchPayments: ActionDef<SearchPaymentsInput, SearchPaymentsOutput> = {
       params.push(input.contact_id);
     }
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.method) {

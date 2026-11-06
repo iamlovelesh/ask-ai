@@ -55,7 +55,7 @@ function buildContactsWhere(rules: FilterRules): { whereSql: string; params: unk
   const where: string[] = ['archived = 0'];
   const params: unknown[] = [];
   if (rules.lifecycle_stage) {
-    where.push('lifecycle_stage = ?');
+    where.push('lifecycle_stage = ? COLLATE NOCASE');
     params.push(rules.lifecycle_stage);
   }
   if (rules.owner_id) {
@@ -67,7 +67,7 @@ function buildContactsWhere(rules: FilterRules): { whereSql: string; params: unk
     params.push(rules.company_id);
   }
   if (rules.source) {
-    where.push('source = ?');
+    where.push('source = ? COLLATE NOCASE');
     params.push(rules.source);
   }
   return { whereSql: where.join(' AND '), params };
@@ -204,7 +204,7 @@ const listSmartLists: ActionDef<ListSmartListsInput, ListSmartListsOutput> = {
     const where: string[] = ['archived = 0', 'kind = ?'];
     const params: unknown[] = [KIND];
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     const limit = input.limit ?? 50;

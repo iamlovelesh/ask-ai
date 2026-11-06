@@ -159,7 +159,7 @@ const searchCourses: ActionDef<SearchCoursesInput, SearchCoursesOutput> = {
     const where: string[] = ['archived = 0'];
     const params: unknown[] = [];
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.instructor_id) {
@@ -167,7 +167,7 @@ const searchCourses: ActionDef<SearchCoursesInput, SearchCoursesOutput> = {
       params.push(input.instructor_id);
     }
     if (input.category) {
-      where.push('category = ?');
+      where.push('category = ? COLLATE NOCASE');
       params.push(input.category);
     }
     if (input.query) {

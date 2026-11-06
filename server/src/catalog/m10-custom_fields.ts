@@ -220,7 +220,7 @@ const listFieldsForModule: ActionDef<ListFieldsForModuleInput, ListFieldsForModu
     const where: string[] = ['archived = 0', 'kind = ?', 'category = ?'];
     const params: unknown[] = [KIND, input.module];
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     const limit = input.limit ?? 50;

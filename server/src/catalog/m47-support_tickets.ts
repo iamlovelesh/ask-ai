@@ -203,11 +203,11 @@ const searchTickets: ActionDef<SearchTicketsInput, SearchTicketsOutput> = {
     const where: string[] = ['archived = 0'];
     const params: unknown[] = [];
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.priority) {
-      where.push('priority = ?');
+      where.push('priority = ? COLLATE NOCASE');
       params.push(input.priority);
     }
     if (input.assignee_id) {

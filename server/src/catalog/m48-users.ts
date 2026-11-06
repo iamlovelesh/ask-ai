@@ -190,7 +190,7 @@ const listUsers: ActionDef<ListUsersInput, ListUsersOutput> = {
       params.push(like, like);
     }
     if (input.role) {
-      where.push('role = ?');
+      where.push('role = ? COLLATE NOCASE');
       params.push(input.role);
     }
     if (input.active !== undefined) {

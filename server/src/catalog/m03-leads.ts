@@ -207,11 +207,11 @@ const searchLeads: ActionDef<SearchLeadsInput, SearchLeadsOutput> = {
       params.push(`%${input.query}%`);
     }
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.source) {
-      where.push('source = ?');
+      where.push('source = ? COLLATE NOCASE');
       params.push(input.source);
     }
     if (input.owner_id) {

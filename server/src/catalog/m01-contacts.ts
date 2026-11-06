@@ -265,7 +265,7 @@ const searchContacts: ActionDef<SearchContactsInput, SearchContactsOutput> = {
       params.push(input.company_id);
     }
     if (input.lifecycle_stage) {
-      where.push('lifecycle_stage = ?');
+      where.push('lifecycle_stage = ? COLLATE NOCASE');
       params.push(input.lifecycle_stage);
     }
     // Support 7e N14: name-only search over 12 same-named contacts forced

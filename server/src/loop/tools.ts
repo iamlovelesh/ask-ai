@@ -899,7 +899,8 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       limit: z.number().int().min(1).max(50).default(5),
       subtract_field: z.string().nullable().optional().describe('optional numeric field subtracted from `field` per record before ranking — e.g. field=total_cents, subtract_field=amount_paid_cents to rank by amount OWED'),
     }),
-    execute: async ({ ref, field, direction, limit, subtract_field }): Promise<string> => {
+    execute: async ({ ref, field, direction, limit, subtract_field }): Promise<string> =>
+      runRefStep('data.sort_ref', { ref, field, direction, limit, subtract_field }, async () => {
       const { rows, complete, total } = hydrateRows(ref);
       if (!complete) {
         return `The set behind ${ref} is incomplete on the server (only a sample was captured), so an exact sort is not possible. Say so honestly or narrow the search with filters.`;
@@ -945,7 +946,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const obs = `Sorted ${total} records by ${sortLabel} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length} [ref ${topHandle.ref}]: ${renderRefRows(top, subtract_field ? [field, subtract_field] : [field])}.${subsetSum}${statusComposition(rows)}`;
       publishObs(obs);
       return obs;
-    },
+      }),
   });
 
   const filterRef = tool({
@@ -958,7 +959,8 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       op: z.enum(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'contains', 'empty', 'not_empty']),
       value: z.union([z.string(), z.number(), z.boolean()]).optional(),
     }),
-    execute: async ({ ref, field, op, value }): Promise<string> => {
+    execute: async ({ ref, field, op, value }): Promise<string> =>
+      runRefStep('data.filter_ref', { ref, field, op, value }, async () => {
       const { rows, complete, total } = hydrateRows(ref);
       if (!complete) {
         return `The set behind ${ref} is incomplete on the server, so an exact filter is not possible. Narrow the original search with filters instead.`;
@@ -993,7 +995,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const obs = `Filter ${field} ${op} ${JSON.stringify(value ?? null)} over ${total} records: ${matches.length} matched [ref ${handle.ref}]. Sample: ${renderRefRows(matches.slice(0, 5), [field])}`;
       publishObs(obs);
       return obs;
-    },
+      }),
   });
 
   const searchRef = tool({
@@ -1041,7 +1043,8 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       op: z.enum(['sum', 'avg', 'min', 'max', 'count']),
       subtract_field: z.string().nullable().optional().describe('optional second numeric field subtracted per record BEFORE aggregating — e.g. field=total_cents, subtract_field=amount_paid_cents for amounts OWED'),
     }),
-    execute: async ({ ref, field, op, subtract_field }): Promise<string> => {
+    execute: async ({ ref, field, op, subtract_field }): Promise<string> =>
+      runRefStep('data.aggregate_ref', { ref, field, op, subtract_field }, async () => {
       const { rows, complete, total } = hydrateRows(ref);
       if (!complete) {
         return `The set behind ${ref} is incomplete on the server, so an exact ${op} is not possible. Say so honestly or narrow the search with filters.`;
@@ -1057,7 +1060,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const obs = `${op} of ${label} over ${values.length} records: ${value}${statusComposition(rows)}`;
       publishObs(obs);
       return obs;
-    },
+      }),
   });
 
   const groupByRef = tool({
@@ -1072,7 +1075,8 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       op: z.enum(['count', 'sum', 'avg', 'min', 'max']),
       subtract_field: z.string().nullable().optional().describe('optional field subtracted from measure per record (e.g. amount_paid_cents for owed)'),
     }),
-    execute: async ({ ref, group_by, group_by_2, measure, op, subtract_field }): Promise<string> => {
+    execute: async ({ ref, group_by, group_by_2, measure, op, subtract_field }): Promise<string> =>
+      runRefStep('data.group_by_ref', { ref, group_by, group_by_2, measure, op, subtract_field }, async () => {
       const { rows, complete, total } = hydrateRows(ref);
       if (!complete) {
         return `The set behind ${ref} is incomplete on the server, so an exact breakdown is not possible. Narrow the original search instead.`;
@@ -1105,7 +1109,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const obs = `Breakdown of ${total} records by ${group_by}${group_by_2 ? ` and ${group_by_2}` : ''} (${op}${measure ? ` of ${measure}${subtract_field ? ` - ${subtract_field}` : ''}` : ''}): ${renderRefRows(result, [group_by, group_by_2 ?? ''])}`;
       publishObs(obs);
       return obs;
-    },
+      }),
   });
 
   const applyToRef = tool({

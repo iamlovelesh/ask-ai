@@ -304,7 +304,7 @@ export function searchChannelMessages(
     params.push(filters.contact_id);
   }
   if (filters.status) {
-    where.push('status = ?');
+    where.push('status = ? COLLATE NOCASE');
     params.push(filters.status);
   }
   if (filters.from !== undefined) {

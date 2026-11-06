@@ -229,7 +229,7 @@ const searchAppointments: ActionDef<SearchAppointmentsInput, SearchAppointmentsO
       params.push(input.host_user_id);
     }
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.start_after !== undefined) {

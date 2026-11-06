@@ -247,7 +247,7 @@ const listMembershipPlans: ActionDef<ListMembershipPlansInput, ListMembershipPla
     const where: string[] = ['archived = 0', 'kind = ?'];
     const params: unknown[] = [PLAN_KIND];
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     const limit = input.limit ?? 50;

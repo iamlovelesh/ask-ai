@@ -174,7 +174,7 @@ const listCalendars: ActionDef<ListCalendarsInput, ListCalendarsOutput> = {
     const where: string[] = ['archived = 0', 'kind = ?'];
     const params: unknown[] = [KIND];
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     const limit = input.limit ?? 50;

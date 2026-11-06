@@ -259,7 +259,7 @@ const searchRefundRequests: ActionDef<SearchRefundRequestsInput, SearchRefundReq
       params.push(input.contact_id);
     }
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.payment_id) {

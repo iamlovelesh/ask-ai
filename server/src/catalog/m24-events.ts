@@ -269,7 +269,7 @@ const searchEvents: ActionDef<SearchEventsInput, SearchEventsOutput> = {
       params.push(`%${input.query}%`);
     }
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.host_user_id) {

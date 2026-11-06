@@ -240,7 +240,7 @@ const searchTemplates: ActionDef<SearchTemplatesInput, SearchTemplatesOutput> = 
     const where: string[] = ['archived = 0', 'kind = ?'];
     const params: unknown[] = [KIND];
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     const whereSql = where.join(' AND ');

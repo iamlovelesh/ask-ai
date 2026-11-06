@@ -249,7 +249,7 @@ const searchInvoices: ActionDef<SearchInvoicesInput, SearchInvoicesOutput> = {
       where.push(sql);
       params.push(...p);
     } else if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.issued_after !== undefined) {

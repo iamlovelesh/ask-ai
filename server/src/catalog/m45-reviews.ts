@@ -282,7 +282,7 @@ const listReviewRequests: ActionDef<ListReviewRequestsInput, ListReviewRequestsO
     const where: string[] = ['archived = 0', `status IN ('requested','sent','cancelled')`];
     const params: unknown[] = [];
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.contact_id) {
@@ -366,7 +366,7 @@ const searchReviews: ActionDef<SearchReviewsInput, SearchReviewsOutput> = {
     const where: string[] = ['archived = 0', 'rating IS NOT NULL'];
     const params: unknown[] = [];
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.target_type) {

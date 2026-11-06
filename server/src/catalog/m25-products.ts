@@ -205,15 +205,15 @@ const searchProducts: ActionDef<SearchProductsInput, SearchProductsOutput> = {
       params.push(`%${input.query}%`);
     }
     if (input.type) {
-      where.push('type = ?');
+      where.push('type = ? COLLATE NOCASE');
       params.push(input.type);
     }
     if (input.category) {
-      where.push('category = ?');
+      where.push('category = ? COLLATE NOCASE');
       params.push(input.category);
     }
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     const limit = input.limit ?? 50;

@@ -252,11 +252,11 @@ const searchOrders: ActionDef<SearchOrdersInput, SearchOrdersOutput> = {
       params.push(input.contact_id);
     }
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.source) {
-      where.push('source = ?');
+      where.push('source = ? COLLATE NOCASE');
       params.push(input.source);
     }
     const limit = input.limit ?? 50;

@@ -229,7 +229,7 @@ const searchCoupons: ActionDef<SearchCouponsInput, SearchCouponsOutput> = {
     const where: string[] = ['archived = 0', 'kind = ?'];
     const params: unknown[] = [KIND];
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.query) {

@@ -233,11 +233,11 @@ const searchOpportunities: ActionDef<SearchOpportunitiesInput, SearchOpportuniti
       params.push(`%${input.query}%`);
     }
     if (input.stage) {
-      where.push('stage = ?');
+      where.push('stage = ? COLLATE NOCASE');
       params.push(input.stage);
     }
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.owner_id) {

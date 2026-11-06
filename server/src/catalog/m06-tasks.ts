@@ -191,11 +191,11 @@ const searchTasks: ActionDef<SearchTasksInput, SearchTasksOutput> = {
       params.push(`%${input.query}%`);
     }
     if (input.status) {
-      where.push('status = ?');
+      where.push('status = ? COLLATE NOCASE');
       params.push(input.status);
     }
     if (input.priority) {
-      where.push('priority = ?');
+      where.push('priority = ? COLLATE NOCASE');
       params.push(input.priority);
     }
     if (input.owner_id) {
