@@ -62,7 +62,14 @@ async function onShowOlder(): Promise<void> {
         <span class="sidebar-brand-mark">Ask AI</span>
       </div>
       <button class="new-chat-btn" @click="onNewChat">New chat</button>
-      <button class="memories-btn" @click="onOpenMemories">Memories</button>
+      <button class="memories-btn" @click="onOpenMemories">
+        <svg class="memories-btn-icon" viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 2.5c-1.3-1-3.2-.8-4 .6-.7 1.2-.3 2.4.4 3.2-.9.5-1.5 1.5-1.2 2.7.3 1.4 1.7 2.1 3 1.9" />
+          <path d="M8 2.5c1.3-1 3.2-.8 4 .6.7 1.2.3 2.4-.4 3.2.9.5 1.5 1.5 1.2 2.7-.3 1.4-1.7 2.1-3 1.9" />
+          <path d="M8 2.5v11" />
+        </svg>
+        <span>Memories</span>
+      </button>
     </div>
 
     <div class="sidebar-list">
