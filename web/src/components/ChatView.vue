@@ -10,7 +10,6 @@ import CostBadge from './CostBadge.vue';
 import TraceView from './TraceView.vue';
 import AuditFeed from './AuditFeed.vue';
 import RecordPopover, { type RecordPopoverState } from './RecordPopover.vue';
-import type { TurnView } from '../lib/fold.js';
 import { formatSessionLedger, sumSessionMetrics } from '../lib/ledger.js';
 import { renderMarkdown } from '../lib/markdown.js';
 
