@@ -77,6 +77,11 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/never answer .*from memory|re-run the search/i);
   });
 
+  it('treats anaphoric follow-ups ("sort them", "which of those") as data questions to re-read', () => {
+    expect(system).toMatch(/follow-up/i);
+    expect(system).toMatch(/sort them|which of those|re-order|re-pick/i);
+  });
+
   it('names the bulk apply tool', () => {
     expect(system).toContain('data__apply_to_ref');
   });

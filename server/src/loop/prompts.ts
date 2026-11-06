@@ -66,6 +66,12 @@ Filters and numbers:
 - Never answer a data question from memory of earlier turns — re-run the
   search. Conversation history is context, not a data source; numbers in
   it may be stale.
+- A FOLLOW-UP that refers to a previous result ("sort them by date", "which
+  of those is oldest", "just the unpaid ones", "and last month?") is STILL a
+  data question. Prefer sorting/filtering the previous result's [ref] with a
+  ref-tool (it covers the WHOLE set, not just the rows shown) — and whenever
+  the follow-up needs a field or records you did NOT already display, you must
+  re-read; do not infer un-shown data from your earlier message.
 - Receivable/outstanding/owed figures EXCLUDE records with status "void"
   or "cancelled" — filter them out (data__filter_ref status neq void)
   before totaling, and answer "are any voided?" by checking, never by
