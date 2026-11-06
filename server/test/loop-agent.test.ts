@@ -634,6 +634,36 @@ describe('runLoopTurn — ref data tools', () => {
     expect(completedOf(events).status).toBe('done');
   });
 
+  it('round-7c N8: a top-10 sort over wide rows shows ALL ranked rows, never a mid-token cut', async () => {
+    // Billing 7c CRITICAL: sort_ref char-sliced its row JSON at the cap, the
+    // model saw ~5 whole rows plus a broken tail, and fabricated ranks 6-10.
+    const wideRows = Array.from({ length: 30 }, (_, i) => ({
+      id: `inv_${i}`,
+      number: `INV-${1000 + i}`,
+      total_cents: (i + 1) * 1000,
+      status: 'issued',
+      description: 'x'.repeat(400), // fat field pushes 10 rows far past the cap
+    }));
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: '10 biggest invoices',
+      sessionDeps: {
+        registry: buildRegistry([[action('invoices.search', 'read', async () => ({ items: [], total: 30 }))]], []),
+        crm: fakeCrm, refs: refsWithRows(wideRows, true), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__sort_ref', { ref: 'r_t1_s1', field: 'total_cents', direction: 'desc', limit: 10 }),
+          textResponse('The biggest is INV-1029.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const followUp = seen.bodies[1] ?? '';
+    // every ranked row's identity must be visible to the model
+    for (let i = 20; i < 30; i += 1) expect(followUp).toContain(`INV-${1000 + i}`);
+    expect(completedOf(events).status).toBe('done');
+  });
+
   it('round-7b: ids surfaced by ref-tool outputs are provenance-known for follow-up reads', async () => {
     // Live failure: sort_ref rows showed contact_id con_8518, but the
     // firewall rejected contacts__get_contact_details(id=con_8518) with

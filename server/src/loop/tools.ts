@@ -192,6 +192,43 @@ function renderObservationBody(result: unknown, refNote: string, cap = OBSERVATI
   return `${full.slice(0, cap)} …[remainder omitted — fetch the record by id for full details]`;
 }
 
+/** Ref-tool row rendering (round-7c billing N8): sort/filter/group results
+ * were char-sliced at the cap, so a top-10 sort showed ~5 whole rows plus a
+ * broken tail and the model FABRICATED the missing ranks. Rows are first
+ * compacted (long free-text fields dropped, ids/numbers/short scalars and
+ * the ranking fields kept), then truncated only on whole-row boundaries
+ * with an explicit omission count. */
+function renderRefRows(rows: unknown[], keyFields: readonly string[], cap = OBSERVATION_CAP): string {
+  const rendered = renderDatesForModel(rows) as unknown[];
+  const full = JSON.stringify(rendered);
+  if (full.length <= cap) return full;
+  const compacted = rendered.map((row) => {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) return row;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(row as Record<string, unknown>)) {
+      const keep =
+        k === 'id' ||
+        keyFields.includes(k) ||
+        typeof v === 'number' ||
+        typeof v === 'boolean' ||
+        (typeof v === 'string' && v.length <= 48);
+      if (keep) out[k] = v;
+    }
+    return out;
+  });
+  const kept: unknown[] = [];
+  let size = 2;
+  for (const row of compacted) {
+    const rowJson = JSON.stringify(row);
+    if (size + rowJson.length > cap && kept.length > 0) break;
+    kept.push(row);
+    size += rowJson.length + 1;
+  }
+  const omitted = compacted.length - kept.length;
+  const note = omitted > 0 ? ` …+${omitted} more rows not shown (shown ${kept.length} of ${compacted.length}) — re-run with a smaller limit for the rest` : '';
+  return `${JSON.stringify(kept)} [long text fields omitted]${note}`;
+}
+
 /** Model-facing parameters for an action: strict widened zod when the SDK
  * can convert it, else non-strict stripped JSON Schema (z.record cases). */
 function toolParameters(action: ActionDef): { parameters: unknown; strict: boolean } {
@@ -634,7 +671,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       });
       const top = sorted.slice(0, limit);
       const sortLabel = subtract_field ? `${field} - ${subtract_field}` : field;
-      const obs = `Sorted ${total} records by ${sortLabel} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length}: ${JSON.stringify(renderDatesForModel(top)).slice(0, OBSERVATION_CAP)}${statusComposition(rows)}`;
+      const obs = `Sorted ${total} records by ${sortLabel} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length}: ${renderRefRows(top, subtract_field ? [field, subtract_field] : [field])}${statusComposition(rows)}`;
       publishObs(obs);
       return obs;
     },
@@ -682,7 +719,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         idList: ids,
         sample: matches.slice(0, SPILL_SAMPLE_ROWS),
       });
-      const obs = `Filter ${field} ${op} ${JSON.stringify(value ?? null)} over ${total} records: ${matches.length} matched [ref ${handle.ref}]. Sample: ${JSON.stringify(renderDatesForModel(matches.slice(0, 5))).slice(0, OBSERVATION_CAP)}`;
+      const obs = `Filter ${field} ${op} ${JSON.stringify(value ?? null)} over ${total} records: ${matches.length} matched [ref ${handle.ref}]. Sample: ${renderRefRows(matches.slice(0, 5), [field])}`;
       publishObs(obs);
       return obs;
     },
@@ -759,7 +796,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         return { group: key, count: g.count, [op === 'count' ? 'value' : op]: agg };
       });
       result.sort((a, b) => Number(Object.values(b)[2]) - Number(Object.values(a)[2]));
-      const obs = `Breakdown of ${total} records by ${group_by}${group_by_2 ? ` and ${group_by_2}` : ''} (${op}${measure ? ` of ${measure}${subtract_field ? ` - ${subtract_field}` : ''}` : ''}): ${JSON.stringify(result).slice(0, OBSERVATION_CAP)}`;
+      const obs = `Breakdown of ${total} records by ${group_by}${group_by_2 ? ` and ${group_by_2}` : ''} (${op}${measure ? ` of ${measure}${subtract_field ? ` - ${subtract_field}` : ''}` : ''}): ${renderRefRows(result, [group_by, group_by_2 ?? ''])}`;
       publishObs(obs);
       return obs;
     },
