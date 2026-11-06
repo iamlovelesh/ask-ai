@@ -387,13 +387,19 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         const isWrite = action.risk !== 'read';
         {
           for (const [k, v] of Object.entries(params)) {
-            if (typeof v !== 'string' || !/id(s)?$/.test(k)) continue;
-            const idLike = v.match(RECORD_ID_RE);
-            if (idLike && idLike[0] === v && !input.knownIds.has(v)) {
-              counters.stepsFailed += 1;
-              counters.step += 1;
-              emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'UNKNOWN_ID', message: `${k}=${v} not seen in any result` }, ms: 0 });
-              return `BLOCKED: the id ${v} never appeared in any search result or the user's message this conversation — do not guess record ids. Search for the record first, then use the id from the result.`;
+            if (!/id(s)?$/.test(k)) continue;
+            // support 7c N6: fabricated ids arrived inside an ARRAY param
+            // ("check all 12" invented 8 contact ids) — arrays are checked
+            // element-by-element, same rule as scalars.
+            for (const x of Array.isArray(v) ? v : [v]) {
+              if (typeof x !== 'string') continue;
+              const idLike = x.match(RECORD_ID_RE);
+              if (idLike && idLike[0] === x && !input.knownIds.has(x)) {
+                counters.stepsFailed += 1;
+                counters.step += 1;
+                emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'UNKNOWN_ID', message: `${k}=${x} not seen in any result` }, ms: 0 });
+                return `BLOCKED: the id ${x} never appeared in any search result or the user's message this conversation — do not guess record ids. Search for the record first, then use the id from the result.`;
+              }
             }
           }
         }
@@ -575,7 +581,12 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           }
           const body = renderObservationBody(finalResult, refNote);
           harvestIds(JSON.stringify(finalResult ?? ''), input.knownIds);
-          const observation = `${summary}.${echo}${windowNote} result=${body}`;
+          // support 7c N7: a mixed-status result presented as one status
+          // ("active campaigns" listing completed ones) — disclose the
+          // composition on the search itself, not only on ref computations.
+          const resultItems = (finalResult as Record<string, unknown> | null)?.['items'];
+          const comp = Array.isArray(resultItems) ? statusComposition(resultItems as Record<string, unknown>[]) : '';
+          const observation = `${summary}.${echo}${windowNote} result=${body}${comp}`;
           exits.toolOutputs.push(observation);
           return observation;
         } catch (err) {
@@ -647,7 +658,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     for (const r of rows) byStatus.set(String(r['status']), (byStatus.get(String(r['status'])) ?? 0) + 1);
     if (byStatus.size <= 1) return '';
     const parts = [...byStatus.entries()].map(([k, n]) => `${n} ${k}`).join(', ');
-    return ` [status composition: ${parts} — figures include ALL of these; exclude void/cancelled with data__filter_ref if the user means receivables]`;
+    return ` [status composition: ${parts} — this set includes ALL of these; if the user asked for one status only (active/open/receivable), filter by status first (search param or data__filter_ref), e.g. exclude void/cancelled for receivables]`;
   };
 
   const hydrateRows = (ref: string): { rows: Record<string, unknown>[]; complete: boolean; total: number } => {

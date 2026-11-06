@@ -413,7 +413,9 @@ describe('runLoopTurn — confirmation gate', () => {
   it('approved: handler invoked exactly once after confirmation.resolved', async () => {
     let invocations = 0;
     const registry = buildRegistry([[action('invoices.send_reminders', 'bulk', async () => { invocations += 1; return { sent: 165 }; })]], []);
-    const events = await drive(registry, 'send reminders', [
+    // ids seeded via userText — the provenance firewall (N6: arrays too)
+    // blocks id params the model never saw in any result or user message.
+    const events = await drive(registry, 'send reminders for inv_1 and inv_2', [
       toolCallResponse('invoices__send_reminders', { ids: ['inv_1', 'inv_2'] }),
       textResponse('Sent reminders.'),
     ]);
@@ -1579,6 +1581,55 @@ describe('runLoopTurn — support round-7b rails (denied-cache, scope disclosure
     expect(confirms).toHaveLength(1); // second attempt must NOT reach the broker
     expect(calls).toHaveLength(0);
     expect(events.filter((e) => e.t === 'confirmation.required')).toHaveLength(1);
+  });
+
+  it('N6: fabricated ids inside ARRAY params are firewalled like scalar ids', async () => {
+    // Support 7c CRITICAL: "check all 12" invented 8 contact ids in an id
+    // array — the firewall only inspected scalar string params.
+    const seenIds: string[] = [];
+    const bulkRead = action(
+      'conversations.search_by_contacts',
+      'read',
+      async (p) => { seenIds.push(...(p['contact_ids'] as string[])); return { items: [], total: 0 }; },
+      z.object({ contact_ids: z.array(z.string()) }),
+    );
+    const registry = buildRegistry([[bulkRead]], []);
+    const events = await drive(registry, 'check activity for con_1 and con_2', [
+      toolCallResponse('conversations__search_by_contacts', { contact_ids: ['con_1', 'con_2', 'con_777', 'con_888'] }),
+      textResponse('I could not check those — the extra ids were not from any result.'),
+    ]);
+    expect(seenIds).toHaveLength(0); // the call must be blocked, not partially run
+    expect(events.some((e) => e.t === 'step.failed' && JSON.stringify(e).includes('UNKNOWN_ID'))).toBe(true);
+  });
+
+  it('N7: a search result with mixed statuses carries a composition note', async () => {
+    const search = action(
+      'campaigns.search_campaigns',
+      'read',
+      async () => ({
+        items: [
+          { id: 'campaign_2', name: 'A', status: 'completed' },
+          { id: 'campaign_4', name: 'B', status: 'active' },
+          { id: 'campaign_16', name: 'C', status: 'paused' },
+        ],
+        total: 3,
+      }),
+    );
+    const registry = buildRegistry([[search]], []);
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'list our active campaigns',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('campaigns__search_campaigns', {}),
+          textResponse('You have campaigns A, B (active) and C (paused).'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(seen.bodies[1] ?? '').toMatch(/status composition: .*1 (completed|active)/);
   });
 
   it('N1: a totality answer computed with a filter the user never asked for gets a deterministic disclosure', async () => {
