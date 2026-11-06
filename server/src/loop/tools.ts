@@ -170,16 +170,29 @@ export interface BuildTurnToolsInput {
   planHash: string;
 }
 
+/** Hard ceiling on tools bound to one turn (initial shortlist + dynamic
+ * additions) — selection accuracy degrades past ~40 tools in context. */
+const MAX_BOUND_TOOLS = 40;
+const MAX_BIND_PER_SEARCH = 8;
+
 export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   const { registry, crm, refs, confirm, clock, turnId, emit, exits, stuck, markTtfur, counters } = input;
 
-  const actionTools: Tool[] = [];
+  // The SAME array instance is handed to the Agent, whose getAllTools()
+  // re-reads it before every model call — so catalog__search_actions can
+  // BIND discovered actions mid-run (langgraph-bigtool / Anthropic Tool
+  // Search pattern: discovery leads to invocation, never a dead end).
+  const tools: Tool[] = [];
   const seenSlugs = new Set<string>();
+  const bindAction = (action: ActionDef): boolean => {
+    if (seenSlugs.has(action.slug)) return false;
+    seenSlugs.add(action.slug);
+    tools.push(buildActionTool(action));
+    return true;
+  };
   for (const card of input.cards) {
     const action = registry.get(card.slug);
-    if (!action || seenSlugs.has(action.slug)) continue;
-    seenSlugs.add(action.slug);
-    actionTools.push(buildActionTool(action));
+    if (action) bindAction(action);
   }
 
   function buildActionTool(action: ActionDef): Tool {
@@ -321,12 +334,32 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   const searchActions = tool({
     name: 'catalog__search_actions',
     description:
-      'Search the full action catalog for more available actions when none of your current tools fit. Returns action cards (slug — description).',
+      'Search the full action catalog when none of your current tools fit. Matching actions become CALLABLE TOOLS on your next step.',
     parameters: z.object({ query: z.string() }),
     execute: async ({ query }): Promise<string> => {
-      const found = retrieve(query, input.sessionCtx).cards;
+      // Retrieval over the indexed catalog, plus a direct registry scan so
+      // token matches on slug/name/description are never missed.
+      const fromRetrieval = retrieve(query, input.sessionCtx)
+        .cards.map((c) => registry.get(c.slug))
+        .filter((a): a is ActionDef => a !== undefined);
+      const tokens = query.toLowerCase().split(/[^a-z0-9_]+/).filter((t) => t.length > 2);
+      const fromScan = registry
+        .all()
+        .filter((a) => tokens.some((t) => a.slug.includes(t) || a.name.toLowerCase().includes(t) || a.description.toLowerCase().includes(t)));
+      const found = [...new Map([...fromRetrieval, ...fromScan].map((a) => [a.slug, a])).values()];
       if (found.length === 0) return 'No matching actions found in the catalog.';
-      return `Catalog entries matching your query (informational — these are NOT callable this turn unless already among your tools; if the one you need is missing, tell the user honestly via session__refuse):\n${renderCards(found)}`;
+      const bound: string[] = [];
+      for (const a of found) {
+        if (bound.length >= MAX_BIND_PER_SEARCH || tools.length >= MAX_BOUND_TOOLS) break;
+        if (bindAction(a)) bound.push(a.slug);
+      }
+      const already = found.filter((a) => !bound.includes(a.slug)).map((a) => a.slug);
+      const lines = [
+        bound.length > 0 ? `These actions are NOW AVAILABLE as tools (call them as ${bound.map((s) => s.replace(/\./g, '__')).join(', ')}):` : '',
+        renderCards(found.slice(0, 12).map((a) => ({ slug: a.slug, text: `${a.slug} — ${a.name}: ${a.description.slice(0, 120)}`, score: 1 }))),
+        already.length > 0 && bound.length === 0 ? 'These were already among your tools.' : '',
+      ].filter((l) => l !== '');
+      return lines.join('\n');
     },
   });
 
@@ -415,5 +448,6 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
-  return [...actionTools, searchActions, sortRef, aggregateRef, askUser, refuse];
+  tools.push(searchActions, sortRef, aggregateRef, askUser, refuse);
+  return tools;
 }

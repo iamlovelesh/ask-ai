@@ -491,6 +491,25 @@ describe('runLoopTurn — sort_ref typed ordering (I8)', () => {
 });
 
 describe('runLoopTurn — catalog search escape hatch', () => {
+  it('BINDS discovered actions mid-run so the model can call them on the next step', async () => {
+    // >24 actions (no full-bind); the needed action is neither session-used
+    // nor found by text retrieval — only catalog__search_actions reaches it.
+    const filler = Array.from({ length: 28 }, (_, i) =>
+      action(`aa_mod${String(i).padStart(2, '0')}.noop`, 'read', async () => ({ items: [], total: 0 })));
+    let created = 0;
+    const createTask = action('zz_tasks.create_task', 'write', async () => { created += 1; return { id: 'task_1' }; });
+    const registry = buildRegistry([[...filler, createTask]], []);
+    const events = await drive(registry, 'make a follow-up task', [
+      toolCallResponse('catalog__search_actions', { query: 'create task' }),
+      toolCallResponse('zz_tasks__create_task', { title: 'Follow up' }),
+      textResponse('Created the follow-up task.'),
+    ]);
+    expect(created).toBe(1);
+    expect(completedOf(events).status).toBe('done');
+    const started = events.filter((e) => e.t === 'step.started');
+    expect(started.some((e) => e.t === 'step.started' && e.action === 'zz_tasks.create_task')).toBe(true);
+  });
+
   it('returns rendered cards without any registry dispatch', async () => {
     const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
     const seen: Seen = { bodies: [] };

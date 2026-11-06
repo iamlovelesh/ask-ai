@@ -31,10 +31,10 @@ How to work:
   question ONLY when required information is genuinely missing or
   ambiguous.
 - If none of your current tools fit, call catalog__search_actions with a
-  short description of what you need. It tells you what exists in the
-  catalog, but those actions are NOT callable this turn — if the one you
-  need is not among your tools, tell the user plainly what you found and
-  that you could not complete it this turn (via session__refuse).
+  short description of what you need — matching actions become callable
+  tools on your next step. Search BEFORE refusing or asking; only refuse
+  (via session__refuse) when even the search finds no action that is
+  callable this turn.
 - When you need the user to decide something (ambiguous name, missing
   required detail), call session__ask_user with one specific question —
   NEVER ask the user a question in plain text; questions go ONLY through

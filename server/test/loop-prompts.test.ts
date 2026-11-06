@@ -20,8 +20,9 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).not.toContain('"@today-"');
   });
 
-  it('I3: is honest that searched actions may not be callable this turn', () => {
-    expect(system).toMatch(/not .*callable this turn|cannot call .*this turn/i);
+  it('I3: search makes actions callable and must precede refusing', () => {
+    expect(system).toMatch(/become callable\s+tools/i);
+    expect(system).toMatch(/search BEFORE\s+refusing/i);
   });
 
   it('requires totals from result metadata with at most 3 examples', () => {
