@@ -180,6 +180,26 @@ describe('EventLog session rows', () => {
     log.close();
   });
 
+  it('orders sessions by real wall-clock activity, newest first (session-list date bug)', () => {
+    // The agent reasons on a pinned VirtualClock (2026-11-04); session
+    // bookkeeping must NOT — else every row shares one timestamp, shows the
+    // same date, and cannot be ordered. An injected wall clock proves the
+    // real-time ordering deterministically.
+    let t = 1_000_000;
+    const log = openEventLog(':memory:', () => (t += 1000));
+    const a = log.createSession('a'); // t=1001000
+    const b = log.createSession('b'); // t=1002000
+    const c = log.createSession('c'); // t=1003000
+    expect(log.listSessions().map((r) => r.id)).toEqual([c, b, a]);
+    // activity on the oldest lifts it to the top
+    log.touchSession(a, { turns: 1 }); // t=1004000
+    expect(log.listSessions().map((r) => r.id)).toEqual([a, c, b]);
+    // and the timestamps are distinct real-time values, not the pinned date
+    const rows = log.listSessions();
+    expect(new Set(rows.map((r) => r.updated_at)).size).toBe(3);
+    log.close();
+  });
+
   it('respects limit', () => {
     const log = freshLog();
     log.createSession('a');

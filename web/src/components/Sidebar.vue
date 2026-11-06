@@ -8,10 +8,11 @@ const store = useSessionStore();
 defineProps<{ activeId: string | null }>();
 const emit = defineEmits<{ open: [id: string]; 'new-chat': [] }>();
 
-/** Groups the flat session list by calendar date (derived from each
- * session's own `updated_at`, not compared against wall-clock "now" — the
- * server runs on a pinned `VirtualClock`, so "Today"/"Yesterday" labels
- * would be meaningless here). */
+/** Groups the already-newest-first session list (API orders by updated_at
+ * DESC) into calendar-date buckets. `updated_at` is REAL wall-clock time
+ * (session bookkeeping is wall-clock; only the agent's CRM reasoning runs
+ * on the pinned VirtualClock), so dates and ordering reflect actual
+ * activity. Map insertion order preserves newest-first across buckets. */
 const groups = computed(() => {
   const byDate = new Map<string, typeof store.sessions>();
   for (const s of store.sessions) {

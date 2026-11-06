@@ -1,6 +1,14 @@
 const VIRTUAL_NOW = process.env.VIRTUAL_NOW || '2026-11-04T10:00:00Z';
 const PINNED_TIME_MS = new Date(VIRTUAL_NOW).getTime();
 
+/** Real wall-clock time, in ms. The ONLY sanctioned caller of `Date.now()`
+ * besides this module's VirtualClock. Use for genuine real-time bookkeeping
+ * (session created_at/updated_at for the sidebar) — never for anything the
+ * agent reasons about, which must stay on the pinned VirtualClock. */
+export function wallClockNow(): number {
+  return Date.now();
+}
+
 export class VirtualClock {
   private timeMs: number;
 

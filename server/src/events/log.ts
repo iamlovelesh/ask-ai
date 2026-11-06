@@ -10,7 +10,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { openSessions, sessionsDbPath, type SessionsDb } from '../store/sessions-db.js';
-import { VirtualClock } from '../store/clock.js';
+import { VirtualClock, wallClockNow } from '../store/clock.js';
 import type { Event } from './types.js';
 
 export interface SeqEvent {
@@ -52,11 +52,17 @@ function rowToSeqEvent(row: Record<string, unknown>): SeqEvent {
 class EventLogImpl implements EventLog {
   private readonly db: SessionsDb;
   private readonly clock = new VirtualClock();
+  /** REAL wall-clock for session bookkeeping (created_at/updated_at). The
+   * VirtualClock is pinned (VIRTUAL_NOW) for the agent's CRM reasoning;
+   * using it for session rows collapsed every session to one date and broke
+   * the sidebar's date + newest-first ordering. Injectable for tests. */
+  private readonly wallNow: () => number;
   private readonly nextSeq = new Map<string, number>();
   private readonly subscribers = new Map<string, Set<Subscriber>>();
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, wallNow: () => number = wallClockNow) {
     this.db = openSessions(dbPath);
+    this.wallNow = wallNow;
   }
 
   private peekNextSeq(sessionId: string): number {
@@ -109,7 +115,7 @@ class EventLogImpl implements EventLog {
 
   createSession(title?: string): string {
     const id = `sess_${randomUUID()}`;
-    const now = this.clock.now();
+    const now = this.wallNow();
     this.db.run(
       `INSERT INTO sessions (id, title, created_at, updated_at, turns, tokens, cost_usd)
        VALUES (?, ?, ?, ?, 0, 0, 0)`,
@@ -154,7 +160,7 @@ class EventLogImpl implements EventLog {
       `UPDATE sessions
        SET turns = turns + ?, tokens = tokens + ?, cost_usd = cost_usd + ?, updated_at = ?
        WHERE id = ?`,
-      [deltas.turns ?? 0, deltas.tokens ?? 0, deltas.costUsd ?? 0, this.clock.now(), sessionId],
+      [deltas.turns ?? 0, deltas.tokens ?? 0, deltas.costUsd ?? 0, this.wallNow(), sessionId],
     );
   }
 
@@ -164,6 +170,9 @@ class EventLogImpl implements EventLog {
 }
 
 /** Open an `EventLog` backed by `sessions.db` (or a custom path for tests). */
-export function openEventLog(dbPath: string = sessionsDbPath()): EventLog {
-  return new EventLogImpl(dbPath);
+export function openEventLog(
+  dbPath: string = sessionsDbPath(),
+  wallNow?: () => number,
+): EventLog {
+  return new EventLogImpl(dbPath, wallNow);
 }
