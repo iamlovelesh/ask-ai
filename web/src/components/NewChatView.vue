@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue';
+import { nextTick, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useSessionStore } from '../stores/session.js';
 
 defineEmits<{ 'toggle-nav': [] }>();
 const store = useSessionStore();
 const router = useRouter();
+
+onMounted(() => void store.loadModels());
 
 const draft = ref('');
 const textareaEl = ref<HTMLTextAreaElement | null>(null);
@@ -102,6 +104,12 @@ watch(draft, () => void nextTick(autosizeTextarea));
           @input="autosizeTextarea"
         ></textarea>
         <button class="btn-send" :disabled="!draft.trim() || starting" @click="onSend">Send</button>
+      </div>
+      <div v-if="store.models.length > 0" class="composer-model">
+        <label class="composer-model-label">Model</label>
+        <select v-model="store.selectedModel" :disabled="starting" class="composer-model-select">
+          <option v-for="m in store.models" :key="m.id" :value="m.id">{{ m.label }}</option>
+        </select>
       </div>
     </div>
   </div>

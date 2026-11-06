@@ -200,6 +200,7 @@ function onInspectorKeydown(e: KeyboardEvent): void {
 onMounted(() => {
   window.addEventListener('keydown', onInspectorKeydown);
   autosizeTextarea();
+  void store.loadModels();
 });
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onInspectorKeydown);
@@ -374,6 +375,12 @@ async function onCopyLink(): Promise<void> {
         ></textarea>
         <button v-if="chat.running" class="btn-cancel" @click="onCancel">Cancel</button>
         <button v-else class="btn-send" :disabled="!draft.trim()" @click="onSend">Send</button>
+      </div>
+      <div v-if="store.models.length > 0" class="composer-model">
+        <label class="composer-model-label">Model</label>
+        <select v-model="store.selectedModel" :disabled="chat.running" class="composer-model-select">
+          <option v-for="m in store.models" :key="m.id" :value="m.id">{{ m.label }}</option>
+        </select>
       </div>
     </div>
 

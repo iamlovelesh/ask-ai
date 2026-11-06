@@ -62,6 +62,9 @@ export interface LoopSessionDeps {
    * path; production wiring sets it true. The verified answer.final always
    * supersedes the streamed preview, so correctness is unchanged either way. */
   stream?: boolean;
+  /** OpenRouter model slug for this turn (user model-picker). Defaults to
+   * `plannerModel()` when unset. Must be validated upstream (allowlist). */
+  model?: string;
 }
 
 export interface RunLoopTurnInput {
@@ -274,9 +277,10 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     // longer hide capabilities. Only for real-size registries; tiny test
     // registries already full-bind.
     const catalogText = registry.all().length > FULL_BIND_THRESHOLD ? buildCatalogSummary(registry) : undefined;
+    const turnModel = sessionDeps.model ?? plannerModel();
     const agent = new Agent({
       name: 'ask-ai',
-      model: plannerModel(),
+      model: turnModel,
       instructions: buildLoopSystemPrompt(catalogText),
       tools,
       // timeoutMs: per-model-call cap (review I9) so one hung provider call
@@ -289,7 +293,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     // simply repeat itself.
     const groundedAgent = new Agent({
       name: 'ask-ai',
-      model: plannerModel(),
+      model: turnModel,
       instructions: buildLoopSystemPrompt(catalogText),
       tools,
       modelSettings: { parallelToolCalls: false, maxTokens: MAX_OUTPUT_TOKENS, timeoutMs: 60_000, toolChoice: 'required' },

@@ -379,6 +379,42 @@ describe('GET /api/sessions/:id/events — replay', () => {
   });
 });
 
+describe('GET /api/models + model picker', () => {
+  it('lists the selectable model allowlist and a default', async () => {
+    const app = buildApp({ registry: buildRegistry([[]], coreOps) });
+    const res = await app.inject({ method: 'GET', url: '/api/models' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { models: { id: string; streamsTools: boolean }[]; default: string };
+    expect(body.models.length).toBeGreaterThanOrEqual(2);
+    expect(body.models.some((m) => m.id === 'openai/gpt-4o-mini' && m.streamsTools)).toBe(true);
+    expect(body.models.some((m) => m.id === body.default)).toBe(true);
+  });
+
+  it('accepts a model in the message body (unknown id is tolerated, not rejected)', async () => {
+    const registry = buildRegistry(
+      [[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]],
+      coreOps,
+    );
+    const queue = queueMockLlm([
+      { kind: 'plan', plan: { goal: 'x', steps: [{ id: 's1', action: 'leads.search_leads', params: {}, dependsOn: [] }] } },
+    ]);
+    __setTestFetch(queue.fetch);
+    const app = buildApp({ registry });
+    const sessionId = await createSession(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${sessionId}/messages`,
+      payload: { text: 'find leads', agent: 'plandsl', model: 'definitely-not-a-real-model' },
+      payloadAsStream: true,
+    });
+    await new FrameReader(res.stream()).drain();
+    // invalid model must not 400 the turn — it silently falls back
+    const eventsRes = await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/events` });
+    const rows = eventsRes.json() as { event: { t: string } }[];
+    expect(rows.some((r) => r.event.t === 'turn.completed')).toBe(true);
+  });
+});
+
 describe('SSE drop + reconnect (Review Focus 1)', () => {
   it('a confirmation.required missed mid-drop arrives via GET /stream, and confirm completes the turn', async () => {
     const registry = buildRegistry(

@@ -25,6 +25,7 @@ import type { ConfirmBroker, ConfirmRequest } from '../agent/executor.js';
 import type { Playbook } from '../playbooks/loader.js';
 import { runTurn, type SessionDeps } from '../agent/pipeline.js';
 import { runBaselineTurn, type BaselineSessionDeps } from '../baseline/agent.js';
+import { modelStreamsTools, resolveModelId } from '../llm/models.js';
 import { runLoopTurn, type LoopSessionDeps } from '../loop/agent.js';
 import type { Event } from '../events/types.js';
 
@@ -91,6 +92,9 @@ class HttpConfirmBroker implements ConfirmBroker {
 interface RunningTurn {
   turnId: string;
   agent: AgentKind;
+  /** Validated model id for this turn (user model-picker), or undefined for
+   * the deployed default. */
+  model?: string;
   /** Loop turns only (review I4): aborted by cancel() so the tool loop
    * stops promptly and finalizes 'cancelled' instead of looping on. */
   cancel: AbortController;
@@ -100,6 +104,9 @@ export interface StartTurnInput {
   sessionId: string;
   userText: string;
   agent: AgentKind;
+  /** Validated (allowlisted) OpenRouter model id for this turn, or undefined
+   * for the deployed default. */
+  model?: string;
 }
 
 export type ConfirmResolution =
@@ -123,14 +130,13 @@ export class SessionRuntime {
     private readonly registry: Registry,
     private readonly playbooks: readonly Playbook[],
     private readonly getCrm: () => Crm,
-    /** Stream answer tokens live (Live+correct). DEFAULT false: running the
-     * whole agent loop in stream:true mode breaks tool-call argument assembly
-     * with our provider (OpenRouter→Anthropic over chat-completions) — tools
-     * stop executing (stepsOk→0), confirmed by live repro 2026-11-07. The
-     * streaming path (runLoopStreamed) is proven for the answer-only case and
-     * stays behind this flag until the tool-turn issue is solved (needs
-     * final-answer-only streaming, not whole-run). See docs research. */
-    private readonly streamAnswers: boolean = false,
+    /** Master gate for live answer-token streaming (Live+correct). DEFAULT
+     * true in production; the PER-MODEL `modelStreamsTools` check narrows it
+     * so only models whose tool calls assemble correctly under stream:true
+     * actually stream (OpenAI yes; Anthropic-via-OpenRouter no — tools would
+     * stop executing, live repro 2026-11-07). Tests pass false to force the
+     * proven non-streaming path regardless of model. */
+    private readonly streamAnswers: boolean = true,
   ) {}
 
   private refsFor(sessionId: string): RefStore {
@@ -174,7 +180,12 @@ export class SessionRuntime {
       throw new Error('ALREADY_RUNNING');
     }
     const turnId = `t_${randomUUID()}`;
-    const state: RunningTurn = { turnId, agent: input.agent, cancel: new AbortController() };
+    const state: RunningTurn = {
+      turnId,
+      agent: input.agent,
+      ...(input.model !== undefined ? { model: input.model } : {}),
+      cancel: new AbortController(),
+    };
     this.running.set(input.sessionId, state);
     this.turnAgent.set(turnId, input.agent);
 
@@ -229,8 +240,12 @@ export class SessionRuntime {
                 eventLog: this.eventLog,
                 confirm,
                 cancelSignal: state.cancel.signal,
-                // Live answer-token streaming in production (Live+correct).
-                stream: this.streamAnswers,
+                ...(state.model !== undefined ? { model: state.model } : {}),
+                // Live answer-token streaming — only for models whose tool
+                // calls assemble correctly under stream:true (OpenAI yes,
+                // Anthropic-via-OpenRouter no). `streamAnswers` is the
+                // master test/prod gate; the model capability narrows it.
+                stream: this.streamAnswers && modelStreamsTools(resolveModelId(state.model)),
               } satisfies LoopSessionDeps,
             });
 

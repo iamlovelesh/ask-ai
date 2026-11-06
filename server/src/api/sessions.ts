@@ -12,6 +12,7 @@ import { z } from 'zod';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { openSse } from './sse.js';
 import { sessionExists } from './turn-runtime.js';
+import { listModels, resolveModelId, defaultModelId } from '../llm/models.js';
 import type { AppDeps } from './types.js';
 
 const SESSION_TITLE_MAX_CHARS = 40;
@@ -19,6 +20,10 @@ const SESSION_TITLE_MAX_CHARS = 40;
 const messageBodySchema = z.object({
   text: z.string().min(1, 'text must not be empty'),
   agent: z.enum(['optimized', 'baseline', 'plandsl']).optional(),
+  /** User model-picker: a client model id, validated against the allowlist
+   * in `resolveModelId` (an unknown id silently falls back to the default —
+   * never trust a raw client model string). */
+  model: z.string().optional(),
 });
 
 const confirmBodySchema = z.object({
@@ -57,6 +62,12 @@ function parseAfterSeq(query: Record<string, unknown>): number {
 
 export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { eventLog, sessionsDb, runtime } = deps;
+
+  // --- GET /api/models (model-picker options) ---------------------------
+
+  app.get('/api/models', async (_req, reply) => {
+    reply.send({ models: listModels(), default: defaultModelId() });
+  });
 
   // --- POST /api/sessions -----------------------------------------------
 
@@ -101,6 +112,7 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
       return;
     }
     const { text, agent = 'optimized' } = parsed.data;
+    const model = resolveModelId(parsed.data.model);
 
     // LLD §6 "one turn at a time per session" — checked BEFORE opening the
     // SSE stream, so a rejected second POST gets a plain JSON 409, not a
@@ -149,7 +161,7 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
     });
     conn.onClientGone(unsub);
 
-    turnId = runtime.startTurn({ sessionId, userText: text, agent });
+    turnId = runtime.startTurn({ sessionId, userText: text, agent, model });
   });
 
   // --- POST /api/sessions/:id/confirm/:confirmId --------------------------

@@ -82,6 +82,10 @@ export const useSessionStore = defineStore('session', {
     sessionsLoadingMore: false,
     toasts: [] as { id: number; text: string }[],
     toastSeq: 0,
+    /** Model-picker: the allowlist from GET /api/models and the id the user
+     * has chosen (sent with each message; '' = server default). */
+    models: [] as { id: string; label: string; streamsTools: boolean }[],
+    selectedModel: '' as string,
   }),
 
   getters: {
@@ -102,6 +106,22 @@ export const useSessionStore = defineStore('session', {
     ensureChat(id: string): SessionChatState {
       if (!this.chats[id]) this.chats[id] = emptyChatState();
       return this.chats[id];
+    },
+
+    async loadModels(): Promise<void> {
+      if (this.models.length > 0) return;
+      try {
+        const res = await fetch('/api/models');
+        if (!res.ok) return;
+        const body = (await res.json()) as {
+          models: { id: string; label: string; streamsTools: boolean }[];
+          default: string;
+        };
+        this.models = body.models;
+        if (this.selectedModel === '') this.selectedModel = body.default;
+      } catch {
+        /* non-fatal: the picker just stays empty and the server default applies */
+      }
     },
 
     async loadSessions(): Promise<void> {
@@ -225,7 +245,7 @@ export const useSessionStore = defineStore('session', {
         const frames = await fetchSse(`/api/sessions/${id}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify(this.selectedModel ? { text, model: this.selectedModel } : { text }),
         });
         for await (const frame of frames) {
           receivedAnyFrame = true;
