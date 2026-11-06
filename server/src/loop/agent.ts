@@ -507,8 +507,11 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
             );
           }
         }
-        // Persistent unsupported figures get an explicit, honest caution.
-        if (exits.clarify === undefined && exits.refused === undefined && finalText !== MAX_TURNS_FALLBACK) {
+        // Persistent unsupported figures get an explicit, honest caution — but
+        // NOT on a denied/cancelled turn (persona finding: a declined write
+        // still appended "could not verify: $2,000,000", the user's own echoed
+        // request figure — there is no data answer to verify there).
+        if (exits.clarify === undefined && exits.refused === undefined && !exits.denied && finalText !== MAX_TURNS_FALLBACK) {
           const finalCheck = numberCheck(finalText, exits.toolOutputs, userText, recalledEvidence);
           if (!finalCheck.ok) {
             // Cap the caution (round-7b N2): a 33-item scratch list buries

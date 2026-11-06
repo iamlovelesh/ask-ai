@@ -21,7 +21,7 @@ export const AMOUNT_GATE_CENTS = 500_000;
 const DISCOUNT_GATE_PCT = 50;
 
 const FINANCIAL_ACTION_RE = /(refund|payout|charge|credit_note|void_payment|wire_transfer)/i;
-const AMOUNT_KEY_RE = /(amount|total|price|refund|credit|payout|balance)/i;
+const AMOUNT_KEY_RE = /(amount|total|price|value|refund|credit|payout|balance)/i;
 const DISCOUNT_KEY_RE = /(discount|percent|pct)/i;
 
 function numericValues(v: unknown): number[] {

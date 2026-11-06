@@ -12,6 +12,11 @@ describe('approvalPolicy (value-based approval, #7)', () => {
     expect(approvalPolicy('orders.update_order', { total_cents: 900_000 })?.policy).toBe('high-amount');
   });
 
+  it('gates a high deal/opportunity value (value_cents), not only amount/total', () => {
+    expect(approvalPolicy('opportunities.update_opportunity_value', { id: 'opp_1', value_cents: 200_000_000 })?.policy).toBe('high-amount');
+    expect(approvalPolicy('opportunities.update_opportunity_value', { id: 'opp_1', value_cents: 4_999 })).toBeNull();
+  });
+
   it('does NOT gate a small amount', () => {
     expect(approvalPolicy('orders.update_order', { amount: 4_999 })).toBeNull(); // $49.99
     expect(approvalPolicy('contacts.update_contact', { name: 'Sam' })).toBeNull();

@@ -186,9 +186,17 @@ function cleanFloat(n: number): number {
   return Math.round(n * 1e10) / 1e10;
 }
 
-function pluralNoun(noun: string, count: number): string {
-  if (count === 1) return noun.endsWith('s') ? noun.slice(0, -1) : noun;
-  return noun.endsWith('s') ? noun : `${noun}s`;
+export function pluralNoun(noun: string, count: number): string {
+  if (count === 1) {
+    // Singularize a plural entity/table name for a count of one. Naive `-s`
+    // stripping turned "opportunities" into "opportunitie" (persona finding);
+    // handle the -ies → -y case and leave -ss words ("address") intact.
+    if (noun.endsWith('ies')) return `${noun.slice(0, -3)}y`;
+    if (noun.endsWith('ss')) return noun;
+    return noun.endsWith('s') ? noun.slice(0, -1) : noun;
+  }
+  if (noun.endsWith('s')) return noun;
+  return noun.endsWith('y') ? `${noun.slice(0, -1)}ies` : `${noun}s`;
 }
 
 const OBSERVATION_CAP = 2000;
