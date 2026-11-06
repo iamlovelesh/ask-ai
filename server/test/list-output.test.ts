@@ -24,9 +24,15 @@ function fakeDb(ids: readonly string[]): StoreTx {
   };
 }
 
-describe('SPILL_IDLIST_CAP tracks forEachHardCap × 2 (no runtime import — would cycle)', () => {
-  it('equals BUDGETS.forEachHardCap * 2', () => {
-    expect(SPILL_IDLIST_CAP).toBe(BUDGETS.forEachHardCap * 2);
+describe('SPILL_IDLIST_CAP (read-hydration ceiling)', () => {
+  it('is 10k — decoupled from write caps, which live at the write sites', () => {
+    // Round-5: the old forEachHardCap×2 coupling starved READ hydration
+    // (sort/filter/aggregate over 5000 rows died as "incomplete"). Write
+    // ceilings are enforced where writes happen (loop data__apply_to_ref:
+    // 1000; executor forEach: BUDGETS.forEachHardCap) — the capture cap
+    // only bounds memory, and must stay comfortably above the write caps.
+    expect(SPILL_IDLIST_CAP).toBe(10_000);
+    expect(SPILL_IDLIST_CAP).toBeGreaterThanOrEqual(BUDGETS.forEachHardCap * 2);
   });
 });
 

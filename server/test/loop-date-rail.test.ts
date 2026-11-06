@@ -76,6 +76,11 @@ describe('buildDateAnchors', () => {
     expect(anchors).toContain('2026-11-04T23:59:59.999Z');
   });
 
+  it('includes upcoming weekday anchors (round-5: "due friday" was written as Sunday)', () => {
+    expect(anchors).toMatch(/next friday = 2026-11-06/i);
+    expect(anchors).toMatch(/next monday = 2026-11-09/i);
+  });
+
   it('includes month bounds and 7 days ago', () => {
     expect(anchors).toContain('2026-11-01T00:00:00.000Z');
     expect(anchors).toContain('2026-11-30T23:59:59.999Z');

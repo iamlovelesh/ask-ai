@@ -88,12 +88,19 @@ export function buildDateAnchors(nowMs: number): string {
   const todayEnd = todayStart + DAY_MS - 1;
   const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
   const monthEnd = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1) - 1;
+  const weekdayLines: string[] = [];
+  for (let offset = 1; offset <= 7; offset += 1) {
+    const dayMs = todayStart + offset * DAY_MS;
+    const name = WEEKDAYS[new Date(dayMs).getUTCDay()] as string;
+    weekdayLines.push(`next ${name.toLowerCase()} = ${isoDate(dayMs)}`);
+  }
   const lines = [
     `now = ${now.toISOString()} (${WEEKDAYS[now.getUTCDay()]})`,
     `today = ${isoDate(todayStart)}, from ${new Date(todayStart).toISOString()} to ${new Date(todayEnd).toISOString()}`,
     `tomorrow = ${isoDate(todayStart + DAY_MS)}`,
     `this month = ${new Date(monthStart).toISOString()} to ${new Date(monthEnd).toISOString()}`,
     `7 days ago = ${isoDate(todayStart - 7 * DAY_MS)}`,
+    ...weekdayLines,
   ];
   return lines.join('\n');
 }
@@ -107,6 +114,10 @@ export function buildDateAnchors(nowMs: number): string {
  * nested ISO string must not be rejected by the SDK's strict validation
  * before our coercion ever runs). */
 function widenField(key: string, field: z.ZodType): z.ZodType {
+  // Strict mode makes every param REQUIRED on the wire; without a legal
+  // null, a model facing an optional enum like priority must INVENT a value
+  // (round-5 F32: priority:"low", team_id:"team_1" poisoned searches).
+  // Optional fields therefore widen to nullable; execute scrubs nulls.
   // Date fields are STRINGS ONLY at the model boundary (live evidence
   // 2026-11-06: the model wrote start_after=1730688000000, an epoch for
   // 2024, sailing past the string-coercion rail; same policy as the
@@ -116,7 +127,7 @@ function widenField(key: string, field: z.ZodType): z.ZodType {
     const stringOnly = z.union([z.string(), z.array(z.string())]);
     return field instanceof z.ZodOptional || field instanceof z.ZodNullable ? stringOnly.optional() : stringOnly;
   }
-  if (field instanceof z.ZodOptional) return widenField(key, (field.def as { innerType: z.ZodType }).innerType).optional();
+  if (field instanceof z.ZodOptional) return widenField(key, (field.def as { innerType: z.ZodType }).innerType).nullable().optional();
   if (field instanceof z.ZodNullable) return widenField(key, (field.def as { innerType: z.ZodType }).innerType).nullable();
   if (field instanceof z.ZodDefault) return field; // default wrapper: leave as-is (rare in params)
   if (field instanceof z.ZodObject) return widenDateFields(field as z.ZodObject<z.ZodRawShape>);
@@ -126,6 +137,13 @@ function widenField(key: string, field: z.ZodType): z.ZodType {
     return field;
   }
   return field;
+}
+
+/** Model-facing widening: date fields string-only, optionals nullable,
+ * nested objects/arrays recursed. (Alias kept as `widenDateFields` for the
+ * original date-only name.) */
+export function widenForModel<T extends z.ZodRawShape>(schema: z.ZodObject<T>): z.ZodObject<z.ZodRawShape> {
+  return widenDateFields(schema);
 }
 
 export function widenDateFields<T extends z.ZodRawShape>(schema: z.ZodObject<T>): z.ZodObject<z.ZodRawShape> {

@@ -32,7 +32,12 @@ export const SPILL_SAMPLE_SIZE = 20;
  * silently. Beyond this many matching rows, `captureSpillIdList` abandons
  * the capture (returns `undefined`) rather than storing a half-enumerated
  * id set — the executor's existing TRUNCATED_INPUT fallback applies. */
-export const SPILL_IDLIST_CAP = 1000;
+// 10k (= refs.REF_IDLIST_CAP), raised from 1000: the cap exists so WRITE
+// consumers can't bulk past the narrow-it-down rule, but it also starved
+// READ hydration (sort/filter/aggregate over e.g. all 5000 leads died as
+// "incomplete" — round-5 F31). Write paths enforce their own ceilings
+// (loop data__apply_to_ref: 1000; executor gate thresholds).
+export const SPILL_IDLIST_CAP = 10_000;
 
 export function listSchema<T extends z.ZodTypeAny>(item: T) {
   return z.object({ items: z.array(item), total: z.number() });

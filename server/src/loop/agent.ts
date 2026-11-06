@@ -38,7 +38,7 @@ import { BudgetExceededError } from '../llm/client.js';
 import { buildLoopSystemPrompt, buildLoopUserPrompt } from './prompts.js';
 import { buildDateAnchors } from './date-rail.js';
 import { renderRecentTurns } from './recent-turns.js';
-import { buildTurnTools, StuckTracker, type LoopExits } from './tools.js';
+import { buildTurnTools, harvestIds, StuckTracker, type LoopExits } from './tools.js';
 
 export interface LoopSessionDeps {
   registry: Registry;
@@ -205,6 +205,10 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     } catch {
       // no users table / lookup failure → bare id
     }
+    // Provenance firewall seed: ids the USER typed + ids from prior turns.
+    const knownIds = new Set<string>();
+    harvestIds(userText, knownIds);
+    harvestIds(JSON.stringify(priorEvents), knownIds);
     const tools = buildTurnTools({
       registry,
       cards,
@@ -221,6 +225,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       counters,
       planHash,
       actingUserId: demoUserId,
+      knownIds,
     });
 
     const agent = new Agent({

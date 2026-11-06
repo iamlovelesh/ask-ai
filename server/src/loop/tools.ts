@@ -27,7 +27,7 @@ import type { RefStore } from '../agent/refs.js';
 import { retrieve, renderCards, type Card, type SessionCtx } from '../agent/retrieval.js';
 import { shouldGate, type ConfirmBroker } from '../agent/executor.js';
 import type { ConfirmationScope, Event } from '../events/types.js';
-import { coerceDateParams, widenDateFields } from './date-rail.js';
+import { coerceDateParams, widenForModel } from './date-rail.js';
 import { DATE_FIELD_RE } from '../agent/date-expr.js';
 
 // --- stuck detection (OpenHands StuckDetector-lite) ---------------------------
@@ -160,7 +160,7 @@ const SPILL_SAMPLE_ROWS = 20;
 function toolParameters(action: ActionDef): { parameters: unknown; strict: boolean } {
   const schema = action.inputSchema;
   if (schema instanceof z.ZodObject) {
-    const widened = widenDateFields(schema as z.ZodObject<z.ZodRawShape>);
+    const widened = widenForModel(schema as z.ZodObject<z.ZodRawShape>);
     try {
       // Probe strict conversion the same way tool() will.
       tool({ name: 'probe', description: 'p', parameters: widened, execute: async () => '' });
@@ -194,6 +194,17 @@ export interface BuildTurnToolsInput {
    * identity-shaped fields are substituted with this (round-4 billing C1:
    * host_user_id:"me" went to SQL literally). */
   actingUserId: string;
+  /** Provenance firewall (round-5 support CRITICAL: a hallucinated-but-real
+   * task id was written to): record ids a WRITE may target — seeded from
+   * the user's own text + prior turns, grown with every observation. */
+  knownIds: Set<string>;
+}
+
+export const RECORD_ID_RE = /\b[a-z][a-z]*(?:_[a-z]+)*_\d+\b/g;
+
+/** Add every record-id-shaped token in `text` to `ids`. */
+export function harvestIds(text: string, ids: Set<string>): void {
+  for (const m of text.matchAll(RECORD_ID_RE)) ids.add(m[0]);
 }
 
 const IDENTITY_FIELD_RE = /(user|assignee|owner|host|creator)_id$/;
@@ -245,6 +256,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         // OMITTING the param, so placeholders are dropped, never passed.
         const scrubbed: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(args)) {
+          if (v === null) continue; // strict-mode "not specified"
           if (typeof v === 'string' && /^(\*+|all|any)?$/i.test(v.trim())) continue;
           if (typeof v === 'string' && IDENTITY_FIELD_RE.test(k) && IDENTITY_PLACEHOLDER_RE.test(v.trim())) {
             scrubbed[k] = input.actingUserId;
@@ -264,8 +276,23 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         }
         const params = parsed.data as Record<string, unknown>;
 
-        // 2. pre-execution confirmation gate — deny means the handler is NEVER invoked
+        // 1b. provenance firewall: a WRITE may only target ids the model has
+        // actually SEEN (user text, prior results) — a plausible-but-invented
+        // id must be looked up first, never written to.
         const isWrite = action.risk !== 'read';
+        if (isWrite) {
+          for (const [k, v] of Object.entries(params)) {
+            if (typeof v !== 'string' || !/id(s)?$/.test(k)) continue;
+            const idLike = v.match(RECORD_ID_RE);
+            if (idLike && idLike[0] === v && !input.knownIds.has(v)) {
+              counters.stepsFailed += 1;
+              counters.step += 1;
+              emit({ t: 'step.failed', turnId, stepId: `s${counters.step}`, error: { code: 'UNKNOWN_ID', message: `${k}=${v} not seen in any result` }, ms: 0 });
+              return `BLOCKED: the id ${v} never appeared in any search result or the user's message this conversation — do not guess record ids. Search for the record first, then use the id from the result.`;
+            }
+          }
+        }
+
         const affectedCount = isWrite ? Math.max(maxArrayLength(params), 1) : maxArrayLength(params);
         if (isWrite && shouldGate(action.risk, affectedCount)) {
           const confirmId = `cf_${randomUUID()}`;
@@ -374,6 +401,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
 
           const echo = resolved.length > 0 ? ` [resolved dates: ${resolved.join('; ')}]` : '';
           const body = JSON.stringify(renderDatesForModel(finalResult) ?? null).slice(0, OBSERVATION_CAP);
+          harvestIds(JSON.stringify(finalResult ?? ''), input.knownIds);
           return `${summary}.${echo} result=${body}`;
         } catch (err) {
           const ms = performance.now() - startedAt;
@@ -529,18 +557,22 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       ref: z.string(),
       field: z.string(),
       op: z.enum(['sum', 'avg', 'min', 'max', 'count']),
+      subtract_field: z.string().nullable().optional().describe('optional second numeric field subtracted per record BEFORE aggregating — e.g. field=total_cents, subtract_field=amount_paid_cents for amounts OWED'),
     }),
-    execute: async ({ ref, field, op }): Promise<string> => {
+    execute: async ({ ref, field, op, subtract_field }): Promise<string> => {
       const { rows, complete, total } = hydrateRows(ref);
       if (!complete) {
         return `The set behind ${ref} is incomplete on the server, so an exact ${op} is not possible. Say so honestly or narrow the search with filters.`;
       }
       if (op === 'count') return `count over ${ref}: ${total} records.`;
-      const values = rows.map((r) => Number(r[field])).filter((v) => Number.isFinite(v));
+      const values = rows
+        .map((r) => Number(r[field]) - (subtract_field ? Number(r[subtract_field] ?? 0) : 0))
+        .filter((v) => Number.isFinite(v));
       if (values.length === 0) return `No numeric values found for field "${field}" across ${total} records.`;
       const sum = values.reduce((a, b) => a + b, 0);
       const value = op === 'sum' ? sum : op === 'avg' ? sum / values.length : op === 'min' ? Math.min(...values) : Math.max(...values);
-      return `${op} of ${field} over ${values.length} records: ${value}`;
+      const label = subtract_field ? `${field} - ${subtract_field}` : field;
+      return `${op} of ${label} over ${values.length} records: ${value}`;
     },
   });
 

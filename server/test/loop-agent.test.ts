@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { runLoopTurn, type LoopSessionDeps, type RunLoopTurnInput } from '../src/loop/agent';
 import { StuckTracker } from '../src/loop/tools';
+import { widenForModel } from '../src/loop/date-rail';
 import { costMeter } from '../src/llm/client';
 import { __resetIndexForTest } from '../src/agent/retrieval';
 import { openEventLog, type EventLog } from '../src/events/log';
@@ -184,6 +185,74 @@ describe('runLoopTurn — read turn', () => {
   });
 });
 
+describe('runLoopTurn — null-optional scrub (round-5 F31/F32 root)', () => {
+  it('drops null values for optional params instead of failing validation or inventing', async () => {
+    let got: Record<string, unknown> | undefined;
+    const registry = buildRegistry(
+      [[action('leads.search_leads', 'read', async (input) => { got = input; return { items: [], total: 0 }; },
+        z.object({ query: z.string().optional(), status: z.string().optional(), limit: z.number().optional() }))]],
+      [],
+    );
+    await drive(registry, 'all leads', [
+      toolCallResponse('leads__search_leads', { query: null as unknown as string, status: null as unknown as string, limit: 50 }),
+      textResponse('ok'),
+    ]);
+    expect(got).toEqual({ limit: 50 });
+  });
+
+  it('model-facing schema allows null on optional enum fields (so models never invent values)', () => {
+    const schema = z.object({ priority: z.enum(['low', 'high']).optional(), id: z.string() });
+    const wide = widenForModel(schema);
+    expect(wide.safeParse({ priority: null, id: 'x' }).success).toBe(true);
+    expect(wide.safeParse({ priority: 'low', id: 'x' }).success).toBe(true);
+    expect(wide.safeParse({ priority: 'purple', id: 'x' }).success).toBe(false);
+  });
+});
+
+describe('runLoopTurn — write-id provenance firewall (round-5 support CRITICAL)', () => {
+  it('rejects a write whose id-shaped target never appeared in any observation or user text', async () => {
+    let invoked = 0;
+    const registry = buildRegistry(
+      [[
+        action('tasks.search_tasks', 'read', async () => ({ items: [{ id: 'task_55' }], total: 1 })),
+        action('tasks.set_task_due_date', 'write', async () => { invoked += 1; return {}; }, z.object({ id: z.string(), due_at: z.union([z.number(), z.string()]) })),
+      ]],
+      [],
+    );
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'fix the due date on my task',
+      sessionDeps: {
+        registry, crm: fakeCrm, refs, eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('tasks__search_tasks', {}),
+          toolCallResponse('tasks__set_task_due_date', { id: 'task_1', due_at: '2026-11-06T00:00:00Z' }),
+          toolCallResponse('tasks__set_task_due_date', { id: 'task_55', due_at: '2026-11-06T00:00:00Z' }),
+          textResponse('Fixed.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    expect(invoked).toBe(1); // task_1 (hallucinated) blocked; task_55 (seen in results) allowed
+    const obs = seen.bodies[2] ?? '';
+    expect(obs).toMatch(/task_1.*(never appeared|not seen|look it up|search)/i);
+  });
+
+  it('allows a write to an id the USER typed', async () => {
+    let invoked = 0;
+    const registry = buildRegistry(
+      [[action('tasks.set_task_due_date', 'write', async () => { invoked += 1; return {}; }, z.object({ id: z.string() }))]],
+      [],
+    );
+    await drive(registry, 'set due date on task_77', [
+      toolCallResponse('tasks__set_task_due_date', { id: 'task_77' }),
+      textResponse('ok'),
+    ]);
+    expect(invoked).toBe(1);
+  });
+});
+
 describe('runLoopTurn — identity param substitution (round-4 billing C1)', () => {
   it("replaces literal 'me' in *_user_id/assignee/owner params with the acting user id", async () => {
     let got: Record<string, unknown> | undefined;
@@ -338,7 +407,7 @@ describe('runLoopTurn — confirmation gate', () => {
 
   it('singular count with a plural entity noun reads naturally', async () => {
     const registry = buildRegistry([[{ ...action('invoices.send_reminder', 'bulk', async () => ({})), entities: ['invoices'] }]], []);
-    const events = await drive(registry, 'remind', [
+    const events = await drive(registry, 'remind inv_1', [
       toolCallResponse('invoices__send_reminder', { id: 'inv_1' }),
       textResponse('ok'),
     ]);
@@ -453,6 +522,34 @@ describe('runLoopTurn — ref data tools', () => {
     expect(followUp).toContain('opp_59');
     expect(followUp).toContain('6000');
     expect(completedOf(events).status).toBe('done');
+  });
+
+  it('data__aggregate_ref supports subtract_field for owed-style derived metrics (round-5 billing F1)', async () => {
+    const owedRows = Array.from({ length: 4 }, (_, i) => ({ id: `inv_${i}`, total_cents: 1000, amount_paid_cents: 250 }));
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'average owed',
+      sessionDeps: {
+        registry: buildRegistry([[action('invoices.search', 'read', async () => ({ items: [], total: 4 }))]], []),
+        crm: fakeCrm,
+        refs: {
+          put: refs.put.bind(refs), get: refs.get.bind(refs),
+          resolve: () => ({ ids: owedRows.map((r) => r.id), missing: 0, total: 4 }),
+          hydrate: (): HydrateResult => ({ rows: owedRows, complete: true, total: 4 }),
+          markAllStale: () => {},
+        },
+        eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__aggregate_ref', { ref: 'r_t1_s1', field: 'total_cents', subtract_field: 'amount_paid_cents', op: 'avg' }),
+          textResponse('$7.50'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).toContain('750'); // avg of (1000-250)
+    expect(obs).not.toContain('1000');
   });
 
   it('data__aggregate_ref computes a true average, not the sum', async () => {
@@ -739,7 +836,7 @@ describe('runLoopTurn — transient retry rail', () => {
       })]],
       [],
     );
-    const events = await drive(registry, 'send the reminder', [
+    const events = await drive(registry, 'send the reminder for inv_1', [
       toolCallResponse('invoices__send_reminder', { id: 'inv_1' }),
       textResponse('Reminder sent.'),
     ]);
@@ -755,7 +852,7 @@ describe('runLoopTurn — transient retry rail', () => {
       [[action('invoices.send_reminder', 'write', async () => { n += 1; throw new ActionError('TRANSIENT', 'blip'); })]],
       [],
     );
-    const events = await drive(registry, 'send the reminder', [
+    const events = await drive(registry, 'send the reminder for inv_1', [
       toolCallResponse('invoices__send_reminder', { id: 'inv_1' }),
       textResponse('Could not send it.'),
     ]);
@@ -907,7 +1004,7 @@ describe('runLoopTurn — loop safety', () => {
     const script = () => toolCallResponse('invoices__send_reminder', { id: `inv_${n++}` });
     const events = await drive(
       registry,
-      'send them all',
+      'send them all: inv_0 inv_1 inv_2 inv_3 inv_4',
       Array.from({ length: 5 }, script),
       {},
       { budget: { maxTurns: 3, deadlineMs: 30_000 } },
