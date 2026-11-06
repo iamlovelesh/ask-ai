@@ -30,6 +30,9 @@ import type { ConfirmationScope, Event } from '../events/types.js';
 import { coerceDateParams, widenForModel } from './date-rail.js';
 import { loadSkills } from './skills/registry.js';
 import { DATE_FIELD_RE } from '../agent/date-expr.js';
+import type { MemoryStore } from '../memory/store.js';
+import { screenMemory } from '../memory/denylist.js';
+import type { MemoryCategory } from '../memory/types.js';
 
 // --- stuck detection (OpenHands StuckDetector-lite) ---------------------------
 
@@ -306,6 +309,12 @@ export interface BuildTurnToolsInput {
    * task id was written to): record ids a WRITE may target — seeded from
    * the user's own text + prior turns, grown with every observation. */
   knownIds: Set<string>;
+  /** Durable user memory (memory-layer design §4.3/§4.6). When present, the
+   * `memory__save`/`memory__recall` tools are bound. */
+  memory?: MemoryStore;
+  /** False when the session is incognito or memory is globally off — recall
+   * still reads, but `memory__save` writes nothing. Defaults to writable. */
+  memoryWritable?: boolean;
 }
 
 export const RECORD_ID_RE = /\b[a-z][a-z]*(?:_[a-z]+)*_\d+\b/g;
@@ -1046,6 +1055,57 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
+  // Durable user memory (design §4.3/§4.6). Bound only when a store is wired.
+  const memory = input.memory;
+  const memoryWritable = input.memoryWritable !== false;
+  const CATEGORIES: readonly [MemoryCategory, ...MemoryCategory[]] = ['preference', 'fact', 'goal', 'context'];
+
+  const memorySave = tool({
+    name: 'memory__save',
+    description:
+      'Remember a durable fact about THIS user across conversations — a preference, a stated fact, a goal, or context ("prefers short answers", "target is $50k", "works in sales ops"). Provide a stable `key` for a single-valued preference/fact (it overwrites the prior value); omit `key` for a standalone note. Never save secrets, passwords, card numbers, or ids.',
+    parameters: z.object({
+      category: z.enum(CATEGORIES),
+      body: z.string(),
+      key: z.string().optional(),
+    }),
+    execute: async ({ category, body, key }): Promise<string> => {
+      if (!memory || !memoryWritable) return 'Memory is off for this chat — not saved.';
+      const screen = screenMemory(body);
+      if (!screen.allowed) return `skipped: ${screen.reason ?? 'sensitive'} — not saved.`;
+      memory.add({
+        userId: input.actingUserId,
+        category,
+        kind: key ? 'profile' : 'collection',
+        ...(key ? { key } : {}),
+        body,
+        source: 'tool',
+      });
+      return 'saved';
+    },
+  });
+
+  const memoryRecall = tool({
+    name: 'memory__recall',
+    description:
+      'Look up durable facts you remember about this user by a short query. Returns matching remembered notes. Use when a detail is not already shown in the <memories> block.',
+    parameters: z.object({ query: z.string() }),
+    execute: async ({ query }): Promise<string> => {
+      if (!memory) return 'No memories are available.';
+      const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 1);
+      const live = memory.listLive(input.actingUserId);
+      const hits = live.filter((m) => {
+        const hay = `${m.key ?? ''} ${m.body}`.toLowerCase();
+        return terms.length === 0 || terms.some((t) => hay.includes(t));
+      });
+      if (hits.length === 0) return 'No matching memories.';
+      // Memories are context, NOT CRM data — do not push into toolOutputs
+      // (the NumberCheck evidence pool); return them straight to the model.
+      return hits.map((m) => `- ${m.body}`).join('\n');
+    },
+  });
+
   tools.push(searchActions, sortRef, filterRef, aggregateRef, groupByRef, applyToRef, loadSkillsTool, askUser, refuse);
+  if (memory) tools.push(memorySave, memoryRecall);
   return tools;
 }
