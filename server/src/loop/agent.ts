@@ -452,6 +452,18 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
             const shown = unread.slice(0, 5).join(', ');
             finalText += `\n\n⚠ I could not include ${unread.length} of the records you named (${shown}${unread.length > 5 ? ', …' : ''}) — I found no data for them this turn.`;
           }
+          // Belt (zero-read guarantee): a data/audit answer that read NOTHING
+          // all turn — even after the grounding re-run, which can itself fail
+          // to force a read — is unverifiable. This catches cases NumberCheck
+          // cannot (non-numeric claims) and makes the guarantee explicit,
+          // independent of figure-matching. Observed live: an optimized turn
+          // answered "251 leads" with stepsOk:0 and no caution.
+          if (
+            needsGrounding(finalText, counters.step + counters.virtualReads) &&
+            !/could not verify|double-check this/i.test(finalText)
+          ) {
+            finalText += `\n\n⚠ I could not verify this against your records — no data was read this turn. Please ask again so I can look it up.`;
+          }
         }
       }
     } catch (err) {
