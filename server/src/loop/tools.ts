@@ -222,7 +222,7 @@ export interface BuildTurnToolsInput {
   exits: LoopExits;
   stuck: StuckTracker;
   markTtfur: () => void;
-  counters: { stepsOk: number; stepsFailed: number; step: number; gateWaitMs: number };
+  counters: { stepsOk: number; stepsFailed: number; step: number; gateWaitMs: number; virtualReads: number };
   planHash: string;
   /** Resolved acting user id — literal "me"/"current_user" param values in
    * identity-shaped fields are substituted with this (round-4 billing C1:
@@ -527,8 +527,10 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
-  const hydrateRows = (ref: string): { rows: Record<string, unknown>[]; complete: boolean; total: number } =>
-    crm.tx((db) => refs.hydrate(ref, db));
+  const hydrateRows = (ref: string): { rows: Record<string, unknown>[]; complete: boolean; total: number } => {
+    counters.virtualReads += 1; // ref reads ARE data reads (grounding check)
+    return crm.tx((db) => refs.hydrate(ref, db));
+  };
 
   const sortRef = tool({
     name: 'data__sort_ref',

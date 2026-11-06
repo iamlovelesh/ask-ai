@@ -149,7 +149,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     buffer.push(e);
   };
 
-  const counters = { stepsOk: 0, stepsFailed: 0, step: 0, gateWaitMs: 0 };
+  const counters = { stepsOk: 0, stepsFailed: 0, step: 0, gateWaitMs: 0, virtualReads: 0 };
   const stopController = new AbortController();
   const exits: LoopExits = {
     denied: false,
@@ -294,7 +294,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
         return typeof result.finalOutput === 'string' ? result.finalOutput : JSON.stringify(result.finalOutput ?? '');
       };
       finalText = await runOnce(prompt);
-      if (finalText !== MAX_TURNS_FALLBACK && exits.clarify === undefined && exits.refused === undefined && needsGrounding(finalText, counters.step)) {
+      if (finalText !== MAX_TURNS_FALLBACK && exits.clarify === undefined && exits.refused === undefined && needsGrounding(finalText, counters.step + counters.virtualReads)) {
         finalText = await runOnce(`${prompt}\n\n${GROUNDING_NOTE}`, groundedAgent);
       }
     } catch (err) {
