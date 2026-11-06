@@ -26,6 +26,7 @@ import type { VirtualClock } from '../store/clock.js';
 import type { RefStore } from '../agent/refs.js';
 import { retrieve, renderCards, type Card, type SessionCtx } from '../agent/retrieval.js';
 import { shouldGate, type ConfirmBroker } from '../agent/executor.js';
+import { approvalPolicy } from '../agent/approval-policy.js';
 import type { ConfirmationScope, Event } from '../events/types.js';
 import { coerceDateParams, widenForModel } from './date-rail.js';
 import { loadSkills } from './skills/registry.js';
@@ -455,7 +456,10 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         }
         const affectedCount = isWrite ? Math.max(maxArrayLength(params), idValues.size, 1) : Math.max(maxArrayLength(params), idValues.size);
         const isMutation = isWrite && !CREATE_WRITE_VERB_RE.test(action.slug);
-        if (isWrite && (shouldGate(action.risk, affectedCount) || isMutation)) {
+        // Value-based policy (#7): gate high-value/financial writes by their
+        // arguments, independent of risk class and record count.
+        const policyHit = isWrite ? approvalPolicy(action.slug, params) : null;
+        if (isWrite && (shouldGate(action.risk, affectedCount) || isMutation || policyHit !== null)) {
           const dKey = denialKey(action.slug, params);
           if (deniedActions.has(dKey)) {
             return `The user already DECLINED "${action.name}" for this exact target this turn — do not retry or re-propose it. Acknowledge their decision, or ask what they would like instead.`;
@@ -473,7 +477,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
             actions: [action.slug],
             affectedCount,
             targetSample,
-            description: `${action.name} — ${affectedCount} ${pluralNoun(noun, affectedCount)}.`,
+            description: `${action.name} — ${affectedCount} ${pluralNoun(noun, affectedCount)}.${policyHit ? ` Requires approval: ${policyHit.reason}.` : ''}`,
           };
           // P3 (snapshot-and-recheck): freeze the targeted records'
           // CURRENT values at proposal time; after approval, re-read and

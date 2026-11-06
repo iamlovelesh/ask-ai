@@ -321,6 +321,22 @@ describe('runLoopTurn — gate affectedCount counts id-shaped params (round-7 su
   });
 });
 
+describe('runLoopTurn — value-based approval policy (#7)', () => {
+  it('gates a high-value single-record write that risk and count alone would wave through', async () => {
+    const registry = buildRegistry(
+      [[{ ...action('orders.create_order', 'write', async () => ({ id: 'ord_1' }), z.object({ contact_id: z.string(), amount: z.number() })), entities: ['orders'] }]],
+      [],
+    );
+    const events = await drive(registry, 'create a $9,000 order for con_5', [
+      toolCallResponse('orders__create_order', { contact_id: 'con_5', amount: 900_000 }),
+      textResponse('done'),
+    ]);
+    const req = events.find((e) => e.t === 'confirmation.required');
+    expect(req).toBeDefined();
+    expect(req && req.t === 'confirmation.required' ? req.scope.description : '').toMatch(/approval/i);
+  });
+});
+
 describe('runLoopTurn — identity param substitution (round-4 billing C1)', () => {
   it("replaces literal 'me' in *_user_id/assignee/owner params with the acting user id", async () => {
     let got: Record<string, unknown> | undefined;
