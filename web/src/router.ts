@@ -24,6 +24,7 @@ const RouteSink = defineComponent({ name: 'RouteSink', render: () => null });
 export const routes: RouteRecordRaw[] = [
   { path: '/', name: 'home', component: RouteSink },
   { path: '/s/:sessionId', name: 'session', component: RouteSink },
+  { path: '/memories', name: 'memories', component: RouteSink },
   // Anything else (a stale/garbled link) falls back to the new-chat state.
   { path: '/:pathMatch(.*)*', redirect: { name: 'home' } },
 ];

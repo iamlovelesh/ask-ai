@@ -6,6 +6,7 @@ import { useCatalogStore } from './stores/catalog.js';
 import Sidebar from './components/Sidebar.vue';
 import ChatView from './components/ChatView.vue';
 import NewChatView from './components/NewChatView.vue';
+import MemoriesPanel from './components/MemoriesPanel.vue';
 
 const store = useSessionStore();
 const catalog = useCatalogStore();
@@ -23,6 +24,9 @@ const routeSessionId = computed(() => {
   const p = route.params.sessionId;
   return typeof p === 'string' && p.length > 0 ? p : null;
 });
+
+/** True on the `/memories` management route. */
+const isMemories = computed(() => route.name === 'memories');
 
 watch(
   routeSessionId,
@@ -54,6 +58,10 @@ function onNewChat(): void {
   void router.push({ name: 'home' });
 }
 
+function onOpenMemories(): void {
+  void router.push({ name: 'memories' });
+}
+
 function goHome(): void {
   void router.push({ name: 'home' });
 }
@@ -72,10 +80,11 @@ async function onRetry(): Promise<void> {
       </div>
     </template>
     <template v-else>
-      <Sidebar :active-id="store.activeId" @open="onOpen" @new-chat="onNewChat" />
+      <Sidebar :active-id="store.activeId" @open="onOpen" @new-chat="onNewChat" @open-memories="onOpenMemories" />
       <div v-if="navOpen" class="nav-scrim" @click="navOpen = false"></div>
       <main class="app-main">
-        <template v-if="store.sessionNotFound">
+        <MemoriesPanel v-if="isMemories" @toggle-nav="navOpen = !navOpen" />
+        <template v-else-if="store.sessionNotFound">
           <header class="transcript-head">
             <button class="nav-toggle" aria-label="Toggle sessions" @click="navOpen = !navOpen">☰</button>
             <div class="transcript-title">Session not found</div>

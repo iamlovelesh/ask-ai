@@ -6,7 +6,7 @@ import { relativeTime } from '../lib/relative-time.js';
 const store = useSessionStore();
 
 defineProps<{ activeId: string | null }>();
-const emit = defineEmits<{ open: [id: string]; 'new-chat': [] }>();
+const emit = defineEmits<{ open: [id: string]; 'new-chat': []; 'open-memories': [] }>();
 
 /** Groups the already-newest-first session list (API orders by updated_at
  * DESC) into calendar-date buckets. `updated_at` is REAL wall-clock time
@@ -38,6 +38,10 @@ function onOpen(id: string): void {
   emit('open', id);
 }
 
+function onOpenMemories(): void {
+  emit('open-memories');
+}
+
 function titleOf(title: string | null): string {
   return title && title.length > 0 ? title : 'Untitled session';
 }
@@ -58,6 +62,7 @@ async function onShowOlder(): Promise<void> {
         <span class="sidebar-brand-mark">Ask AI</span>
       </div>
       <button class="new-chat-btn" @click="onNewChat">New chat</button>
+      <button class="memories-btn" @click="onOpenMemories">Memories</button>
     </div>
 
     <div class="sidebar-list">
