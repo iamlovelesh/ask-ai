@@ -89,6 +89,11 @@ export interface LoopExits {
   /** Human-readable action name -> write count (the deterministic actions
    * ledger appended to write-turn answers; round-6 support F1). */
   writeActions: Map<string, number>;
+  /** Entity nouns actually written this turn (from `action.entities`). Gates
+   * the batch-overclaim guard so a reported figure of an un-written entity
+   * (e.g. "1,100 opportunities" after only a report structure was created) is
+   * never mistaken for a write overclaim. */
+  writeEntities: Set<string>;
   /** Every observation string fed to the model this turn — the evidence
    * pool NumberCheck verifies draft answers against (P2). */
   toolOutputs: string[];
@@ -233,6 +238,37 @@ export function searchRefRows(rows: readonly Record<string, unknown>[], query: s
 function cleanFloat(n: number): number {
   if (!Number.isFinite(n) || Number.isInteger(n)) return n;
   return Math.round(n * 1e10) / 1e10;
+}
+
+/** Recursively drop null values from objects/arrays — the model sends `null`
+ * for optional params (including NESTED ones, e.g. a `patch` object's unset
+ * fields) it means to omit. Top-level nulls were already dropped; nested nulls
+ * slipped through and failed schema validation ("patch.name: received null").
+ * Null = "not specified" throughout this layer. */
+function stripNullsDeep(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(stripNullsDeep);
+  if (v !== null && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (val === null) continue;
+      out[k] = stripNullsDeep(val);
+    }
+    return out;
+  }
+  return v;
+}
+
+// Money fields are stored in cents (`*_cents`). Aggregate/sum outputs used to
+// hand the model the raw cents integer, which it then had to divide by 100 to
+// present dollars — and sometimes forgot, reporting a total 100× too large
+// ($79,234,000 instead of $792,335.89). Totals over a cents field are now
+// rendered in dollars so the figure the model reads is already correct.
+const CENTS_FIELD_RE = /_cents$/;
+function isCentsField(field: string | null | undefined): boolean {
+  return typeof field === 'string' && CENTS_FIELD_RE.test(field);
+}
+function centsToDollars(cents: number): string {
+  return `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function pluralNoun(noun: string, count: number): string {
@@ -436,8 +472,11 @@ const IDENTITY_FIELD_RE = /(user|assignee|owner|host|creator)_id$/;
  * default rather than silently ungated. */
 const CREATE_WRITE_VERB_RE =
   /^[a-z_]+\.(create|add|draft|duplicate|export|invite|register|enroll|join|submit|receive|upload|schedule|reply|define|bind)_/;
-/** Params that are pagination/shaping, never scope filters. */
-const NON_FILTER_KEYS = new Set(['limit', 'offset', 'cursor', 'page', 'sort', 'sort_by', 'order', 'order_by', 'direction', 'format']);
+/** Params that are pagination/shaping or a record selector, never scope
+ * filters. `id` is the record/report SELECTOR (e.g. run_report id=struct_416) —
+ * not a content filter that makes a result "not a total across all records",
+ * so it must never be surfaced as an unsanctioned-filter disclosure. */
+const NON_FILTER_KEYS = new Set(['limit', 'offset', 'cursor', 'page', 'sort', 'sort_by', 'order', 'order_by', 'direction', 'format', 'id']);
 const IDENTITY_PLACEHOLDER_RE = /^(me|myself|current[ _]?user)$/i;
 /** Bulk-apply honest-refusal ceiling (same as the old executor's narrow-it-down rule). */
 const APPLY_MAX_RECORDS = 1000;
@@ -492,9 +531,21 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     return `f:${stableStringify(data)}`;
   };
   const writeSignature = (slug: string, data: Record<string, unknown>): string => `${slug}:${naturalKey(data)}`;
+  // Single-action create idempotency (companion to writtenBatchSignatures,
+  // which only covers the batch path). A verification re-run has NO memory of
+  // iteration 1's writes, so when NumberCheck re-runs the turn the model
+  // re-issues the SAME create (observed: a pipeline-summary report created
+  // twice -> struct_416 AND struct_417). Keyed by the create's natural
+  // identity, this returns the record already created this turn so the model
+  // reuses its id instead of minting a duplicate. Caches the result (not just
+  // the signature) so the reuse observation carries the real id.
+  const createdResults = new Map<string, unknown>();
   // #2: a bulk apply_to_ref already run this turn (same action + ref + shared
   // params) is skipped on the double-round so it can't duplicate its effect.
   const appliedBulkSignatures = new Set<string>();
+  // Within-turn schedule idempotency: instruction (normalized) → dueAt, so a
+  // re-run cannot insert a duplicate reminder for the same follow-up.
+  const scheduledThisTurn = new Map<string, number>();
   // #4: cache entity-table columns so existence checks only query real columns.
   const tableColumnsCache = new Map<string, Set<string>>();
   const tableColumns = (table: string): Set<string> => {
@@ -518,8 +569,8 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     { fields: ['phone', 'phone_number', 'mobile'], col: 'phone' },
     { fields: ['name', 'full_name', 'company_name', 'title'], col: 'name' },
   ];
-  const recordExistsInCrm = (table: string, data: Record<string, unknown>): boolean => {
-    if (!/^[a-z_]+$/.test(table)) return false;
+  const findRecordInCrm = (table: string, data: Record<string, unknown>): unknown => {
+    if (!/^[a-z_]+$/.test(table)) return undefined;
     const cols = tableColumns(table);
     for (const m of NATURAL_MATCH) {
       if (!cols.has(m.col)) continue;
@@ -527,15 +578,17 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         const v = data[f];
         if (typeof v === 'string' && v.trim() !== '') {
           try {
-            return crm.tx((db) => db.get(`SELECT 1 FROM ${table} WHERE lower(${m.col}) = lower(?) LIMIT 1`, [v.trim()])) !== undefined;
+            return crm.tx((db) => db.get(`SELECT * FROM ${table} WHERE lower(${m.col}) = lower(?) LIMIT 1`, [v.trim()]));
           } catch {
-            return false;
+            return undefined;
           }
         }
       }
     }
-    return false;
+    return undefined;
   };
+  const recordExistsInCrm = (table: string, data: Record<string, unknown>): boolean =>
+    findRecordInCrm(table, data) !== undefined;
   // #3: snapshot-and-recheck for bulk MUTATIONS — freeze the targeted records'
   // values at proposal; the returned checker reports drift after approval.
   // No-op for creates (nothing to freeze) and unknown tables.
@@ -620,7 +673,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
             scrubbed[k] = input.actingUserId;
             continue;
           }
-          scrubbed[k] = v;
+          scrubbed[k] = stripNullsDeep(v); // also drop NESTED nulls (e.g. patch.*)
         }
 
         // 1. deterministic date rail, then re-validate against the ORIGINAL schema
@@ -670,6 +723,44 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         // Value-based policy (#7): gate high-value/financial writes by their
         // arguments, independent of risk class and record count.
         const policyHit = isWrite ? approvalPolicy(action.slug, params) : null;
+        // Create idempotency: an identical create already run this turn (e.g. a
+        // NumberCheck re-run with no memory of iteration 1) returns the existing
+        // record instead of a duplicate, so the model reuses its id.
+        const isCreate = isWrite && CREATE_WRITE_VERB_RE.test(action.slug);
+        const createSig = isCreate ? writeSignature(action.slug, params) : '';
+        if (isCreate && createdResults.has(createSig)) {
+          const prior = createdResults.get(createSig);
+          emit({ t: 'step.started', turnId, stepId, action: action.slug, resolvedParams: [params] });
+          emit({ t: 'step.finished', turnId, stepId, summary: `${action.name}: reused existing (already created this turn)`, ms: 0, inlineResult: prior });
+          counters.stepsOk += 1;
+          const reuseObs = `This ${action.entities[0] ?? 'record'} was ALREADY created earlier this turn — reusing it, NOT creating a duplicate. Do not create it again; use this existing record: ${renderObservationBody(prior, '')}`;
+          // Ground the reused record's id/name as evidence (else NumberCheck
+          // flags the id the model then cites — producing a mangled caution).
+          exits.toolOutputs.push(reuseObs);
+          return reuseObs;
+        }
+        // Re-import guard (parity with data__batch #4): a single create whose
+        // natural key (email → phone → name) already matches an EXISTING record
+        // in the CRM returns that record instead of minting a duplicate. The
+        // batch path had this; individual create_* calls (which the model uses
+        // for small CSVs) did not — so re-uploading a file made duplicates.
+        // Fail-open: no entity table / unqueryable → behaves as before.
+        if (isCreate) {
+          const createEntityTable =
+            action.entities[0] && /^[a-z_]+$/.test(action.entities[0]) ? action.entities[0] : undefined;
+          const existingRecord = createEntityTable !== undefined ? findRecordInCrm(createEntityTable, params) : undefined;
+          if (existingRecord !== undefined) {
+            const noun = action.entities[0] ?? 'record';
+            emit({ t: 'step.started', turnId, stepId, action: action.slug, resolvedParams: [params] });
+            emit({ t: 'step.finished', turnId, stepId, summary: `${action.name}: already exists in CRM (skipped duplicate)`, ms: 0, inlineResult: existingRecord });
+            counters.stepsOk += 1;
+            const existsObs = `This ${noun} already EXISTS in the CRM — reusing it, NOT creating a duplicate. Do not create it again; use this existing record: ${renderObservationBody(existingRecord, '')}`;
+            // Ground the existing record's id/name as evidence (else NumberCheck
+            // flags the id the model then cites — producing a mangled caution).
+            exits.toolOutputs.push(existsObs);
+            return existsObs;
+          }
+        }
         if (isWrite && (shouldGate(action.risk, affectedCount) || isMutation || policyHit !== null)) {
           const dKey = denialKey(action.slug, params);
           if (deniedActions.has(dKey)) {
@@ -868,6 +959,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           if (isWrite) {
             exits.writesLanded += 1;
             exits.writeActions.set(action.name, (exits.writeActions.get(action.name) ?? 0) + 1);
+            exits.writeEntities.add(action.entities[0] ?? 'record');
+            // Remember this create so an identical re-issue this turn reuses it.
+            if (isCreate) createdResults.set(createSig, finalResult);
             // DATABASE_EVENT firing (#flagship): run any active workflow whose
             // trigger matches this write. Best-effort; surfaced in the trace.
             const fired = await workflowEngine.onWrite(action, output);
@@ -1076,8 +1170,10 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         idList: topIds,
         sample: top.slice(0, SPILL_SAMPLE_ROWS),
       });
+      const subsetMoney = isCentsField(field) || isCentsField(subtract_field);
+      const subsetTotal = top.reduce((acc, r) => acc + (Number(r[field] ?? 0) - (subtract_field ? Number(r[subtract_field] ?? 0) : 0)), 0);
       const subsetSum = numeric
-        ? ` Sum of ${sortLabel} over these top ${top.length}: ${cleanFloat(top.reduce((acc, r) => acc + (Number(r[field] ?? 0) - (subtract_field ? Number(r[subtract_field] ?? 0) : 0)), 0))}.`
+        ? ` Sum of ${sortLabel} over these top ${top.length}: ${subsetMoney ? centsToDollars(subsetTotal) : cleanFloat(subsetTotal)}.`
         : '';
       const obs = `Sorted ${total} records by ${sortLabel} ${direction} (${numeric ? 'numeric' : 'text'} order); top ${top.length} [ref ${topHandle.ref}]: ${renderRefRows(top, subtract_field ? [field, subtract_field] : [field])}.${subsetSum}${statusComposition(rows)}`;
       publishObs(obs);
@@ -1193,7 +1289,11 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const sum = values.reduce((a, b) => a + b, 0);
       const value = op === 'sum' ? sum : op === 'avg' ? sum / values.length : op === 'min' ? Math.min(...values) : Math.max(...values);
       const label = subtract_field ? `${field} - ${subtract_field}` : field;
-      const obs = `${op} of ${label} over ${values.length} records: ${value}${statusComposition(rows)}`;
+      // Money field → present dollars (the value the model should quote), so it
+      // can't misreport the raw cents integer as dollars.
+      const money = isCentsField(field) || isCentsField(subtract_field);
+      const valueText = money ? centsToDollars(value) : String(cleanFloat(value));
+      const obs = `${op} of ${label} over ${values.length} records: ${valueText}${statusComposition(rows)}`;
       publishObs(obs);
       return obs;
       }),
@@ -1242,7 +1342,28 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         return { group: key, count: g.count, [op === 'count' ? 'value' : op]: agg };
       });
       result.sort((a, b) => Number(Object.values(b)[2]) - Number(Object.values(a)[2]));
-      const obs = `Breakdown of ${total} records by ${group_by}${group_by_2 ? ` and ${group_by_2}` : ''} (${op}${measure ? ` of ${measure}${subtract_field ? ` - ${subtract_field}` : ''}` : ''}): ${renderRefRows(result, [group_by, group_by_2 ?? ''])}`;
+      // Grand total across all groups — a VERIFIED figure for the model to cite
+      // ("1,100 opportunities worth $X") instead of hand-summing the group rows
+      // (an N-way sum NumberCheck can't derive, which otherwise gets flagged).
+      // Only the sum op yields a meaningful measure total; avg/min/max do not.
+      const grandMeasure = op === 'sum' && measure
+        ? result.reduce((a, r) => a + Number((r as Record<string, unknown>)['sum'] ?? 0), 0)
+        : null;
+      // Money measure (field=*_cents) → per-group values and the grand total are
+      // shown in dollars (the model must not re-divide, and must not misread the
+      // raw cents). count op is a plain count, never money.
+      const measureMoney = op !== 'count' && (isCentsField(measure) || isCentsField(subtract_field));
+      const displayResult = measureMoney
+        ? result.map((r) => {
+            const o = { ...(r as Record<string, unknown>) };
+            if (typeof o[op] === 'number') o[op] = centsToDollars(o[op] as number);
+            return o;
+          })
+        : result;
+      const totalLine = grandMeasure !== null
+        ? ` Total across all groups: ${total} records, sum of ${measure}${subtract_field ? ` - ${subtract_field}` : ''} = ${measureMoney ? centsToDollars(grandMeasure) : cleanFloat(grandMeasure)}.`
+        : ` Total across all groups: ${total} records.`;
+      const obs = `Breakdown of ${total} records by ${group_by}${group_by_2 ? ` and ${group_by_2}` : ''} (${op}${measure ? ` of ${measure}${subtract_field ? ` - ${subtract_field}` : ''}` : ''}): ${renderRefRows(displayResult, [group_by, group_by_2 ?? ''])}.${totalLine}`;
       publishObs(obs);
       return obs;
       }),
@@ -1351,7 +1472,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       let ok = 0;
       const errors: string[] = [];
       for (const [i, id] of ids.entries()) {
-        const params = { ...extra, [id_param]: id };
+        const params = stripNullsDeep({ ...extra, [id_param]: id }) as Record<string, unknown>;
         const parsed = target.inputSchema.safeParse(coerceDateParams(params, clock.now()).params);
         if (!parsed.success) {
           errors.push(`${id}: invalid params`);
@@ -1374,6 +1495,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         counters.stepsOk += 1;
         exits.writesLanded += ok;
         exits.writeActions.set(target.name, (exits.writeActions.get(target.name) ?? 0) + ok);
+        exits.writeEntities.add(target.entities[0] ?? 'record');
       }
       if (failed > 0 && ok === 0) counters.stepsFailed += 1;
       emit({ t: 'step.finished', turnId, stepId, summary: `${target.name}: ${ok}/${ids.length} ${pluralNoun(noun, ids.length)} processed`, ms });
@@ -1451,7 +1573,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           preErrors.push(`#${i}: not an object`);
           continue;
         }
-        const coerced = coerceDateParams(rec as Record<string, unknown>, clock.now()).params;
+        const coerced = coerceDateParams(stripNullsDeep(rec) as Record<string, unknown>, clock.now()).params;
         const parsed = target.inputSchema.safeParse(coerced);
         if (!parsed.success) {
           preErrors.push(`#${i}: invalid params`);
@@ -1567,6 +1689,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         counters.stepsOk += 1;
         exits.writesLanded += ok;
         exits.writeActions.set(target.name, (exits.writeActions.get(target.name) ?? 0) + ok);
+        exits.writeEntities.add(target.entities[0] ?? 'record');
       }
       if (failed > 0 && ok === 0) counters.stepsFailed += 1;
       emit({ t: 'step.finished', turnId, stepId, summary: `${target.name}: ${ok}/${fresh.length} ${pluralNoun(noun, fresh.length)} written`, ms });
@@ -1748,8 +1871,29 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         if (dueAt <= now) {
           return `"${when}" is not in the future — schedule follow-ups for a later time only, or do the task now.`;
         }
+        // Within-turn idempotency: a verification re-run (or any double-round)
+        // that re-issues the SAME reminder must not insert a second task —
+        // observed live as two pending reminders for one request, each with a
+        // slightly different re-computed "next Friday". Keyed by instruction.
+        const schedKey = instruction.trim().toLowerCase();
+        const priorDue = scheduledThisTurn.get(schedKey);
+        if (priorDue !== undefined) {
+          return `A follow-up for "${instruction}" was ALREADY scheduled earlier this turn (for ${new Date(priorDue).toISOString()}) — NOT scheduling a duplicate. Tell the user it is set; do not schedule it again.`;
+        }
+        scheduledThisTurn.set(schedKey, dueAt);
+        // A durable schedule is a real step: emit it (so it shows in the trace
+        // and history) and record its result as evidence (so NumberCheck can
+        // verify the scheduled date and the turn is grounded — no spurious
+        // zero-step re-run).
+        counters.step += 1;
+        const stepId = `s${counters.step}`;
+        emit({ t: 'step.started', turnId, stepId, action: 'session.schedule_follow_up', resolvedParams: [{ when, instruction }] });
         scheduler.schedule({ id: `task_${randomUUID()}`, sessionId, dueAt, instruction, createdAt: now, role: principal.role, userId: principal.userId });
-        return `Scheduled a follow-up for ${new Date(dueAt).toISOString()}: ${instruction}`;
+        const obs = `Scheduled a follow-up for ${new Date(dueAt).toISOString()}: ${instruction}`;
+        counters.stepsOk += 1;
+        emit({ t: 'step.finished', turnId, stepId, summary: obs, ms: 0 });
+        exits.toolOutputs.push(obs);
+        return obs;
       },
     });
     tools.push(scheduleFollowUp);
