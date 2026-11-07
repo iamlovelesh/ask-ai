@@ -56,6 +56,11 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toContain('session__refuse');
   });
 
+  it('names session__request_form for gathering several values at once', () => {
+    expect(system).toContain('session__request_form');
+    expect(system).toMatch(/several specific values|fill(s)? a form/i);
+  });
+
   it('forbids clarifying or refusing in plain text instead of the exit tools', () => {
     expect(system).toMatch(/never ask .*question.*plain text|question.*ONLY.*session__ask_user/i);
     expect(system).toMatch(/never decline in plain text|decline.*ONLY.*session__refuse/i);

@@ -1039,6 +1039,40 @@ button {
   border: 1px dashed var(--amber);
   border-radius: 8px;
 }
+/* session__request_form: structured input form */
+.form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 8px;
+}
+.form-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 32%) 1fr;
+  align-items: center;
+  gap: 10px;
+}
+.form-row label {
+  font-size: 13px;
+  color: var(--slate);
+}
+.form-req {
+  color: var(--red);
+  margin-left: 2px;
+}
+.form-row input {
+  padding: 6px 9px;
+  border: 1px solid var(--hair-strong);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--ink);
+  font-size: 13px;
+}
+.form-row input:focus {
+  outline: none;
+  border-color: var(--petrol);
+}
+
 .confirm-edit-row {
   display: grid;
   grid-template-columns: minmax(90px, auto) 1fr;

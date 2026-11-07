@@ -413,6 +413,37 @@ describe('runLoopTurn — workflow DATABASE_EVENT firing (#flagship L2)', () => 
   });
 });
 
+describe('runLoopTurn — session__request_form (HITL)', () => {
+  it('emits a form scope and resumes the turn with the submitted values', async () => {
+    const formBroker: ConfirmBroker = { request: async () => ({ approved: true, editedParams: { email: 'ada@acme.com', company: 'Acme' } }) };
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const events = await drive(
+      registry,
+      'add a new contact',
+      [
+        toolCallResponse('session__request_form', { title: 'New contact', fields: [{ key: 'email', label: 'Email' }, { key: 'company', label: 'Company' }] }),
+        textResponse('Thanks — noted ada@acme.com at Acme.'),
+      ],
+      { confirm: formBroker },
+    );
+    const req = events.find((e) => e.t === 'confirmation.required');
+    expect(req && req.t === 'confirmation.required' ? req.scope.form?.fields.map((f) => f.key) : undefined).toEqual(['email', 'company']);
+    expect(completedOf(events).status).toBe('done');
+  });
+
+  it('a cancelled form ends the turn as a clarify', async () => {
+    const cancelBroker: ConfirmBroker = { request: async () => ({ approved: false }) };
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const events = await drive(
+      registry,
+      'add a contact',
+      [toolCallResponse('session__request_form', { title: 'X', fields: [{ key: 'a', label: 'A' }] })],
+      { confirm: cancelBroker },
+    );
+    expect(completedOf(events).status).toBe('clarify');
+  });
+});
+
 describe('runLoopTurn — scheduled follow-up (#8)', () => {
   it('session__schedule_follow_up records a durable future reminder instead of refusing', async () => {
     const scheduler = openScheduledTasks(sessionsDb);

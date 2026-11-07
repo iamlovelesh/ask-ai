@@ -81,10 +81,56 @@ function approve(): void {
 function deny(): void {
   emit('resolve', props.confirm.confirmId, false);
 }
+
+// session__request_form: a structured input form instead of an approval.
+const form = computed(() => props.confirm.scope.form);
+const formValues = reactive<Record<string, string>>({});
+const formComplete = computed(() => {
+  const f = form.value;
+  if (!f) return false;
+  return f.fields.every((fld) => !fld.required || (formValues[fld.key] ?? '').trim() !== '');
+});
+function submitForm(): void {
+  const f = form.value;
+  if (!f) return;
+  const values: Record<string, unknown> = {};
+  for (const fld of f.fields) {
+    const raw = (formValues[fld.key] ?? '').trim();
+    if (raw === '') continue;
+    values[fld.key] = fld.type === 'number' ? Number(raw) : raw;
+  }
+  emit('resolve', props.confirm.confirmId, true, values);
+}
+function cancelForm(): void {
+  emit('resolve', props.confirm.confirmId, false);
+}
 </script>
 
 <template>
-  <div class="confirm-card agent-section">
+  <!-- session__request_form: a structured form the agent asked the user to fill -->
+  <div v-if="form" class="confirm-card form-card agent-section">
+    <div class="confirm-desc">{{ form.title }}</div>
+    <div v-if="!confirm.resolved" class="form-fields">
+      <div v-for="fld in form.fields" :key="fld.key" class="form-row">
+        <label :for="`form-${confirm.confirmId}-${fld.key}`">
+          {{ fld.label }}<span v-if="fld.required" class="form-req">*</span>
+        </label>
+        <input
+          :id="`form-${confirm.confirmId}-${fld.key}`"
+          v-model="formValues[fld.key]"
+          :type="fld.type === 'number' ? 'number' : fld.type === 'date' ? 'date' : 'text'"
+          :placeholder="fld.label"
+        />
+      </div>
+      <div class="confirm-actions">
+        <button class="btn-approve" :disabled="!formComplete" @click="submitForm">Submit</button>
+        <button class="btn-deny" @click="cancelForm">Cancel</button>
+      </div>
+    </div>
+    <div v-else class="confirm-resolved">{{ confirm.approved ? 'Submitted' : 'Cancelled' }}</div>
+  </div>
+
+  <div v-else class="confirm-card agent-section">
     <div class="confirm-desc">{{ humanDescription }}</div>
     <div class="confirm-reason">{{ reason }}</div>
     <div class="confirm-meta">

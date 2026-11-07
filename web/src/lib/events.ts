@@ -45,6 +45,13 @@ export interface ConfirmationScope {
   /** Proposed arguments for the gated action (#6) — the user may edit these
    * before approving; edited values are sent back and re-validated server-side. */
   params?: Record<string, unknown>;
+  /** A structured input form the agent requested (session__request_form). When
+   * present the card renders input fields; submitted values are sent back as
+   * editedParams. */
+  form?: {
+    title: string;
+    fields: Array<{ key: string; label: string; type: 'text' | 'number' | 'date'; required: boolean }>;
+  };
 }
 
 export interface PlanStep {

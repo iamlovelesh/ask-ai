@@ -78,6 +78,14 @@ export interface ConfirmationScope {
    * values flow back via the confirm verdict and are re-validated server-side
    * before the handler runs. Absent for multi-action/legacy scopes. */
   params?: Record<string, unknown>;
+  /** A structured input FORM the agent is requesting (session__request_form,
+   * request_form). When present the client renders input fields
+   * instead of an approval card; submitted values flow back as the verdict's
+   * editedParams. */
+  form?: {
+    title: string;
+    fields: Array<{ key: string; label: string; type: 'text' | 'number' | 'date'; required: boolean }>;
+  };
 }
 
 export type Event =

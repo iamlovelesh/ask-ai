@@ -1426,6 +1426,57 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
+  // session__request_form (request_form): gather several specific
+  // values in one structured step instead of a back-and-forth. Reuses the
+  // confirmation handshake — the client renders a form, the submitted values
+  // come back as the verdict's editedParams, and the turn resumes with them.
+  const requestForm = tool({
+    name: 'session__request_form',
+    description:
+      'Ask the user to fill a SHORT structured form when you need several specific values before acting (e.g. the details for a new record). The turn pauses while they fill it; you then receive the values and continue — prefer this over multiple back-and-forth questions. Do NOT use for a single yes/no (use the confirmation gate) or one open question (use session__ask_user).',
+    parameters: z.object({
+      title: z.string().describe('what the form is for, e.g. "New contact details"'),
+      fields: z
+        .array(
+          z.object({
+            key: z.string().describe('machine key, e.g. "email"'),
+            label: z.string().describe('human label, e.g. "Email address"'),
+            type: z.enum(['text', 'number', 'date']).nullable().optional(),
+            required: z.boolean().nullable().optional(),
+          }),
+        )
+        .min(1)
+        .max(10),
+    }),
+    execute: async ({ title, fields }): Promise<string> => {
+      counters.step += 1;
+      const stepId = `s${counters.step}`;
+      const confirmId = `cf_${randomUUID()}`;
+      const scope: ConfirmationScope = {
+        actions: ['session.request_form'],
+        affectedCount: 0,
+        targetSample: [],
+        description: title,
+        form: {
+          title,
+          fields: fields.map((f) => ({ key: f.key, label: f.label, type: f.type ?? 'text', required: f.required ?? false })),
+        },
+      };
+      markTtfur();
+      emit({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+      const verdict = await confirm.request({ turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+      const approved = typeof verdict === 'boolean' ? verdict : verdict.approved;
+      emit({ t: 'confirmation.resolved', turnId, confirmId, approved });
+      if (!approved) {
+        exits.clarify = `I asked for "${title}" but the form was cancelled — tell me what you'd like to do instead.`;
+        exits.stop();
+        return 'The user cancelled the form. The turn is over.';
+      }
+      const values = typeof verdict === 'object' && verdict.editedParams ? verdict.editedParams : {};
+      return `Form "${title}" submitted with: ${JSON.stringify(values)}. Use these values to continue.`;
+    },
+  });
+
   const refuse = tool({
     name: 'session__refuse',
     description: 'Decline the request when it cannot be done with the available actions. Give the SPECIFIC reason. This ends your turn.',
@@ -1612,7 +1663,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     tools.push(runWorkflowTool);
   }
 
-  tools.push(searchActions, sortRef, filterRef, searchRef, aggregateRef, groupByRef, applyToRef, batchWrite, loadSkillsTool, askUser, refuse);
+  tools.push(searchActions, sortRef, filterRef, searchRef, aggregateRef, groupByRef, applyToRef, batchWrite, loadSkillsTool, askUser, requestForm, refuse);
   if (memory) tools.push(memorySave, memoryRecall);
   return tools;
 }
