@@ -36,6 +36,7 @@ import { loadSkills } from './skills/registry.js';
 import { DATE_FIELD_RE } from '../agent/date-expr.js';
 import type { MemoryStore } from '../memory/store.js';
 import { screenMemory, isVolatileMemory } from '../memory/denylist.js';
+import { createWorkflowEngine, type WorkflowEngine } from '../agent/workflow-engine.js';
 import type { MemoryCategory } from '../memory/types.js';
 
 // --- stuck detection (OpenHands StuckDetector-lite) ---------------------------
@@ -384,6 +385,10 @@ export interface BuildTurnToolsInput {
    * instead of refusing it. Absent in tests that don't exercise scheduling. */
   sessionId?: string;
   scheduler?: ScheduledTaskStore;
+  /** Workflow execution engine (#flagship). When present the agent gets a
+   * `workflow__run` tool to execute a workflow on demand. Defaults to one
+   * built from this turn's registry/crm/clock. */
+  workflowEngine?: WorkflowEngine;
 }
 
 export const RECORD_ID_RE = /\b[a-z][a-z]*(?:_[a-z]+)*_\d+\b/g;
@@ -1524,6 +1529,39 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       },
     });
     tools.push(scheduleFollowUp);
+  }
+
+  // workflow__run (#flagship): execute a workflow's steps now. Write-class
+  // capability (steps mutate the CRM) → bound only for principals that may write.
+  if (canUseAction(principal, { risk: 'write' })) {
+    const workflowEngine = input.workflowEngine ?? createWorkflowEngine({ registry, crm, clock });
+    const runWorkflowTool = tool({
+      name: 'workflow__run',
+      description:
+        'Run a workflow NOW: executes its steps in order against the CRM and records the run in its history. Give the workflow id (from workflows.create_workflow or workflows.list_workflows). Returns per-step results. Active workflows also fire automatically on their triggers — use this to run one on demand.',
+      parameters: z.object({ workflow_id: z.string().describe('the workflow id, e.g. structure_12') }),
+      execute: async ({ workflow_id }): Promise<string> => {
+        counters.step += 1;
+        const stepId = `s${counters.step}`;
+        emit({ t: 'step.started', turnId, stepId, action: 'workflows.run_workflow', resolvedParams: [{ workflow_id }] });
+        const run = await workflowEngine.runWorkflow(workflow_id, { trigger: 'manual' });
+        if (!run) {
+          counters.stepsFailed += 1;
+          emit({ t: 'step.failed', turnId, stepId, error: { code: 'NOT_FOUND', message: `workflow ${workflow_id} not found` }, ms: 0 });
+          return `No workflow "${workflow_id}" exists — check the id with workflows.list_workflows.`;
+        }
+        const ok = run.steps.filter((s) => s.status === 'success').length;
+        const failed = run.steps.length - ok;
+        counters.stepsOk += 1;
+        emit({ t: 'step.finished', turnId, stepId, summary: `Ran workflow ${workflow_id}: ${ok}/${run.steps.length} step(s) ok`, ms: run.finished_at - run.started_at });
+        const failDetail =
+          failed > 0
+            ? ` Failures: ${run.steps.filter((s) => s.status === 'failed').map((s) => `${s.type} (${s.error ?? 'failed'})`).slice(0, 3).join('; ')}.`
+            : '';
+        return `Workflow run ${run.status}: ${ok} of ${run.steps.length} step(s) succeeded.${failDetail}`;
+      },
+    });
+    tools.push(runWorkflowTool);
   }
 
   tools.push(searchActions, sortRef, filterRef, searchRef, aggregateRef, groupByRef, applyToRef, batchWrite, loadSkillsTool, askUser, refuse);

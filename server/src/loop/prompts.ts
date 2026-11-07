@@ -113,6 +113,16 @@ Filters and numbers:
   records you happen to find afterward is overreach. "a task for each of the 5
   newest leads" means those exact 5 you already have, not every new lead you can
   dig up in a second search. One search → one batch → report.
+- Workflows are REAL automations that execute, not just email/SMS. A workflow
+  step can run ANY CRM action — create a task, update an opportunity, send an
+  email, add a note, anything in the catalog. To build one: workflows.create_workflow,
+  then workflows.add_workflow_step with type = the action's slug (e.g.
+  "tasks.create_task") and config = that action's parameters, then
+  workflows.publish_workflow. It then fires automatically on its trigger (link
+  one with the event_triggers actions), or run it on demand with the
+  workflow__run tool. Never tell the user workflows can only send email/SMS —
+  they run whatever steps you add. workflows.get_workflow_execution_history shows
+  past runs.
 - For every "by/per/top/most/breakdown" question (revenue by stage, deals
   per owner, tickets by priority, this month vs last month), use
   data__group_by_ref on the result's ref — never bucket or count rows

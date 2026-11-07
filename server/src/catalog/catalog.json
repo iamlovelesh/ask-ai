@@ -1075,7 +1075,8 @@
     "module": "workflows",
     "moduleName": "Workflows",
     "name": "Add workflow step",
-    "slug": "workflows.add_workflow_step"
+    "slug": "workflows.add_workflow_step",
+    "description": "Append a step that runs a CRM action. `type` is the action's slug (e.g. \"tasks.create_task\", \"email.send_email\", \"opportunities.update_opportunity\") and `config` is that action's parameters. The step executes that action when the workflow runs."
   },
   {
     "id": "M16.A05",
@@ -1117,7 +1118,8 @@
     "module": "workflows",
     "moduleName": "Workflows",
     "name": "Get workflow execution history",
-    "slug": "workflows.get_workflow_execution_history"
+    "slug": "workflows.get_workflow_execution_history",
+    "description": "List recorded execution-log entries for a workflow — one entry per step of each run (empty only for workflows that have never run). Use the workflow__run tool to run one now."
   },
   {
     "id": "M17.A01",

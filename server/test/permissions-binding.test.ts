@@ -82,6 +82,11 @@ describe('permission-pruned tool binding (#1)', () => {
     expect(toolNamesFor(viewer)).not.toContain('session__schedule_follow_up');
   });
 
+  it('the workflow__run tool is write-class: members get it, viewers do not', () => {
+    expect(toolNamesFor(member)).toContain('workflow__run');
+    expect(toolNamesFor(viewer)).not.toContain('workflow__run');
+  });
+
   it('the model-facing catalog summary is pruned to the principal’s permissions', () => {
     const viewerSummary = buildCatalogSummary(registry, viewer);
     expect(viewerSummary).toContain('leads.search_leads');

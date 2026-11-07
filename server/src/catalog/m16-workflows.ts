@@ -6,12 +6,11 @@
  * Array<{at,step_id,status}> }`.
  *
  * `publish_workflow` validates `steps` is non-empty (`VALIDATION`) before
- * flipping `status` to `'active'`, per the brief. There is no execution
- * ENGINE in this task (no `execute_workflow` action exists in the catalog)
- * — `get_workflow_execution_history` legitimately returns an empty list
- * for every workflow (a documented degenerate implementation, same
- * category as M07's `view_note_revision_history` / M16's own sibling
- * `get_trigger_firing_history` in M17 — see task-9-b2-report).
+ * flipping `status` to `'active'`, per the brief. Execution is provided by
+ * the workflow engine (`src/agent/workflow-engine.ts`), invoked via the
+ * runtime `workflow__run` tool and by trigger firing; it records each run
+ * into `config.runs` + `config.execution_log`, which
+ * `get_workflow_execution_history` reads back.
  *
  * KIND-BLINDNESS NOTE (same as M05/M08/M09/M10/M14/M15): `entities[0]` is
  * `'structures'` — every action on this module's own `id` needs an
@@ -225,8 +224,11 @@ const listWorkflows: ActionDef<ListWorkflowsInput, ListWorkflowsOutput> = {
 
 const addWorkflowStepInput = z.strictObject({
   id: z.string(),
-  type: z.string().min(1),
-  config: z.record(z.string(), z.unknown()).optional(),
+  type: z
+    .string()
+    .min(1)
+    .describe('the CRM action this step runs, as its exact action slug — e.g. "tasks.create_task", "email.send_email", "contacts.create_contact". When the workflow runs, this action is executed with `config` as its parameters.'),
+  config: z.record(z.string(), z.unknown()).optional().describe('parameters for the step\'s action, exactly as that action expects them (e.g. for tasks.create_task: { contact_id, title, due_at }).'),
 });
 
 const addWorkflowStep: ActionDef<z.infer<typeof addWorkflowStepInput>, WorkflowView> = {
@@ -234,7 +236,8 @@ const addWorkflowStep: ActionDef<z.infer<typeof addWorkflowStepInput>, WorkflowV
   slug: 'workflows.add_workflow_step',
   module: MODULE,
   name: 'Add workflow step',
-  description: 'Append a new step to a workflow.',
+  description:
+    'Append a step that runs a CRM action. `type` is the action\'s slug (e.g. "tasks.create_task", "email.send_email", "opportunities.update_opportunity") and `config` is that action\'s parameters. The step executes that action when the workflow runs.',
   risk: 'write',
   entities: ['structures'],
   inputSchema: addWorkflowStepInput,
@@ -455,7 +458,7 @@ const getWorkflowExecutionHistory: ActionDef<
   module: MODULE,
   name: 'Get workflow execution history',
   description:
-    'List recorded execution-log entries for a workflow (empty for workflows that have never run — there is no execution engine in this backend).',
+    'List recorded execution-log entries for a workflow — one entry per step of each run (empty only for workflows that have never run). Use the workflow__run tool to run one now.',
   risk: 'read',
   entities: ['structures'],
   inputSchema: getWorkflowExecutionHistoryInput,

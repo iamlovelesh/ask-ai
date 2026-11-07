@@ -170,13 +170,13 @@ exports[`buildCatalogSummary > is deterministic for a given registry (safe to sn
 - workflows.create_workflow: Create a new draft automation workflow.
 - workflows.get_workflow_definition: Fetch a single workflow and its ordered step list.
 - workflows.list_workflows: List non-archived workflows.
-- workflows.add_workflow_step: Append a new step to a workflow.
+- workflows.add_workflow_step: Append a step that runs a CRM action. \`type\` is the action's slug (e.g. "tasks.create_task", "email.send_email", "opportunities.update_opportunity") and \`config\` is that action's parameters. The step executes that action when the workflow runs.
 - workflows.update_workflow_step: Update an existing step's type/config in place.
 - workflows.remove_workflow_step: Remove a step from a workflow.
 - workflows.validate_workflow: Check a workflow for basic structural validity (non-empty, ordered steps) without publishing it.
 - workflows.publish_workflow: Publish a workflow (requires at least one step).
 - workflows.pause_workflow: Pause a published workflow.
-- workflows.get_workflow_execution_history: List recorded execution-log entries for a workflow (empty for workflows that have never run — there is no execution engine in this backend).
+- workflows.get_workflow_execution_history: List recorded execution-log entries for a workflow — one entry per step of each run (empty only for workflows that have never run). Use the workflow__run tool to run one now.
 ## Event Triggers
 - event_triggers.create_event_trigger: Create a new event trigger (starts inactive — use enable_trigger to turn it on).
 - event_triggers.get_trigger_configuration: Fetch a single event trigger by id.

@@ -114,6 +114,13 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toContain('data__apply_to_ref');
   });
 
+  it('frames workflows as real automations that run any CRM action, not just email/SMS', () => {
+    expect(system).toMatch(/workflows are real automations/i);
+    expect(system).toContain('workflow__run');
+    expect(system).toMatch(/type = the action'?s slug|run ANY CRM action/i);
+    expect(system).toMatch(/never tell the user workflows can only send email/i);
+  });
+
   it('tells the model to STOP after completing the requested writes — no re-search for extra records (double-round fix)', () => {
     expect(system).toMatch(/once you(?:'ve| have) (?:made|done|completed) the writes/i);
     expect(system).toMatch(/do not search again|create extra records/i);
