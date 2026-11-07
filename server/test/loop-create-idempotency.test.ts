@@ -141,18 +141,22 @@ function makeUpdateAction(): { action: ActionDef; lastPatch: () => Record<string
 }
 
 describe('web__search tool is config-gated', () => {
-  it('is bound only when a web-search provider key is configured', () => {
+  it('is bound only when WEB_SEARCH_ENABLED is on and an OpenRouter key is present', () => {
     const { action } = makeCreateAction();
     const has = () => buildTurnTools(buildInput(action, freshExits())).some((t) => (t as { name?: string }).name === 'web__search');
-    const prev = process.env['TAVILY_API_KEY'];
+    const prevFlag = process.env['WEB_SEARCH_ENABLED'];
+    const prevKey = process.env['OPENROUTER_API_KEY'];
     try {
-      delete process.env['TAVILY_API_KEY'];
-      expect(has()).toBe(false);
-      process.env['TAVILY_API_KEY'] = 'tvly-test-key';
+      process.env['OPENROUTER_API_KEY'] = 'sk-or-test';
+      delete process.env['WEB_SEARCH_ENABLED'];
+      expect(has()).toBe(false); // opt-in flag off → not bound even with a key
+      process.env['WEB_SEARCH_ENABLED'] = '1';
       expect(has()).toBe(true);
     } finally {
-      if (prev === undefined) delete process.env['TAVILY_API_KEY'];
-      else process.env['TAVILY_API_KEY'] = prev;
+      if (prevFlag === undefined) delete process.env['WEB_SEARCH_ENABLED'];
+      else process.env['WEB_SEARCH_ENABLED'] = prevFlag;
+      if (prevKey === undefined) delete process.env['OPENROUTER_API_KEY'];
+      else process.env['OPENROUTER_API_KEY'] = prevKey;
     }
   });
 });

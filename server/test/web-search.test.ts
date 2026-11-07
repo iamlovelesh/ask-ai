@@ -6,32 +6,49 @@ function mockFetch(payload: unknown, ok = true, status = 200): typeof fetch {
     ({ ok, status, json: async () => payload }) as unknown as Response) as unknown as typeof fetch;
 }
 
-describe('web-search enrichment', () => {
-  it('is disabled without a provider key, enabled with one', () => {
-    expect(isWebSearchConfigured({ apiKey: '' })).toBe(false);
-    expect(isWebSearchConfigured({ apiKey: '   ' })).toBe(false);
-    expect(isWebSearchConfigured({ apiKey: 'tvly-123' })).toBe(true);
+// OpenRouter web-plugin response: citations ride on message.annotations.
+function orResponse(cites: Array<{ url: string; title: string; content: string }>) {
+  return {
+    choices: [
+      {
+        message: {
+          content: 'summary',
+          annotations: cites.map((c) => ({ type: 'url_citation', url_citation: c })),
+        },
+      },
+    ],
+  };
+}
+
+describe('web-search enrichment (OpenRouter web plugin)', () => {
+  it('is available only when enabled AND an OpenRouter key is present', () => {
+    expect(isWebSearchConfigured({ enabled: false, apiKey: 'sk-or-1' })).toBe(false); // flag off
+    expect(isWebSearchConfigured({ enabled: true, apiKey: '' })).toBe(false); // no key
+    expect(isWebSearchConfigured({ enabled: true, apiKey: 'sk-or-1' })).toBe(true);
   });
 
-  it('parses provider results into {title,url,snippet}, capped to maxResults', async () => {
-    const payload = {
-      results: [
-        { title: 'Acme raises $50M', url: 'https://news.example/acme', content: 'Acme Corp announced a Series C...' },
-        { title: 'Acme hires CFO', url: 'https://news.example/cfo', content: 'New finance chief...' },
-        { title: 'extra', url: 'https://x', content: 'should be dropped' },
-      ],
-    };
-    const out = await webSearch('Acme Corp news', { apiKey: 'tvly-123', fetchImpl: mockFetch(payload), maxResults: 2 });
+  it('parses OpenRouter url_citation annotations into {title,url,snippet}, capped', async () => {
+    const payload = orResponse([
+      { title: 'Acme raises $50M', url: 'https://news.example/acme', content: 'Series C...' },
+      { title: 'Acme hires CFO', url: 'https://news.example/cfo', content: 'New finance chief...' },
+      { title: 'extra', url: 'https://x', content: 'dropped' },
+    ]);
+    const out = await webSearch('Acme Corp news', { apiKey: 'sk-or-1', enabled: true, fetchImpl: mockFetch(payload), maxResults: 2 });
     expect(out).toHaveLength(2);
-    expect(out[0]).toEqual({ title: 'Acme raises $50M', url: 'https://news.example/acme', snippet: 'Acme Corp announced a Series C...' });
+    expect(out[0]).toEqual({ title: 'Acme raises $50M', url: 'https://news.example/acme', snippet: 'Series C...' });
   });
 
-  it('throws when unconfigured', async () => {
+  it('ignores non-citation annotations and returns [] when there are none', async () => {
+    const out = await webSearch('x', { apiKey: 'sk-or-1', enabled: true, fetchImpl: mockFetch(orResponse([])) });
+    expect(out).toEqual([]);
+  });
+
+  it('throws when no OpenRouter key', async () => {
     await expect(webSearch('x', { apiKey: '' })).rejects.toThrow(/not configured/i);
   });
 
   it('throws on a non-OK provider response', async () => {
-    await expect(webSearch('x', { apiKey: 'k', fetchImpl: mockFetch({}, false, 429) })).rejects.toThrow(/HTTP 429/);
+    await expect(webSearch('x', { apiKey: 'sk-or-1', fetchImpl: mockFetch({}, false, 429) })).rejects.toThrow(/HTTP 429/);
   });
 
   it('renders results labelled as external/unverified (not CRM, no chips)', () => {
