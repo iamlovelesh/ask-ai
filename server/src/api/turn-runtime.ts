@@ -105,6 +105,9 @@ interface RunningTurn {
   cancel: AbortController;
   /** Principal this turn runs as (#1); undefined = admin default. */
   principal?: Principal;
+  /** Pre-rendered attachment context (#6): files the user attached to this
+   * message, surfaced to the agent so it can register/attach them. */
+  attachments?: string;
 }
 
 export interface StartTurnInput {
@@ -116,6 +119,8 @@ export interface StartTurnInput {
   model?: string;
   /** Principal this turn runs as (#1); undefined = admin default. */
   principal?: Principal;
+  /** Pre-rendered attachment context (#6). */
+  attachments?: string;
 }
 
 export type ConfirmResolution =
@@ -209,6 +214,7 @@ export class SessionRuntime {
       agent: input.agent,
       ...(input.model !== undefined ? { model: input.model } : {}),
       ...(input.principal !== undefined ? { principal: input.principal } : {}),
+      ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
       cancel: new AbortController(),
     };
     this.running.set(input.sessionId, state);
@@ -264,6 +270,7 @@ export class SessionRuntime {
               sessionId,
               turnId: state.turnId,
               userText,
+              ...(state.attachments !== undefined ? { attachments: state.attachments } : {}),
               sessionDeps: {
                 registry: this.registry,
                 crm,

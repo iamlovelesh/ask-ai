@@ -248,4 +248,16 @@ describe('buildLoopUserPrompt', () => {
     expect(buildLoopUserPrompt(input)).not.toContain('<memories>');
     expect(buildLoopUserPrompt({ ...input, recalledMemories: '' })).not.toContain('<memories>');
   });
+
+  it('includes an <attachments> block (with the media-asset hint) when files are attached (#6)', () => {
+    const prompt = buildLoopUserPrompt({ ...input, attachments: '- invoice.pdf (application/pdf, 2048 bytes) — url: /api/uploads/up_1' });
+    expect(prompt).toContain('<attachments>');
+    expect(prompt).toContain('invoice.pdf');
+    expect(prompt).toMatch(/media_assets\.upload_media_asset/);
+  });
+
+  it('omits the <attachments> block when none are attached', () => {
+    expect(buildLoopUserPrompt(input)).not.toContain('<attachments>');
+    expect(buildLoopUserPrompt({ ...input, attachments: '' })).not.toContain('<attachments>');
+  });
 });

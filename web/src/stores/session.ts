@@ -322,7 +322,33 @@ export const useSessionStore = defineStore('session', {
      * read a POST response). Folds every frame as it arrives; an
      * unexpected drop hands off to `reconnect` with the latest known seq
      * (never 0 — see Task 15's binding ruling). */
-    async send(text: string): Promise<void> {
+    /** Upload a file for the active session (#6); returns its upload id or null. */
+    async uploadFile(file: File): Promise<{ id: string; filename: string; mime: string; size: number } | null> {
+      const id = this.activeId;
+      if (!id) return null;
+      try {
+        const buf = await file.arrayBuffer();
+        let binary = '';
+        const bytes = new Uint8Array(buf);
+        for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i] as number);
+        const contentBase64 = btoa(binary);
+        const res = await fetch(`/api/sessions/${id}/uploads`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: file.name, mime: file.type || 'application/octet-stream', contentBase64 }),
+        });
+        if (!res.ok) {
+          this.pushToast(res.status === 413 ? 'File too large (max 5 MB).' : 'Upload failed.');
+          return null;
+        }
+        return (await res.json()) as { id: string; filename: string; mime: string; size: number };
+      } catch {
+        this.pushToast('Upload failed.');
+        return null;
+      }
+    },
+
+    async send(text: string, attachments?: string[]): Promise<void> {
       const id = this.activeId;
       if (!id) return;
       const chat = this.ensureChat(id);
@@ -345,6 +371,7 @@ export const useSessionStore = defineStore('session', {
             text,
             ...(this.selectedModel ? { model: this.selectedModel } : {}),
             ...(this.selectedRole ? { role: this.selectedRole } : {}),
+            ...(attachments && attachments.length > 0 ? { attachments } : {}),
           }),
         });
         for await (const frame of frames) {

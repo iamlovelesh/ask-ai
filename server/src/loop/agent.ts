@@ -105,6 +105,9 @@ export interface RunLoopTurnInput {
   turnId: string;
   userText: string;
   sessionDeps: LoopSessionDeps;
+  /** Pre-rendered attachment context (#6): files the user attached to this
+   * message (filename/type/size/url), surfaced to the agent. */
+  attachments?: string;
   /** Test seam: budget overrides; production uses the defaults below. */
   budget?: { maxTurns?: number; deadlineMs?: number };
 }
@@ -509,6 +512,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       recentTurns: renderRecentTurns(priorEvents),
       currentUser,
       recalledMemories: recalled,
+      ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
     });
 
     let finalText: string | undefined;

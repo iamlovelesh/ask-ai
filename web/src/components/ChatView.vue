@@ -167,11 +167,35 @@ watch(
   },
 );
 
+// File attachments (#6)
+const fileInput = ref<HTMLInputElement | null>(null);
+const pendingAttachments = ref<{ id: string; filename: string }[]>([]);
+const uploading = ref(false);
+function openFilePicker(): void {
+  fileInput.value?.click();
+}
+async function onFilesSelected(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement;
+  const files = Array.from(input.files ?? []).slice(0, 5);
+  input.value = '';
+  uploading.value = true;
+  for (const f of files) {
+    const rec = await store.uploadFile(f);
+    if (rec && pendingAttachments.value.length < 5) pendingAttachments.value.push({ id: rec.id, filename: rec.filename });
+  }
+  uploading.value = false;
+}
+function removeAttachment(id: string): void {
+  pendingAttachments.value = pendingAttachments.value.filter((a) => a.id !== id);
+}
+
 async function onSend(): Promise<void> {
   const text = draft.value.trim();
   if (!text || chat.value?.running) return;
+  const attachments = pendingAttachments.value.map((a) => a.id);
   draft.value = '';
-  await store.send(text);
+  pendingAttachments.value = [];
+  await store.send(text, attachments.length > 0 ? attachments : undefined);
 }
 
 function useExample(text: string): void {
@@ -385,6 +409,12 @@ async function onCopyLink(): Promise<void> {
     </div>
 
     <div class="composer">
+      <div v-if="pendingAttachments.length" class="composer-attachments">
+        <span v-for="a in pendingAttachments" :key="a.id" class="attach-chip">
+          <span class="attach-icon">📎</span>{{ a.filename }}
+          <button class="attach-remove" type="button" title="Remove" @click="removeAttachment(a.id)">×</button>
+        </span>
+      </div>
       <div class="composer-inner">
         <textarea
           ref="textareaEl"
@@ -394,6 +424,15 @@ async function onCopyLink(): Promise<void> {
           @keydown="onKeydown"
           @input="autosizeTextarea"
         ></textarea>
+        <input ref="fileInput" type="file" multiple style="display: none" @change="onFilesSelected" />
+        <button
+          v-if="!chat.running"
+          class="btn-attach"
+          type="button"
+          :disabled="uploading"
+          :title="uploading ? 'Uploading…' : 'Attach a file'"
+          @click="openFilePicker"
+        >📎</button>
         <button v-if="chat.running" class="btn-cancel" @click="onCancel">Cancel</button>
         <button v-else class="btn-send" :disabled="!draft.trim()" @click="onSend">Send</button>
       </div>

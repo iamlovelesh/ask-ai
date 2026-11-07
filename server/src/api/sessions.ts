@@ -17,7 +17,17 @@ import { resolvePrincipal, routeAgentForRole } from '../agent/permissions.js';
 import { fetchModelCatalog, catalogHas } from '../llm/model-catalog.js';
 import { llmCall } from '../llm/client.js';
 import { generateTitle, TITLE_MAX_CHARS } from './title.js';
+import { openUploads, uploadUrl } from '../store/uploads.js';
 import type { AppDeps } from './types.js';
+
+/** Inline-blob cap for uploads (#6): small files only in this simulated CRM. */
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+
+const uploadBodySchema = z.object({
+  filename: z.string().min(1).max(255),
+  mime: z.string().min(1).max(255),
+  contentBase64: z.string().min(1),
+});
 
 // Fast, cheap model for the cosmetic thread title. Off under tests (keeps
 // them hermetic) and when explicitly disabled by ops.
@@ -39,6 +49,9 @@ const messageBodySchema = z.object({
   /** Principal role this turn runs as (#1). An unknown/absent role resolves to
    * the admin default in `resolvePrincipal`, preserving prior behavior. */
   role: z.string().optional(),
+  /** Upload ids (#6) the user attached to this message; resolved to attachment
+   * context the agent sees. */
+  attachments: z.array(z.string()).max(5).optional(),
 });
 
 const confirmBodySchema = z.object({
@@ -80,6 +93,44 @@ function parseAfterSeq(query: Record<string, unknown>): number {
 
 export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): void {
   const { eventLog, sessionsDb, runtime } = deps;
+  const uploads = openUploads(sessionsDb);
+
+  // --- POST /api/sessions/:id/uploads (#6: attach a real file) -----------
+  app.post('/api/sessions/:id/uploads', async (req: FastifyRequest<{ Params: SessionParams }>, reply) => {
+    const { id: sessionId } = req.params;
+    if (!sessionExists(sessionsDb, sessionId)) {
+      reply.code(404).send({ error: 'session_not_found' });
+      return;
+    }
+    const parsed = uploadBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400).send({ error: 'invalid_body', details: parsed.error.issues });
+      return;
+    }
+    const bytes = Buffer.from(parsed.data.contentBase64, 'base64');
+    if (bytes.length === 0) {
+      reply.code(400).send({ error: 'empty_or_invalid_content' });
+      return;
+    }
+    if (bytes.length > MAX_UPLOAD_BYTES) {
+      reply.code(413).send({ error: 'file_too_large', maxBytes: MAX_UPLOAD_BYTES });
+      return;
+    }
+    reply.send(uploads.put({ sessionId, filename: parsed.data.filename, mime: parsed.data.mime, bytes }));
+  });
+
+  // --- GET /api/uploads/:id (serve the stored file) ----------------------
+  app.get('/api/uploads/:id', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    const u = uploads.get(req.params.id);
+    if (!u) {
+      reply.code(404).send({ error: 'not_found' });
+      return;
+    }
+    reply
+      .header('content-type', u.mime)
+      .header('content-disposition', `inline; filename="${u.filename.replace(/"/g, '')}"`)
+      .send(u.bytes);
+  });
 
   // --- GET /api/models (curated tiers) ----------------------------------
 
@@ -226,7 +277,17 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
     // enforce principal permissions, so a non-admin is forced onto the
     // permission-aware "optimized" loop regardless of the requested agent.
     const routedAgent = routeAgentForRole(principal.role, agent) as typeof agent;
-    turnId = runtime.startTurn({ sessionId, userText: text, agent: routedAgent, model, principal });
+    // Attachments (#6): resolve the uploaded files to agent-visible context
+    // (filename / mime / size / url), from the store (not client-trusted meta).
+    let attachments: string | undefined;
+    if (parsed.data.attachments && parsed.data.attachments.length > 0) {
+      const lines = parsed.data.attachments
+        .map((upId) => uploads.get(upId))
+        .filter((u): u is NonNullable<typeof u> => u !== undefined)
+        .map((u) => `- ${u.filename} (${u.mime}, ${u.size} bytes) — url: ${uploadUrl(u.id)}`);
+      if (lines.length > 0) attachments = lines.join('\n');
+    }
+    turnId = runtime.startTurn({ sessionId, userText: text, agent: routedAgent, model, principal, ...(attachments !== undefined ? { attachments } : {}) });
   });
 
   // --- GET /api/sessions/:id/scheduled (pending follow-ups, #8) -----------

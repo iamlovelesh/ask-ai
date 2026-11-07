@@ -286,6 +286,9 @@ export interface LoopUserPromptInput {
    * or omitted → no block (recall off, incognito, or no memories). Rides in
    * the USER prompt so the static system prompt stays KV-cacheable. */
   recalledMemories?: string;
+  /** Pre-rendered attachment lines (#6): files the user attached to this
+   * message. When present, rendered in an `<attachments>` block. */
+  attachments?: string;
 }
 
 export function buildLoopUserPrompt(input: LoopUserPromptInput): string {
@@ -304,6 +307,18 @@ export function buildLoopUserPrompt(input: LoopUserPromptInput): string {
   // Durable user memory (design §4.6) — before <previous_turns>, only when present.
   if (input.recalledMemories !== undefined && input.recalledMemories.trim() !== '') {
     parts.push('<memories>', input.recalledMemories, '</memories>', '');
+  }
+  // Attachments (#6): files the user attached to THIS message. The agent can
+  // register them as media assets (media_assets.upload_media_asset with the
+  // given url/mime/size) and attach/reference them where relevant.
+  if (input.attachments !== undefined && input.attachments.trim() !== '') {
+    parts.push(
+      '<attachments>',
+      'The user attached the following file(s) to this message. To save one into the CRM, call media_assets.upload_media_asset with its url, mime_type, and size_bytes; then reference or attach it as the request needs.',
+      input.attachments,
+      '</attachments>',
+      '',
+    );
   }
   parts.push(
     '<previous_turns>',
