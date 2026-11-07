@@ -53,16 +53,49 @@ export function countReconciliationNote(answer: string, toolOutputs: readonly st
 const WRITE_NOUN =
   'tasks?|records?|leads?|contacts?|reminders?|appointments?|invoices?|deals?|opportunities?|notes?|messages?|updates?|follow-?ups?|items?|rows?|people|accounts?|events?|quotes?|orders?';
 
-/** The largest quantity the answer CLAIMS to have acted on, or 0 if none. */
-function claimedWriteCount(answer: string): number {
+/** Parse an integer that may carry thousands separators ("1,100" → 1100). */
+function parseIntComma(s: string): number {
+  return Number(s.replace(/,/g, ''));
+}
+
+/** Comparable noun stem: lowercase + naive singularization so "tasks" and
+ * "task", "opportunities" and "opportunity" compare equal. */
+function nounStem(s: string): string {
+  const w = s.toLowerCase();
+  if (w.endsWith('ies')) return `${w.slice(0, -3)}y`;
+  if (w.endsWith('sses')) return w.slice(0, -2); // addresses -> address
+  if (w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
+  return w;
+}
+
+/**
+ * The largest quantity the answer CLAIMS to have acted on, 0 if none.
+ *
+ * Gated on `written` — the set of entity nouns actually written this turn
+ * (from `action.entities`). A count only counts when its noun was written, so
+ * reported/analytics figures like "1,100 opportunities worth $X" (when only a
+ * report *structure* was created) are NOT mistaken for a write overclaim.
+ */
+function claimedWriteCount(answer: string, written: ReadonlySet<string>): number {
+  if (written.size === 0) return 0;
+  const writtenStems = new Set([...written].map(nounStem));
   let max = 0;
-  // "5 tasks", "5 follow-up tasks", "5 newest leads"
-  for (const m of answer.matchAll(new RegExp(String.raw`\b(\d+)\s+(?:new |newest |follow-?up )?(?:${WRITE_NOUN})\b`, 'gi'))) {
-    max = Math.max(max, Number(m[1]));
+  // "5 tasks", "1,100 opportunities", "5 follow-up tasks" — only when the
+  // noun's stem was actually written this turn.
+  for (const m of answer.matchAll(
+    new RegExp(String.raw`\b(\d[\d,]*)\s+(?:new |newest |follow-?up )?(${WRITE_NOUN})\b`, 'gi'),
+  )) {
+    if (writtenStems.has(nounStem(m[2] as string))) max = Math.max(max, parseIntComma(m[1] as string));
   }
-  // "for the 5", "for all 5", "for each of 5"
-  for (const m of answer.matchAll(/\bfor (?:the |all |each of )?(\d+)\b/gi)) {
-    max = Math.max(max, Number(m[1]));
+  // "for the 5", "for all 5", "for each of 5" — batch phrasing where the count
+  // attaches to the target set, not the written noun (e.g. "a task for the 5
+  // leads"). Only trust it when the answer also names a written entity, so a
+  // stray "for the 5 …" in a report answer doesn't trip it.
+  const mentionsWritten = [...writtenStems].some((st) => new RegExp(String.raw`\b${st}s?\b`, 'i').test(answer));
+  if (mentionsWritten) {
+    for (const m of answer.matchAll(/\bfor (?:the |all |each of )?(\d[\d,]*)\b/gi)) {
+      max = Math.max(max, parseIntComma(m[1] as string));
+    }
   }
   return max;
 }
@@ -74,17 +107,22 @@ function claimedWriteCount(answer: string): number {
  * The deterministic "Changes this turn: N" footer was right; the prose lied.
  *
  * Fires ONLY when a write actually landed (writesLanded > 0) and the answer
- * claims a LARGER acted-on quantity than what was written. Returns an honest
- * correction naming both numbers and offering to finish the rest.
+ * claims a LARGER acted-on quantity — of an entity that was ACTUALLY WRITTEN
+ * this turn — than what landed. `written` is the set of written entity nouns;
+ * without it the guard stays silent (fail-safe: no spurious corrections).
  */
-export function writeCountReconcileNote(answer: string, writesLanded: number): string | null {
+export function writeCountReconcileNote(
+  answer: string,
+  writesLanded: number,
+  written: ReadonlySet<string> = new Set(),
+): string | null {
   if (writesLanded <= 0) return null;
-  const claimed = claimedWriteCount(answer);
+  const claimed = claimedWriteCount(answer, written);
   if (claimed <= writesLanded) return null;
   // Already honest: the answer states the real accomplished count (e.g.
   // "3 of the 5", "created 3 tasks") — don't pile on a redundant correction
   // that reads as the system doubting its own truthful answer.
   if (new RegExp(String.raw`\b${writesLanded}\b`).test(answer)) return null;
   const remaining = claimed - writesLanded;
-  return `⚠ Correction: ${writesLanded} change(s) were actually made this turn — not ${claimed}. I was only able to act on ${writesLanded} of them; ask me to finish and I'll complete the remaining ${remaining}.`;
+  return `⚠ Correction: ${writesLanded} change(s) were actually made this turn — not ${claimed.toLocaleString()}. I was only able to act on ${writesLanded} of them; ask me to finish and I'll complete the remaining ${remaining.toLocaleString()}.`;
 }
