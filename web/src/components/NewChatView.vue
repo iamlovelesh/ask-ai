@@ -3,6 +3,7 @@ import { nextTick, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useSessionStore } from '../stores/session.js';
 import ModelPicker from './ModelPicker.vue';
+import RolePicker from './RolePicker.vue';
 
 defineEmits<{ 'toggle-nav': [] }>();
 const store = useSessionStore();
@@ -120,11 +121,23 @@ watch(draft, () => void nextTick(autosizeTextarea));
     <div class="composer">
       <div v-if="pendingFiles.length" class="composer-attachments">
         <span v-for="(f, i) in pendingFiles" :key="i" class="attach-chip">
-          <span class="attach-icon">📎</span>{{ f.name }}
+          <svg class="attach-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+          {{ f.name }}
           <button class="attach-remove" type="button" title="Remove" @click="removeFile(i)">×</button>
         </span>
       </div>
       <div class="composer-inner">
+        <input ref="fileInput" type="file" multiple class="sr-only" @change="onFilesSelected" />
+        <button
+          class="btn-attach"
+          type="button"
+          :disabled="starting"
+          title="Attach a file"
+          aria-label="Attach a file"
+          @click="openFilePicker"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+        </button>
         <textarea
           ref="textareaEl"
           v-model="draft"
@@ -133,11 +146,12 @@ watch(draft, () => void nextTick(autosizeTextarea));
           @keydown="onKeydown"
           @input="autosizeTextarea"
         ></textarea>
-        <input ref="fileInput" type="file" multiple class="sr-only" @change="onFilesSelected" />
-        <button class="btn-attach" type="button" :disabled="starting" title="Attach a file" @click="openFilePicker">📎</button>
         <button class="btn-send" :disabled="!draft.trim() || starting" @click="onSend">Send</button>
       </div>
-      <ModelPicker :disabled="starting" />
+      <div class="composer-controls">
+        <ModelPicker :disabled="starting" />
+        <RolePicker :disabled="starting" />
+      </div>
     </div>
   </div>
 </template>

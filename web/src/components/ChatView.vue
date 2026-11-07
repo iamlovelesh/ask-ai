@@ -364,7 +364,7 @@ async function onCopyLink(): Promise<void> {
               rel="noopener"
               :title="`${att.mime} · ${formatBytes(att.size)}`"
             >
-              <span class="said-attach-icon">📎</span>
+              <svg class="said-attach-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
               <span class="said-attach-name">{{ att.filename }}</span>
               <span class="said-attach-size">{{ formatBytes(att.size) }}</span>
             </a>
@@ -431,11 +431,24 @@ async function onCopyLink(): Promise<void> {
     <div class="composer">
       <div v-if="pendingAttachments.length" class="composer-attachments">
         <span v-for="a in pendingAttachments" :key="a.id" class="attach-chip">
-          <span class="attach-icon">📎</span>{{ a.filename }}
+          <svg class="attach-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+          {{ a.filename }}
           <button class="attach-remove" type="button" title="Remove" @click="removeAttachment(a.id)">×</button>
         </span>
       </div>
       <div class="composer-inner">
+        <input ref="fileInput" type="file" multiple class="sr-only" @change="onFilesSelected" />
+        <button
+          v-if="!chat.running"
+          class="btn-attach"
+          type="button"
+          :disabled="uploading"
+          :title="uploading ? 'Uploading…' : 'Attach a file'"
+          aria-label="Attach a file"
+          @click="openFilePicker"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+        </button>
         <textarea
           ref="textareaEl"
           v-model="draft"
@@ -444,15 +457,6 @@ async function onCopyLink(): Promise<void> {
           @keydown="onKeydown"
           @input="autosizeTextarea"
         ></textarea>
-        <input ref="fileInput" type="file" multiple class="sr-only" @change="onFilesSelected" />
-        <button
-          v-if="!chat.running"
-          class="btn-attach"
-          type="button"
-          :disabled="uploading"
-          :title="uploading ? 'Uploading…' : 'Attach a file'"
-          @click="openFilePicker"
-        >📎</button>
         <button v-if="chat.running" class="btn-cancel" @click="onCancel">Cancel</button>
         <button v-else class="btn-send" :disabled="!draft.trim()" @click="onSend">Send</button>
       </div>

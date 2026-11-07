@@ -1660,19 +1660,24 @@ button {
 }
 .btn-attach {
   flex: none;
-  border: 1px solid var(--hair-strong);
-  background: var(--raised);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  color: var(--slate);
   border-radius: 8px;
-  padding: 8px 10px;
   cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
+  transition: background var(--tick-ease), color var(--tick-ease);
 }
 .btn-attach:hover:not(:disabled) {
-  border-color: var(--petrol);
+  background: color-mix(in srgb, var(--petrol) 10%, transparent);
+  color: var(--petrol);
 }
 .btn-attach:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
 
@@ -1737,10 +1742,6 @@ button {
   background: var(--petrol);
   color: var(--petrol-contrast);
   font-weight: 600;
-}
-.role-seg-icon {
-  font-size: 12px;
-  line-height: 1;
 }
 .role-seg-btn:disabled {
   opacity: 0.5;

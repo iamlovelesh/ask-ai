@@ -8,13 +8,12 @@ const store = useSessionStore();
 interface RoleOption {
   value: SelectableRole;
   label: string;
-  icon: string;
   hint: string;
 }
 const ROLES: RoleOption[] = [
-  { value: 'admin', label: 'Admin', icon: '🛡️', hint: 'All actions, including deletes & bulk' },
-  { value: 'member', label: 'Member', icon: '✎', hint: 'Read and write; no deletes/bulk/external' },
-  { value: 'viewer', label: 'Viewer', icon: '👁', hint: 'Read-only' },
+  { value: 'admin', label: 'Admin', hint: 'All actions, including deletes & bulk' },
+  { value: 'member', label: 'Member', hint: 'Read and write; no deletes/bulk/external' },
+  { value: 'viewer', label: 'Viewer', hint: 'Read-only' },
 ];
 
 // Empty persisted role = the server's admin default.
@@ -41,7 +40,7 @@ function pick(role: SelectableRole): void {
         :title="r.hint"
         @click="pick(r.value)"
       >
-        <span class="role-seg-icon" aria-hidden="true">{{ r.icon }}</span>{{ r.label }}
+        {{ r.label }}
       </button>
     </div>
   </div>
