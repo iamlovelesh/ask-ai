@@ -109,3 +109,67 @@ describe('workflow engine — runWorkflow', () => {
     expect(run?.steps).toHaveLength(0);
   });
 });
+
+/** Seed an active DATABASE_EVENT trigger linked to a workflow. */
+function seedTrigger(id: string, eventType: string, conditions: Record<string, unknown>, workflowId: string, status = 'active'): void {
+  crm.tx((db) =>
+    db.run(
+      `INSERT INTO structures (id, created_at, updated_at, archived, kind, name, slug, status, config)
+       VALUES (?, ?, ?, 0, 'trigger', ?, ?, ?, ?)`,
+      [id, 1000, 1000, id, id, status, JSON.stringify({ event_type: eventType, conditions, workflow_id: workflowId })],
+    ),
+  );
+}
+
+// A create action and an update action whose entities[0]='leads'/'opportunities'.
+const createLead: ActionDef = testAction('leads.create_lead', async () => ({ id: 'lead_x', status: 'new' }));
+const updateOpp: ActionDef = testAction('opportunities.update_opportunity', async () => ({ id: 'opp_1', stage: 'won' }));
+const eventRegistry = buildRegistry(
+  [[
+    testAction('test.ok', async () => { calls.push('ok'); return { done: true }; }),
+    createLead,
+    updateOpp,
+  ]],
+  [],
+);
+
+describe('workflow engine — DATABASE_EVENT firing (onWrite)', () => {
+  it('fires a workflow when a matching create event occurs', async () => {
+    seedWorkflow('wf_fire', [{ type: 'test.ok' }]);
+    seedTrigger('trig_1', 'lead.created', {}, 'wf_fire');
+    const engine = createWorkflowEngine({ registry: eventRegistry, crm, clock: new VirtualClock() });
+    const runs = await engine.onWrite(createLead, { id: 'lead_x', status: 'new' });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.trigger).toBe('event:lead.created');
+    expect(calls).toContain('ok'); // the workflow's step actually ran
+  });
+
+  it('does NOT fire when the event type does not match', async () => {
+    seedWorkflow('wf_nf', [{ type: 'test.ok' }]);
+    seedTrigger('trig_2', 'contact.created', {}, 'wf_nf');
+    const engine = createWorkflowEngine({ registry: eventRegistry, crm, clock: new VirtualClock() });
+    const runs = await engine.onWrite(createLead, { id: 'lead_x' });
+    expect(runs).toHaveLength(0);
+  });
+
+  it('respects conditions — fires only when the record matches (opportunity.updated + stage=won)', async () => {
+    seedWorkflow('wf_won', [{ type: 'test.ok' }]);
+    seedTrigger('trig_3', 'opportunity.updated', { stage: 'won' }, 'wf_won');
+    const engine = createWorkflowEngine({ registry: eventRegistry, crm, clock: new VirtualClock() });
+    expect(await engine.onWrite(updateOpp, { id: 'opp_1', stage: 'lost' })).toHaveLength(0); // condition unmet
+    expect(await engine.onWrite(updateOpp, { id: 'opp_1', stage: 'won' })).toHaveLength(1); // condition met
+  });
+
+  it('does NOT fire inactive triggers', async () => {
+    seedWorkflow('wf_in', [{ type: 'test.ok' }]);
+    seedTrigger('trig_4', 'lead.created', {}, 'wf_in', 'inactive');
+    const engine = createWorkflowEngine({ registry: eventRegistry, crm, clock: new VirtualClock() });
+    expect(await engine.onWrite(createLead, { id: 'lead_x' })).toHaveLength(0);
+  });
+
+  it('returns no runs for a non-mutating action (no create/update/delete verb)', async () => {
+    const readish: ActionDef = testAction('leads.search_leads', async () => ({ items: [] }));
+    const engine = createWorkflowEngine({ registry: eventRegistry, crm, clock: new VirtualClock() });
+    expect(await engine.onWrite(readish, { items: [] })).toHaveLength(0);
+  });
+});

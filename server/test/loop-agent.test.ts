@@ -15,7 +15,7 @@ import { openScheduledTasks } from '../src/agent/scheduled-tasks';
 import { createRefStore, type RefStore, type HydrateResult } from '../src/agent/refs';
 import { buildRegistry, type Registry } from '../src/catalog/registry';
 import { ActionError, type ActionContext, type ActionDef, type Risk } from '../src/catalog/types';
-import type { Crm, StoreTx } from '../src/store/db';
+import { openCrm, crmDbPath, closeRegistered, type Crm, type StoreTx } from '../src/store/db';
 import type { ConfirmBroker } from '../src/agent/executor';
 import type { Event } from '../src/events/types';
 
@@ -366,6 +366,50 @@ describe('runLoopTurn — data__batch (createMany bulk shape)', () => {
       textResponse('I could not — that id was not seen.'),
     ]);
     expect(calls).toBe(0); // unseen con_99999 never reached the handler
+  });
+});
+
+describe('runLoopTurn — workflow DATABASE_EVENT firing (#flagship L2)', () => {
+  const WF_PROFILE = 'test-wf-fire-loop';
+  function wfCleanup(): void {
+    for (const s of ['', '-wal', '-shm', '-journal']) {
+      const p = crmDbPath(WF_PROFILE) + s;
+      if (existsSync(p)) rmSync(p, { force: true });
+    }
+  }
+
+  it('an agent write fires a matching active workflow (the step runs; the trace shows it)', async () => {
+    wfCleanup();
+    const crm = openCrm(WF_PROFILE);
+    let stepRan = false;
+    const createLead = { ...action('leads.create_lead', 'write', async () => ({ id: 'lead_x', status: 'new' })), entities: ['leads'] };
+    const stepAction = { ...action('tags.create_tag', 'write', async () => { stepRan = true; return { id: 'tag_1' }; }), entities: ['tags'] };
+    const reg = buildRegistry([[createLead, stepAction]], []);
+    // Seed an active workflow (one tags.create_tag step) and a lead.created trigger linked to it.
+    crm.tx((db) => {
+      db.run(
+        `INSERT INTO structures (id, created_at, updated_at, archived, kind, name, slug, status, config)
+         VALUES ('wf_fire', 1, 1, 0, 'workflow', 'Fire', 'fire', 'active', ?)`,
+        [JSON.stringify({ steps: [{ step_id: 'step_1', type: 'tags.create_tag', config: {}, order: 1 }], execution_log: [] })],
+      );
+      db.run(
+        `INSERT INTO structures (id, created_at, updated_at, archived, kind, name, slug, status, config)
+         VALUES ('trig_fire', 1, 1, 0, 'trigger', 'T', 't', 'active', ?)`,
+        [JSON.stringify({ event_type: 'lead.created', conditions: {}, workflow_id: 'wf_fire' })],
+      );
+    });
+
+    const events = await drive(
+      reg,
+      'create a new lead named Fire Test',
+      [toolCallResponse('leads__create_lead', { name: 'Fire Test' }), textResponse('Created the lead.')],
+      { crm },
+    );
+
+    expect(stepRan).toBe(true); // the workflow fired and executed its step
+    expect(events.some((e) => e.t === 'step.started' && e.action === 'workflow.fired')).toBe(true);
+    closeRegistered(WF_PROFILE);
+    wfCleanup();
   });
 });
 

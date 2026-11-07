@@ -19,11 +19,46 @@ import type { Crm } from '../store/db.js';
 import { VirtualClock } from '../store/clock.js';
 import { parseJsonObject } from '../catalog/json.js';
 import { coerceDateParams } from '../loop/date-rail.js';
-import type { ActionContext } from '../catalog/types.js';
+import type { ActionContext, ActionDef } from '../catalog/types.js';
 
 const WORKFLOW_KIND = 'workflow';
+const TRIGGER_KIND = 'trigger';
 const MAX_RUNS_KEPT = 20;
 const MAX_LOG_KEPT = 100;
+
+/** Slug verb → the generic DB event op. Actions whose verb isn't one of these
+ * (e.g. record_payment, search_leads) emit no event. */
+const OP_BY_VERB: Record<string, string> = {
+  create: 'created', add: 'created',
+  update: 'updated', set: 'updated', edit: 'updated', move: 'updated', advance: 'updated',
+  delete: 'deleted', remove: 'deleted', archive: 'deleted',
+};
+
+function opForSlug(slug: string): string | undefined {
+  const verb = slug.split('.')[1]?.split('_')[0];
+  return verb ? OP_BY_VERB[verb] : undefined;
+}
+
+function singular(entity: string): string {
+  if (entity.endsWith('ies')) return `${entity.slice(0, -3)}y`;
+  if (entity.endsWith('s')) return entity.slice(0, -1);
+  return entity;
+}
+
+/** Normalize an event string to `<singular-entity>.<op>` so a trigger's
+ * free-text event_type ("lead.created", "leads.create") matches a write. */
+function normalizeEvent(raw: string): string {
+  const [ent = '', op = ''] = raw.toLowerCase().split('.');
+  return `${singular(ent)}.${OP_BY_VERB[op] ?? op}`;
+}
+
+function conditionsMatch(conditions: Record<string, unknown>, record: Record<string, unknown>): boolean {
+  for (const [key, want] of Object.entries(conditions)) {
+    if (!(key in record)) return false;
+    if (String(record[key]).toLowerCase() !== String(want).toLowerCase()) return false;
+  }
+  return true;
+}
 
 export interface WorkflowStepDef {
   step_id: string;
@@ -60,6 +95,11 @@ export interface WorkflowEngine {
   /** Execute a workflow's steps and record the run. Returns the run, or
    * undefined when the workflow id does not exist. */
   runWorkflow(workflowId: string, opts: RunWorkflowOptions): Promise<WorkflowRun | undefined>;
+  /** Fire any active DATABASE_EVENT triggers matching a write (the action +
+   * its result record). Called by the tool layer AFTER an agent write commits;
+   * workflow-internal writes bypass this, so there is no cascade. Returns the
+   * runs that fired (best-effort — never throws). */
+  onWrite(action: ActionDef, result: unknown): Promise<WorkflowRun[]>;
 }
 
 export interface WorkflowEngineDeps {
@@ -140,5 +180,38 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps): WorkflowEngine {
     return run;
   }
 
-  return { runWorkflow };
+  async function onWrite(action: ActionDef, result: unknown): Promise<WorkflowRun[]> {
+    try {
+      const op = opForSlug(action.slug);
+      const entity = action.entities[0];
+      if (!op || !entity || entity === 'structures') return [];
+      const writeEvent = normalizeEvent(`${entity}.${op}`);
+      const record = result !== null && typeof result === 'object' && !Array.isArray(result) ? (result as Record<string, unknown>) : {};
+
+      const triggers = crm.tx((db) => db.all(`SELECT config FROM structures WHERE kind = ? AND status = 'active'`, [TRIGGER_KIND]));
+      const workflowIds: string[] = [];
+      for (const t of triggers) {
+        const cfg = parseJsonObject(t['config']);
+        const eventType = cfg['event_type'];
+        if (typeof eventType !== 'string' || normalizeEvent(eventType) !== writeEvent) continue;
+        const conditions = cfg['conditions'] && typeof cfg['conditions'] === 'object' ? (cfg['conditions'] as Record<string, unknown>) : {};
+        if (!conditionsMatch(conditions, record)) continue;
+        const wf = cfg['workflow_id'];
+        if (typeof wf === 'string' && wf.length > 0) workflowIds.push(wf);
+      }
+
+      const runs: WorkflowRun[] = [];
+      for (const wf of workflowIds) {
+        const run = await runWorkflow(wf, { trigger: `event:${writeEvent}` });
+        if (run) runs.push(run);
+      }
+      return runs;
+    } catch {
+      // Firing is best-effort — a trigger/workflow problem must never break the
+      // agent's own write that caused the event.
+      return [];
+    }
+  }
+
+  return { runWorkflow, onWrite };
 }

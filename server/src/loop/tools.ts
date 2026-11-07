@@ -472,6 +472,9 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   // the acting user's own id is always legitimate evidence/target
   input.knownIds.add(input.actingUserId);
   const principal = input.principal ?? defaultPrincipal();
+  // Shared workflow engine: powers the workflow__run tool AND the DATABASE_EVENT
+  // firing hook that runs after agent writes.
+  const workflowEngine = input.workflowEngine ?? createWorkflowEngine({ registry, crm, clock });
   const seenSlugs = new Set<string>();
   const bindAction = (action: ActionDef): boolean => {
     if (seenSlugs.has(action.slug)) return false;
@@ -771,6 +774,15 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           if (isWrite) {
             exits.writesLanded += 1;
             exits.writeActions.set(action.name, (exits.writeActions.get(action.name) ?? 0) + 1);
+            // DATABASE_EVENT firing (#flagship): run any active workflow whose
+            // trigger matches this write. Best-effort; surfaced in the trace.
+            const fired = await workflowEngine.onWrite(action, output);
+            for (const run of fired) {
+              const wfStep = `wf_${run.run_id.slice(4, 12)}`;
+              const okSteps = run.steps.filter((s) => s.status === 'success').length;
+              emit({ t: 'step.started', turnId, stepId: wfStep, action: 'workflow.fired', resolvedParams: [{ workflow_id: run.workflow_id, trigger: run.trigger }] });
+              emit({ t: 'step.finished', turnId, stepId: wfStep, summary: `⚡ Workflow ${run.workflow_id} fired on ${run.trigger}: ${okSteps}/${run.steps.length} step(s) ok`, ms: Math.max(0, run.finished_at - run.started_at) });
+            }
           }
 
           const echo = resolved.length > 0 ? ` [resolved dates: ${resolved.join('; ')}]` : '';
@@ -1534,7 +1546,6 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   // workflow__run (#flagship): execute a workflow's steps now. Write-class
   // capability (steps mutate the CRM) → bound only for principals that may write.
   if (canUseAction(principal, { risk: 'write' })) {
-    const workflowEngine = input.workflowEngine ?? createWorkflowEngine({ registry, crm, clock });
     const runWorkflowTool = tool({
       name: 'workflow__run',
       description:
