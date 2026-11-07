@@ -260,7 +260,14 @@ function resolveNamesInText(text: string, crm: Crm): string {
 const GROUNDING_NOTE =
   'IMPORTANT: your previous draft answered without reading any data this turn. Every date, amount, and count you state must come from a tool result THIS turn — call the tools now, then answer.';
 
-function pickCards(userText: string, registry: Registry, sessionCtx: SessionCtx): Card[] {
+// Building an automation needs several authoring actions bound TOGETHER and in
+// order (create → add steps → publish; create trigger → link → enable).
+// Retrieval surfaces them unevenly, so the model would flail (add a step before
+// create_workflow is callable). Force the whole module in on automation intent.
+const WORKFLOW_INTENT_RE = /\b(workflow|automation|automate|automated)\b/i;
+const TRIGGER_INTENT_RE = /\b(trigger|when (a|an|the) .*(is|gets) (created|updated|added|changed)|fires? when|on (create|update)|event)\b/i;
+
+export function pickCards(userText: string, registry: Registry, sessionCtx: SessionCtx): Card[] {
   const all = registry.all();
   if (all.length <= FULL_BIND_THRESHOLD) {
     return all.map((a) => ({ slug: a.slug, text: a.slug, score: 1 }));
@@ -270,10 +277,21 @@ function pickCards(userText: string, registry: Registry, sessionCtx: SessionCtx)
   // oldest one too") can miss retrieval entirely — actions ALREADY USED in
   // this session always ride along, ahead of any filler.
   const bound = new Set(cards.map((c) => c.slug));
+  // Automation authoring: pin the whole workflows (and, on trigger intent,
+  // event_triggers) module so create/add-step/publish/link/enable are all
+  // callable in order — ahead of retrieval filler.
+  const forced: Card[] = [];
+  const pinModule = (module: string): void => {
+    for (const a of registry.byModule(module)) {
+      if (!bound.has(a.slug)) { forced.push({ slug: a.slug, text: a.slug, score: 1 }); bound.add(a.slug); }
+    }
+  };
+  if (WORKFLOW_INTENT_RE.test(userText)) pinModule('workflows');
+  if (TRIGGER_INTENT_RE.test(userText)) pinModule('event_triggers');
   const sessionCards: Card[] = sessionCtx.usedActionSlugs
     .filter((slug) => !bound.has(slug) && registry.get(slug) !== undefined)
     .map((slug) => ({ slug, text: slug, score: 1 }));
-  const combined = [...sessionCards, ...cards];
+  const combined = [...forced, ...sessionCards, ...cards];
   if (combined.length > 0) return combined.slice(0, FULL_BIND_THRESHOLD);
   return all.slice(0, FULL_BIND_THRESHOLD).map((a) => ({ slug: a.slug, text: a.slug, score: 0 }));
 }

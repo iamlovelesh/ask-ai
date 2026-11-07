@@ -120,7 +120,8 @@ Filters and numbers:
   "tasks.create_task") and config = that action's parameters, then
   workflows.publish_workflow. It then fires automatically on its trigger (link
   one with the event_triggers actions), or run it on demand with the
-  workflow__run tool. Never tell the user workflows can only send email/SMS —
+  workflow__run tool, or on a schedule with workflow__schedule (e.g. every
+  morning, weekly). Never tell the user workflows can only send email/SMS —
   they run whatever steps you add. workflows.get_workflow_execution_history shows
   past runs.
 - For every "by/per/top/most/breakdown" question (revenue by stage, deals
