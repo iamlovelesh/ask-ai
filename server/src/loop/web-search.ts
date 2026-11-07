@@ -53,6 +53,16 @@ export function isWebSearchConfigured(deps?: WebSearchDeps): boolean {
   return isEnabled(deps) && resolveKey(deps) !== undefined;
 }
 
+// A query that names a CRM record id (con_6173, opp_91, inv_55) is a misuse —
+// the model is trying to look up internal records on the public web (observed:
+// web.search "get opportunity details opp_91"). Those ids mean nothing on the
+// web; redirect to the CRM read tools instead. Keyed on the id shape only,
+// which effectively never appears in a genuine web query.
+const CRM_ID_RE = /\b[a-z]{2,}_\d+\b/;
+export function looksLikeCrmLookup(query: string): boolean {
+  return CRM_ID_RE.test(query);
+}
+
 interface OpenRouterAnnotation {
   type?: string;
   url_citation?: { url?: string; title?: string; content?: string };

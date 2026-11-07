@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isWebSearchConfigured, webSearch, renderWebResults } from '../src/loop/web-search';
+import { isWebSearchConfigured, webSearch, renderWebResults, looksLikeCrmLookup } from '../src/loop/web-search';
 
 function mockFetch(payload: unknown, ok = true, status = 200): typeof fetch {
   return (async () =>
@@ -49,6 +49,16 @@ describe('web-search enrichment (OpenRouter web plugin)', () => {
 
   it('throws on a non-OK provider response', async () => {
     await expect(webSearch('x', { apiKey: 'sk-or-1', fetchImpl: mockFetch({}, false, 429) })).rejects.toThrow(/HTTP 429/);
+  });
+
+  it('flags a query that names CRM record ids as a misuse (route to CRM tools)', () => {
+    expect(looksLikeCrmLookup('get opportunity details opp_91 opp_768')).toBe(true);
+    expect(looksLikeCrmLookup('everything about con_6173')).toBe(true);
+    expect(looksLikeCrmLookup('invoice inv_55 status')).toBe(true);
+    // genuine external queries are NOT flagged
+    expect(looksLikeCrmLookup('latest news on Acme Corp')).toBe(false);
+    expect(looksLikeCrmLookup('Tesla company revenue 2026')).toBe(false);
+    expect(looksLikeCrmLookup('who is the CEO of Stripe')).toBe(false);
   });
 
   it('renders results labelled as external/unverified (not CRM, no chips)', () => {

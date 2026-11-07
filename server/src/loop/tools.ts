@@ -32,7 +32,7 @@ import type { ScheduledTaskStore } from '../agent/scheduled-tasks.js';
 import { resolveRelativeDate } from '../agent/date-expr.js';
 import type { ConfirmationScope, Event } from '../events/types.js';
 import { coerceDateParams, widenForModel } from './date-rail.js';
-import { isWebSearchConfigured, webSearch, renderWebResults } from './web-search.js';
+import { isWebSearchConfigured, webSearch, renderWebResults, looksLikeCrmLookup } from './web-search.js';
 import { entityForId } from './name-resolve.js';
 import { gatherRelated, renderRelated } from './record-related.js';
 import { loadSkills } from './skills/registry.js';
@@ -2094,6 +2094,13 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         counters.step += 1;
         const stepId = `s${counters.step}`;
         emit({ t: 'step.started', turnId, stepId, action: 'web.search', resolvedParams: [{ query }] });
+        // Guard: a query naming CRM record ids is a misuse — redirect to the
+        // CRM tools rather than searching the public web for internal ids.
+        if (looksLikeCrmLookup(query)) {
+          counters.stepsFailed += 1;
+          emit({ t: 'step.failed', turnId, stepId, error: { code: 'WEB_SEARCH_MISUSE', message: 'query names CRM record ids' }, ms: 0 });
+          return `web__search is for EXTERNAL public information only. "${query}" names CRM records (ids like con_/opp_/inv_) — look those up with the CRM read tools (get-details actions, or data__related for connections), NOT the web.`;
+        }
         try {
           const results = await webSearch(query);
           const obs = renderWebResults(query, results);
