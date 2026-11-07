@@ -248,6 +248,28 @@ function cleanFloat(n: number): number {
  * fields) it means to omit. Top-level nulls were already dropped; nested nulls
  * slipped through and failed schema validation ("patch.name: received null").
  * Null = "not specified" throughout this layer. */
+// Per-record templating for bulk outreach (apply_to_ref): a shared param value
+// like "Hi {{first_name}}, following up on {{company}}" is personalized from
+// EACH record's own fields. Values come from the record itself (already in the
+// ref / evidence), so this adds no new provenance surface. Unknown field → "".
+const TEMPLATE_TOKEN_RE = /\{\{\s*(?:record\.)?([a-z_][a-z0-9_]*)\s*\}\}/gi;
+export function interpolateRecordTemplate(
+  params: Record<string, unknown>,
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(params)) {
+    out[k] =
+      typeof v === 'string'
+        ? v.replace(TEMPLATE_TOKEN_RE, (_m, field: string) => {
+            const val = row[field];
+            return val === null || val === undefined ? '' : String(val);
+          })
+        : v;
+  }
+  return out;
+}
+
 function stripNullsDeep(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(stripNullsDeep);
   if (v !== null && typeof v === 'object') {
@@ -1404,7 +1426,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       ref: z.string(),
       action: z.string().describe('tool name of the write action, e.g. invoices__send_invoice_reminder or tasks__create_task'),
       id_param: z.string().optional().describe('OPTIONAL — the action param that takes each record id; auto-detected from the action schema + ref entity when omitted'),
-      params_json: z.string().optional().describe('JSON object of extra params shared by every call (e.g. {"title":"Follow up"})'),
+      params_json: z.string().optional().describe('JSON object of params shared by every call (e.g. {"title":"Follow up"}). Personalize per record with {{field}} tokens drawn from each record — e.g. {"body":"Hi {{first_name}}, following up on {{company}}"} fills in each record\'s own values.'),
       dry_run: z.boolean().nullable().optional().describe('true = preview only: report what WOULD be affected, no confirmation, no writes'),
     }),
     execute: async ({ ref, action: actionName, id_param: providedIdParam, params_json, dry_run }): Promise<string> => {
@@ -1497,10 +1519,14 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
 
       emit({ t: 'step.started', turnId, stepId, action: target.slug, resolvedParams: [{ ref, id_param, count: ids.length }] });
       const startedAt = performance.now();
+      // Per-record templating: resolve {{field}} tokens in the shared params
+      // against each record's own fields (personalized bulk outreach).
+      const rowById = new Map(rows.map((r) => [rowId(r), r] as const));
       let ok = 0;
       const errors: string[] = [];
       for (const [i, id] of ids.entries()) {
-        const params = stripNullsDeep({ ...extra, [id_param]: id }) as Record<string, unknown>;
+        const perRecordExtra = interpolateRecordTemplate(extra, rowById.get(id) ?? {});
+        const params = stripNullsDeep({ ...perRecordExtra, [id_param]: id }) as Record<string, unknown>;
         const parsed = target.inputSchema.safeParse(coerceDateParams(params, clock.now()).params);
         if (!parsed.success) {
           errors.push(`${id}: invalid params`);
