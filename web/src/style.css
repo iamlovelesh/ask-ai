@@ -1039,6 +1039,34 @@ button {
   margin-bottom: 4px;
 }
 
+/* Approval-kind badge (per-tool templates): a small uppercase chip
+ * that names the action class; destructive deletes/merges get a red accent so
+ * they read differently from a routine update. */
+.confirm-kind {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  margin-bottom: 6px;
+  background: var(--amber-wash);
+  color: var(--amber-text);
+  border: 1px solid var(--hair-strong);
+}
+.confirm-kind.tpl-delete,
+.confirm-kind.tpl-merge {
+  background: color-mix(in srgb, #d64545 16%, transparent);
+  color: #d64545;
+  border-color: color-mix(in srgb, #d64545 40%, transparent);
+}
+/* A destructive card gets a red left-rail instead of amber. */
+.confirm-card.tpl-delete,
+.confirm-card.tpl-merge {
+  border-left-color: #d64545;
+}
+
 /* Quiet, derived "why" label under the gate's title — sentence case, no
  * mono, no extra emphasis; the amber desc above already carries the loud
  * signal. */

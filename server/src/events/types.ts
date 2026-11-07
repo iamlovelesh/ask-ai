@@ -91,6 +91,10 @@ export interface ConfirmationScope {
    * values flow back via the confirm verdict and are re-validated server-side
    * before the handler runs. Absent for multi-action/legacy scopes. */
   params?: Record<string, unknown>;
+  /** Approval card kind (per-tool approval templates) so the client
+   * renders an action-specific card — delete vs update vs send-email vs merge —
+   * instead of a generic line. Absent for form/legacy scopes. */
+  template?: 'recordCreate' | 'recordUpdate' | 'recordDelete' | 'email' | 'merge';
   /** A structured input FORM the agent is requesting (session__request_form,
    * request_form). When present the client renders input fields
    * instead of an approval card; submitted values flow back as the verdict's

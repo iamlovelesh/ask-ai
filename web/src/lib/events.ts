@@ -52,6 +52,9 @@ export interface ConfirmationScope {
   /** Proposed arguments for the gated action (#6) — the user may edit these
    * before approving; edited values are sent back and re-validated server-side. */
   params?: Record<string, unknown>;
+  /** Approval card kind — the client renders a delete/update/send/merge-specific
+   * card (label, icon, accent) instead of a generic one. Absent for form scopes. */
+  template?: 'recordCreate' | 'recordUpdate' | 'recordDelete' | 'email' | 'merge';
   /** A structured input form the agent requested (session__request_form). When
    * present the card renders input fields; submitted values are sent back as
    * editedParams. */

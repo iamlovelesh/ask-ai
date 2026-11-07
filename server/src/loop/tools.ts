@@ -32,6 +32,7 @@ import type { ScheduledTaskStore } from '../agent/scheduled-tasks.js';
 import { resolveRelativeDate } from '../agent/date-expr.js';
 import type { ConfirmationScope, Event } from '../events/types.js';
 import { coerceDateParams, widenForModel } from './date-rail.js';
+import { isWebSearchConfigured, webSearch, renderWebResults } from './web-search.js';
 import { loadSkills } from './skills/registry.js';
 import { DATE_FIELD_RE } from '../agent/date-expr.js';
 import type { MemoryStore } from '../memory/store.js';
@@ -472,6 +473,18 @@ const IDENTITY_FIELD_RE = /(user|assignee|owner|host|creator)_id$/;
  * default rather than silently ungated. */
 const CREATE_WRITE_VERB_RE =
   /^[a-z_]+\.(create|add|draft|duplicate|export|invite|register|enroll|join|submit|receive|upload|schedule|reply|define|bind)_/;
+// Approval card kind (per-tool approval templates): lets the client
+// render a delete/update/send-email/merge-specific card from the gate scope.
+const APPROVAL_MERGE_RE = /(^|[._])merge/i;
+const APPROVAL_DELETE_RE = /(^|[._])(delete|archive|remove|purge|disqualif|unsubscrib)/i;
+const APPROVAL_EMAIL_RE = /(^|[._])(send|email|reminder|notify|message|invite)/i;
+function approvalTemplate(slug: string, risk: string): NonNullable<ConfirmationScope['template']> {
+  if (APPROVAL_MERGE_RE.test(slug)) return 'merge';
+  if (APPROVAL_DELETE_RE.test(slug) || risk === 'destructive') return 'recordDelete';
+  if (APPROVAL_EMAIL_RE.test(slug)) return 'email';
+  if (CREATE_WRITE_VERB_RE.test(slug)) return 'recordCreate';
+  return 'recordUpdate';
+}
 /** Params that are pagination/shaping or a record selector, never scope
  * filters. `id` is the record/report SELECTOR (e.g. run_report id=struct_416) —
  * not a content filter that makes a result "not a total across all records",
@@ -799,6 +812,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
             targetSample,
             description: `${action.name} — ${affectedCount} ${pluralNoun(noun, affectedCount)}.${moneyText}${policyHit ? ` Requires approval: ${policyHit.reason}.` : ''}`,
             params,
+            template: approvalTemplate(action.slug, action.risk),
           };
           // P3 (snapshot-and-recheck): freeze the targeted records'
           // CURRENT values at proposal time; after approval, re-read and
@@ -1453,6 +1467,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         affectedCount: ids.length,
         targetSample: ids.slice(0, 5),
         description: `${target.name} — ${ids.length} ${pluralNoun(noun, ids.length)}.`,
+        template: approvalTemplate(target.slug, target.risk),
       };
       // #3: for a bulk MUTATION, snapshot the targeted records at proposal and
       // refuse on drift after approval (creates have nothing to freeze).
@@ -1649,6 +1664,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         affectedCount: fresh.length,
         targetSample: sampleIds,
         description: `${target.name} — ${fresh.length} ${pluralNoun(noun, fresh.length)}.`,
+        template: approvalTemplate(target.slug, target.risk),
       };
       // #3: for a bulk MUTATION, snapshot the targeted records at proposal and
       // refuse on drift after approval (creates have no existing rows to freeze).
@@ -1979,6 +1995,36 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     tools.push(runWorkflowTool);
   }
 
+  // Web-search enrichment (native webSearch), read-class so every role
+  // gets it — but ONLY when a provider key is configured, so a deployment with
+  // no web access never sees it. External info only; results are untrusted data.
+  if (isWebSearchConfigured()) {
+    const webSearchTool = tool({
+      name: 'web__search',
+      description:
+        'Search the public WEB for EXTERNAL information not in the CRM — company news, public facts, enrichment for an account or person. NOT for CRM data (use the CRM read tools for records/figures). Results are external, unverified reference material: cite them in plain text with their URL, and NEVER as a [[record:…]] chip.',
+      parameters: z.object({ query: z.string().describe('what to look up on the public web') }),
+      execute: async ({ query }): Promise<string> => {
+        counters.step += 1;
+        const stepId = `s${counters.step}`;
+        emit({ t: 'step.started', turnId, stepId, action: 'web.search', resolvedParams: [{ query }] });
+        try {
+          const results = await webSearch(query);
+          const obs = renderWebResults(query, results);
+          counters.stepsOk += 1;
+          emit({ t: 'step.finished', turnId, stepId, summary: `Web search "${query}": ${results.length} result(s)`, ms: 0 });
+          exits.toolOutputs.push(obs);
+          return obs;
+        } catch (err) {
+          counters.stepsFailed += 1;
+          const msg = err instanceof Error ? err.message : String(err);
+          emit({ t: 'step.failed', turnId, stepId, error: { code: 'WEB_SEARCH', message: msg.slice(0, 120) }, ms: 0 });
+          return `Web search failed: ${msg}. Answer from CRM data, or tell the user you couldn't look it up externally.`;
+        }
+      },
+    });
+    tools.push(webSearchTool);
+  }
   tools.push(searchActions, sortRef, filterRef, searchRef, aggregateRef, groupByRef, applyToRef, batchWrite, loadSkillsTool, askUser, requestForm, refuse);
   if (memory) tools.push(memorySave, memoryRecall);
   return tools;

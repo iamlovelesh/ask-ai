@@ -140,6 +140,48 @@ function makeUpdateAction(): { action: ActionDef; lastPatch: () => Record<string
   return { action, lastPatch: () => seen };
 }
 
+describe('web__search tool is config-gated', () => {
+  it('is bound only when a web-search provider key is configured', () => {
+    const { action } = makeCreateAction();
+    const has = () => buildTurnTools(buildInput(action, freshExits())).some((t) => (t as { name?: string }).name === 'web__search');
+    const prev = process.env['TAVILY_API_KEY'];
+    try {
+      delete process.env['TAVILY_API_KEY'];
+      expect(has()).toBe(false);
+      process.env['TAVILY_API_KEY'] = 'tvly-test-key';
+      expect(has()).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env['TAVILY_API_KEY'];
+      else process.env['TAVILY_API_KEY'] = prev;
+    }
+  });
+});
+
+describe('approval card template on the gate scope', () => {
+  async function templateFor(slug: string, risk: 'write' | 'destructive'): Promise<string | undefined> {
+    const action: ActionDef = {
+      id: slug, slug, module: slug.split('.')[0]!, name: slug, description: 'x', risk, entities: ['contacts'],
+      inputSchema: z.strictObject({ id: z.string() }), outputSchema: z.any(),
+      searchCard: { synonyms: [], examplePhrasings: [] },
+      handler: (async (input: Record<string, unknown>) => ({ id: input['id'] })) as ActionDef['handler'],
+    };
+    let captured: { template?: string } | undefined;
+    const base = buildInput(action, freshExits());
+    const confirm = { request: async (r: { scope: { template?: string } }) => { captured = r.scope; return true; } } as unknown as BuildTurnToolsInput['confirm'];
+    const tools = buildTurnTools({ ...base, confirm, knownIds: new Set(['con_1']) });
+    const tool = findTool(tools, slug.replace('.', '__'));
+    await tool.invoke({}, JSON.stringify({ id: 'con_1' }));
+    return captured?.template;
+  }
+
+  it('tags gates by action kind — update/delete/merge/send', async () => {
+    expect(await templateFor('contacts.update_contact_details', 'write')).toBe('recordUpdate');
+    expect(await templateFor('contacts.delete_contact', 'destructive')).toBe('recordDelete');
+    expect(await templateFor('contacts.merge_duplicate_contacts', 'destructive')).toBe('merge');
+    expect(await templateFor('messages.send_message', 'write')).toBe('email');
+  });
+});
+
 describe('nested-null param scrub', () => {
   it('strips nulls INSIDE a patch object so the update validates (model sends null for unset fields)', async () => {
     const { action, lastPatch } = makeUpdateAction();

@@ -82,6 +82,20 @@ function deny(): void {
   emit('resolve', props.confirm.confirmId, false);
 }
 
+// Approval card kind (per-tool templates): an action-specific badge
+// + accent so a delete reads differently from an update or a send.
+const KIND_META: Record<string, { label: string; cls: string }> = {
+  recordCreate: { label: 'Create', cls: 'tpl-create' },
+  recordUpdate: { label: 'Update', cls: 'tpl-update' },
+  recordDelete: { label: 'Delete', cls: 'tpl-delete' },
+  email: { label: 'Send', cls: 'tpl-email' },
+  merge: { label: 'Merge', cls: 'tpl-merge' },
+};
+const kind = computed(() => {
+  const t = props.confirm.scope.template;
+  return t ? KIND_META[t] : undefined;
+});
+
 // session__request_form: a structured input form instead of an approval.
 const form = computed(() => props.confirm.scope.form);
 const formValues = reactive<Record<string, string>>({});
@@ -130,7 +144,8 @@ function cancelForm(): void {
     <div v-else class="confirm-resolved">{{ confirm.approved ? 'Submitted' : 'Cancelled' }}</div>
   </div>
 
-  <div v-else class="confirm-card agent-section">
+  <div v-else class="confirm-card agent-section" :class="kind?.cls">
+    <span v-if="kind" class="confirm-kind" :class="kind.cls">{{ kind.label }}</span>
     <div class="confirm-desc">{{ humanDescription }}</div>
     <div class="confirm-reason">{{ reason }}</div>
     <div class="confirm-meta">
