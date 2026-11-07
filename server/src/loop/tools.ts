@@ -441,6 +441,9 @@ const NON_FILTER_KEYS = new Set(['limit', 'offset', 'cursor', 'page', 'sort', 's
 const IDENTITY_PLACEHOLDER_RE = /^(me|myself|current[ _]?user)$/i;
 /** Bulk-apply honest-refusal ceiling (same as the old executor's narrow-it-down rule). */
 const APPLY_MAX_RECORDS = 1000;
+// #5: destructive bulk ops (delete/archive over a set) cap far lower than other
+// writes — one approval should not wipe 1000 records; narrow the set instead.
+const DESTRUCTIVE_BULK_MAX = 200;
 
 /** Hard ceiling on tools bound to one turn (initial shortlist + dynamic
  * additions) — selection accuracy degrades past ~40 tools in context. */
@@ -489,6 +492,68 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     return `f:${stableStringify(data)}`;
   };
   const writeSignature = (slug: string, data: Record<string, unknown>): string => `${slug}:${naturalKey(data)}`;
+  // #2: a bulk apply_to_ref already run this turn (same action + ref + shared
+  // params) is skipped on the double-round so it can't duplicate its effect.
+  const appliedBulkSignatures = new Set<string>();
+  // #4: cache entity-table columns so existence checks only query real columns.
+  const tableColumnsCache = new Map<string, Set<string>>();
+  const tableColumns = (table: string): Set<string> => {
+    let cols = tableColumnsCache.get(table);
+    if (cols === undefined) {
+      try {
+        cols = new Set(crm.tx((db) => db.all(`PRAGMA table_info(${table})`)).map((r) => String((r as Record<string, unknown>)['name'])));
+      } catch {
+        cols = new Set<string>();
+      }
+      tableColumnsCache.set(table, cols);
+    }
+    return cols;
+  };
+  // #4: does a record with this natural identity already EXIST in the CRM?
+  // Matches by the first identifying field present on BOTH the record and the
+  // table (email → phone → name) so re-imports of contacts (email), companies
+  // (name), etc. all dedup. Fail-open on any query issue.
+  const NATURAL_MATCH: Array<{ fields: string[]; col: string }> = [
+    { fields: ['email', 'email_address', 'contact_email'], col: 'email' },
+    { fields: ['phone', 'phone_number', 'mobile'], col: 'phone' },
+    { fields: ['name', 'full_name', 'company_name', 'title'], col: 'name' },
+  ];
+  const recordExistsInCrm = (table: string, data: Record<string, unknown>): boolean => {
+    if (!/^[a-z_]+$/.test(table)) return false;
+    const cols = tableColumns(table);
+    for (const m of NATURAL_MATCH) {
+      if (!cols.has(m.col)) continue;
+      for (const f of m.fields) {
+        const v = data[f];
+        if (typeof v === 'string' && v.trim() !== '') {
+          try {
+            return crm.tx((db) => db.get(`SELECT 1 FROM ${table} WHERE lower(${m.col}) = lower(?) LIMIT 1`, [v.trim()])) !== undefined;
+          } catch {
+            return false;
+          }
+        }
+      }
+    }
+    return false;
+  };
+  // #3: snapshot-and-recheck for bulk MUTATIONS — freeze the targeted records'
+  // values at proposal; the returned checker reports drift after approval.
+  // No-op for creates (nothing to freeze) and unknown tables.
+  const snapshotRecheck = (table: string | undefined, ids: readonly string[]): (() => boolean) => {
+    const safe = table !== undefined && /^[a-z_]+$/.test(table) ? table : undefined;
+    const sample = ids.slice(0, 25);
+    const take = (): string | undefined => {
+      if (safe === undefined || sample.length === 0) return undefined;
+      try {
+        const ph = sample.map(() => '?').join(',');
+        return JSON.stringify(crm.tx((db) => db.all(`SELECT * FROM ${safe} WHERE id IN (${ph}) ORDER BY id`, [...sample])));
+      } catch {
+        return undefined;
+      }
+    };
+    const before = take();
+    return () => before !== undefined && take() !== before;
+  };
   const denialKey = (slug: string, params: Record<string, unknown>): string => {
     const ids: string[] = [];
     for (const v of Object.values(params)) {
@@ -1222,6 +1287,23 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         return `That would affect ${total} records — more than the ${APPLY_MAX_RECORDS}-record limit for one bulk action. Ask the user to narrow the set.`;
       }
       const ids = rows.map(rowId).filter((id): id is string => id !== undefined);
+      const noun = target.entities[0] ?? 'record';
+      // #5: destructive bulk ops are capped far lower than other writes.
+      if (target.risk === 'destructive' && ids.length > DESTRUCTIVE_BULK_MAX) {
+        return `That would ${target.name.toLowerCase()} ${ids.length} ${pluralNoun(noun, ids.length)} — more than the ${DESTRUCTIVE_BULK_MAX}-record limit for a destructive bulk action. Narrow the set and try again on a smaller group.`;
+      }
+      // #1: the shared params get the SAME provenance firewall as a single
+      // write — a `*_id` in params_json that was never seen can't retarget the
+      // whole set (e.g. reassigning every record to an invented owner).
+      const unseenExtra = firstUnseenId(extra, input.knownIds);
+      if (unseenExtra !== undefined) {
+        return `BLOCKED: a shared parameter referenced a record (${unseenExtra.slice(unseenExtra.indexOf('=') + 1)}) never seen this conversation — look it up first or correct it. Nothing was changed.`;
+      }
+      // #2: the same bulk apply already run this turn is a no-op (double-round).
+      const bulkSig = `${target.slug}|${ref}|${stableStringify(extra)}`;
+      if (appliedBulkSignatures.has(bulkSig)) {
+        return `"${target.name}" was ALREADY applied to the records behind ${ref} with these parameters earlier this turn — nothing new to do. Do NOT repeat it; report what was already done.`;
+      }
       if (dry_run === true) {
         const obs = `DRY RUN — "${target.name}" would apply to ${ids.length} record(s) (e.g. ${ids.slice(0, 5).join(', ')}). Nothing was changed; call again without dry_run to execute (a confirmation will be requested).`;
         publishObs(obs);
@@ -1233,7 +1315,6 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       }
       counters.step += 1;
       const stepId = `s${counters.step}`;
-      const noun = target.entities[0] ?? 'record';
       const confirmId = `cf_${randomUUID()}`;
       const scope: ConfirmationScope = {
         actions: [target.slug],
@@ -1241,6 +1322,10 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         targetSample: ids.slice(0, 5),
         description: `${target.name} — ${ids.length} ${pluralNoun(noun, ids.length)}.`,
       };
+      // #3: for a bulk MUTATION, snapshot the targeted records at proposal and
+      // refuse on drift after approval (creates have nothing to freeze).
+      const isMutation = !CREATE_WRITE_VERB_RE.test(target.slug);
+      const drifted = isMutation ? snapshotRecheck(noun, ids) : (): boolean => false;
       markTtfur();
       emit({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
       const gateStartedAt = performance.now();
@@ -1254,6 +1339,11 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         exits.denied = true;
         deniedActions.add(`${target.slug}|bulk`);
         return `DENIED by the user — "${target.name}" was NOT executed for any of the ${ids.length} records. Nothing was changed; do NOT propose it again this turn — say so plainly.`;
+      }
+      if (drifted()) {
+        counters.stepsFailed += 1;
+        emit({ t: 'step.failed', turnId, stepId, error: { code: 'CONFLICT', message: `${target.slug} targets changed between proposal and approval` }, ms: 0 });
+        return `CONFLICT: the targeted records changed while awaiting approval — "${target.name}" was NOT applied (the user approved the OLD state). Re-read the set and, if it still applies, propose it again.`;
       }
 
       emit({ t: 'step.started', turnId, stepId, action: target.slug, resolvedParams: [{ ref, id_param, count: ids.length }] });
@@ -1280,6 +1370,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const ms = performance.now() - startedAt;
       const failed = ids.length - ok;
       if (ok > 0) {
+        appliedBulkSignatures.add(bulkSig); // #2: don't re-apply this on a double-round
         counters.stepsOk += 1;
         exits.writesLanded += ok;
         exits.writeActions.set(target.name, (exits.writeActions.get(target.name) ?? 0) + ok);
@@ -1386,35 +1477,25 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       // Duplicates WITHIN this one batch are kept (that's the caller's data).
       const isCreate = /(^|[._])(create|add|import)([._]|$)/.test(target.slug);
       const entityTable = target.entities[0] && /^[a-z_]+$/.test(target.entities[0]) ? target.entities[0] : undefined;
-      const emailOf = (d: Record<string, unknown>): string | undefined => {
-        for (const k of ['email', 'email_address', 'contact_email']) {
-          const v = d[k];
-          if (typeof v === 'string' && v.trim() !== '') return v.trim();
-        }
-        return undefined;
-      };
-      const crmHasEmail = (email: string): boolean => {
-        if (!isCreate || entityTable === undefined) return false;
-        try {
-          return crm.tx((db) => db.get(`SELECT 1 FROM ${entityTable} WHERE lower(email) = lower(?) LIMIT 1`, [email])) !== undefined;
-        } catch {
-          return false; // table has no email column / other issue → don't block
-        }
-      };
       let dupeTurn = 0;
       let dupeCrm = 0;
       const fresh = validated.filter((d) => {
         if (writtenBatchSignatures.has(writeSignature(target.slug, d))) { dupeTurn += 1; return false; }
-        const em = emailOf(d);
-        if (em !== undefined && crmHasEmail(em)) { dupeCrm += 1; return false; }
+        // #4: for a create, skip rows whose natural key (email/phone/name)
+        // already matches an EXISTING record in the entity's table.
+        if (isCreate && entityTable !== undefined && recordExistsInCrm(entityTable, d)) { dupeCrm += 1; return false; }
         return true;
       });
       if (fresh.length === 0) {
-        const why = dupeCrm > 0 ? 'already exist in the CRM (matched by email)' : 'were already created earlier this turn';
+        const why = dupeCrm > 0 ? 'already exist in the CRM' : 'were already created earlier this turn';
         return `All ${validated.length} ${pluralNoun(noun, validated.length)} ${why} — nothing new to create. Do NOT create duplicates; tell the user they already exist.`;
       }
       const skipped = dupeTurn + dupeCrm;
       const dupeNote = skipped > 0 ? ` (${skipped} already existed, skipped)` : '';
+      // #5: destructive bulk ops are capped far lower than other writes.
+      if (target.risk === 'destructive' && fresh.length > DESTRUCTIVE_BULK_MAX) {
+        return `That would ${target.name.toLowerCase()} ${fresh.length} ${pluralNoun(noun, fresh.length)} — more than the ${DESTRUCTIVE_BULK_MAX}-record limit for a destructive bulk action. Do it in smaller groups.`;
+      }
       if (dry_run === true) {
         const obs = `DRY RUN — would ${target.name} on ${fresh.length} ${pluralNoun(noun, fresh.length)}${preErrors.length > 0 ? ` (${preErrors.length} invalid, skipped)` : ''}${dupeNote}. Nothing changed; call again without dry_run to execute (a confirmation will be requested).`;
         publishObs(obs);
@@ -1436,6 +1517,14 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         targetSample: sampleIds,
         description: `${target.name} — ${fresh.length} ${pluralNoun(noun, fresh.length)}.`,
       };
+      // #3: for a bulk MUTATION, snapshot the targeted records at proposal and
+      // refuse on drift after approval (creates have no existing rows to freeze).
+      const targetIds = isCreate
+        ? []
+        : fresh
+            .map((r) => Object.values(r).find((v) => typeof v === 'string' && /^[a-z][a-z_]*_\d+$/.test(v)))
+            .filter((x): x is string => typeof x === 'string');
+      const drifted = isCreate ? (): boolean => false : snapshotRecheck(entityTable, targetIds);
       markTtfur();
       emit({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
       const gateStartedAt = performance.now();
@@ -1447,6 +1536,11 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         exits.denied = true;
         deniedActions.add(`${target.slug}|batch`);
         return `DENIED by the user — "${target.name}" was NOT executed for any of the ${fresh.length} records. Nothing was changed; do NOT propose it again this turn.`;
+      }
+      if (drifted()) {
+        counters.stepsFailed += 1;
+        emit({ t: 'step.failed', turnId, stepId, error: { code: 'CONFLICT', message: `${target.slug} targets changed between proposal and approval` }, ms: 0 });
+        return `CONFLICT: the targeted records changed while awaiting approval — "${target.name}" was NOT applied (the user approved the OLD state). Re-read them and, if it still applies, propose it again.`;
       }
       emit({ t: 'step.started', turnId, stepId, action: target.slug, resolvedParams: [{ batch: fresh.length }] });
       const startedAt = performance.now();

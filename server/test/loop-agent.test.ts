@@ -391,6 +391,22 @@ describe('runLoopTurn — data__batch (createMany bulk shape)', () => {
     for (const s of ['', '-wal', '-shm', '-journal']) { const p = crmDbPath(PROFILE) + s; if (existsSync(p)) rmSync(p, { force: true }); }
   });
 
+  it('#4 skips a batch create whose NAME already exists in the CRM (non-email entity)', async () => {
+    const PROFILE = 'test-crm-name-dedup';
+    for (const s of ['', '-wal', '-shm', '-journal']) { const p = crmDbPath(PROFILE) + s; if (existsSync(p)) rmSync(p, { force: true }); }
+    const crm = openCrm(PROFILE);
+    crm.tx((db) => db.run(`INSERT INTO companies (id, created_at, updated_at, archived, name) VALUES ('comp_seed', 1, 1, 0, 'Acme Inc')`));
+    let created = 0;
+    const createAction = { ...action('companies.create_company', 'write', async () => { created += 1; return { id: `comp_${created}` }; }, z.object({ name: z.string() })), entities: ['companies'] };
+    await drive(buildRegistry([[createAction]], []), 'add these companies', [
+      toolCallResponse('data__batch', { action: 'companies__create_company', records: [{ name: 'Acme Inc' }, { name: 'Globex' }] }),
+      textResponse('Done.'),
+    ], { crm });
+    expect(created).toBe(1); // "Acme Inc" already exists (by name) → only Globex created
+    closeRegistered(PROFILE);
+    for (const s of ['', '-wal', '-shm', '-journal']) { const p = crmDbPath(PROFILE) + s; if (existsSync(p)) rmSync(p, { force: true }); }
+  });
+
   it('rejects a batch record that references an unseen id (provenance)', async () => {
     let calls = 0;
     const registry = buildRegistry(
@@ -1333,6 +1349,83 @@ describe('runLoopTurn — data__apply_to_ref bulk writes (round-4 billing)', () 
     for await (const ev of runLoopTurn(input)) events.push(ev);
     expect(handlerCalls).toBe(0);
     expect(completedOf(events).status).toBe('cancelled');
+  });
+
+  function refStoreFor(rows: { id: string }[]): RefStore {
+    return {
+      put: refs.put.bind(refs), get: refs.get.bind(refs),
+      resolve: () => ({ ids: rows.map((r) => r.id), missing: 0, total: rows.length }),
+      hydrate: (): HydrateResult => ({ rows, complete: true, total: rows.length }),
+      markAllStale: () => {},
+    };
+  }
+
+  it('#1 blocks a bulk apply whose shared params reference an UNSEEN id', async () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({ id: `lead_${i}` }));
+    let calls = 0;
+    const upd = action('leads.update_lead', 'write', async () => { calls += 1; return {}; }, z.object({ id: z.string(), owner_id: z.string().optional() }));
+    const events: Event[] = [];
+    for await (const ev of runLoopTurn({
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'reassign all these leads to the new owner',
+      sessionDeps: { registry: buildRegistry([[upd]], []), crm: fakeCrm, refs: refStoreFor(rows), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([toolCallResponse('data__apply_to_ref', { ref: 'r_t1_s1', action: 'leads__update_lead', id_param: 'id', params_json: '{"owner_id":"user_999"}' }), textResponse('ok')]) },
+    })) events.push(ev);
+    expect(calls).toBe(0); // unseen user_999 in shared params blocked before any write
+    expect(events.some((e) => e.t === 'confirmation.required')).toBe(false);
+  });
+
+  it('#2 does not re-apply the same bulk action on a double-round', async () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({ id: `inv_${i}` }));
+    let calls = 0;
+    const send = action('invoices.send_invoice_reminder', 'write', async () => { calls += 1; return {}; }, z.object({ id: z.string() }));
+    const events: Event[] = [];
+    for await (const ev of runLoopTurn({
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'send reminders for all overdue',
+      sessionDeps: { registry: buildRegistry([[send]], []), crm: fakeCrm, refs: refStoreFor(rows), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__apply_to_ref', { ref: 'r_t1_s1', action: 'invoices__send_invoice_reminder', id_param: 'id' }),
+          toolCallResponse('data__apply_to_ref', { ref: 'r_t1_s1', action: 'invoices__send_invoice_reminder', id_param: 'id' }),
+          textResponse('Sent.')]) },
+    })) events.push(ev);
+    expect(calls).toBe(20); // second identical apply short-circuited (not 40)
+    expect(events.filter((e) => e.t === 'confirmation.required')).toHaveLength(1);
+  });
+
+  it('#5 refuses a destructive bulk over the cap before any gate', async () => {
+    const rows = Array.from({ length: 250 }, (_, i) => ({ id: `lead_${i}` }));
+    let calls = 0;
+    const del = action('leads.delete_lead', 'destructive', async () => { calls += 1; return {}; }, z.object({ id: z.string() }));
+    const events: Event[] = [];
+    for await (const ev of runLoopTurn({
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'delete all of these leads',
+      sessionDeps: { registry: buildRegistry([[del]], []), crm: fakeCrm, refs: refStoreFor(rows), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([toolCallResponse('data__apply_to_ref', { ref: 'r_t1_s1', action: 'leads__delete_lead', id_param: 'id' }), textResponse('ok')]) },
+    })) events.push(ev);
+    expect(calls).toBe(0); // 250 > 200 destructive cap → refused, no gate
+    expect(events.some((e) => e.t === 'confirmation.required')).toBe(false);
+  });
+
+  it('#3 refuses a bulk MUTATION whose targets drifted between proposal and approval', async () => {
+    const rows = [{ id: 'opp_0' }];
+    let calls = 0;
+    let reads = 0;
+    // snapshot read returns a DIFFERENT value the 2nd time (record changed at the gate)
+    const driftCrm = {
+      tx: <T,>(fn: (db: StoreTx) => T): T => fn({
+        all: (sql: string) => { if (/SELECT \* FROM/.test(sql)) { reads += 1; return [{ id: 'opp_0', stage: reads <= 1 ? 'open' : 'won' }]; } return []; },
+        get: () => undefined, run: () => ({ changes: 0 }),
+      } as unknown as StoreTx),
+      close: () => {},
+    } as unknown as Crm;
+    const upd = action('opportunities.update_opportunity', 'write', async () => { calls += 1; return {}; }, z.object({ id: z.string(), stage: z.string().optional() }));
+    const events: Event[] = [];
+    for await (const ev of runLoopTurn({
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'close these opportunities',
+      sessionDeps: { registry: buildRegistry([[upd]], []), crm: driftCrm, refs: refStoreFor(rows), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([toolCallResponse('data__apply_to_ref', { ref: 'r_t1_s1', action: 'opportunities__update_opportunity', id_param: 'id', params_json: '{"stage":"closed_won"}' }), textResponse('ok')]) },
+    })) events.push(ev);
+    expect(calls).toBe(0); // drift detected → not applied
+    expect(events.some((e) => e.t === 'step.failed' && e.error.code === 'CONFLICT')).toBe(true);
   });
 });
 
