@@ -128,13 +128,20 @@ class MeteredModel implements Model {
     const startedAt = performance.now();
     try {
       for await (const ev of this.inner.getStreamedResponse(request)) {
-        const done = ev as { type?: string; response?: { usage?: { inputTokens?: number; outputTokens?: number } } };
-        if (done.type === 'response_done' && done.response?.usage) {
-          const tokensIn = done.response.usage.inputTokens ?? 0;
-          const tokensOut = done.response.usage.outputTokens ?? 0;
-          const costUsd = this.price(tokensIn, tokensOut);
-          meterLlmCost(costUsd);
-          ctx?.onLlmCall?.({ tokensIn, tokensOut, costUsd });
+        const done = ev as { type?: string; response?: { usage?: { inputTokens?: number; outputTokens?: number }; output?: unknown[] } };
+        if (done.type === 'response_done' && done.response) {
+          // Rescue unbound/unknown tool names on the assembled response BEFORE
+          // the Runner resolves it — parity with getResponse. Without this, a
+          // streamed model call to an unbound tool throws ModelBehaviorError
+          // ("Tool X not found") and kills the whole turn.
+          if (ctx?.fixResponse && Array.isArray(done.response.output)) ctx.fixResponse(done.response.output);
+          if (done.response.usage) {
+            const tokensIn = done.response.usage.inputTokens ?? 0;
+            const tokensOut = done.response.usage.outputTokens ?? 0;
+            const costUsd = this.price(tokensIn, tokensOut);
+            meterLlmCost(costUsd);
+            ctx?.onLlmCall?.({ tokensIn, tokensOut, costUsd });
+          }
         }
         yield ev;
       }
