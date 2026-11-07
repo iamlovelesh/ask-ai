@@ -83,6 +83,7 @@ describe('useSessionStore', () => {
       steps: {},
       activity: [],
       deltaText: '',
+      memoryOps: [],
       pendingConfirm: {
         confirmId: 'c1',
         stepId: 's1',

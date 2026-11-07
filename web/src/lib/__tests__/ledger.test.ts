@@ -8,6 +8,7 @@ function turn(partial: Partial<TurnView> & Pick<TurnView, 'turnId' | 'userText'>
     steps: {},
     activity: [],
     deltaText: '',
+    memoryOps: [],
     ...partial,
   };
 }
