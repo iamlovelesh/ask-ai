@@ -158,6 +158,20 @@ describe('SessionRuntime.fireDueScheduledTasks (#8 auto-resume)', () => {
     expect(pending[0]?.dueAt).toBeGreaterThan(NOW); // in the future
   });
 
+  it('a recurring AGENT task (e.g. a daily briefing) reschedules itself for the next interval', () => {
+    const runtime = makeRuntime([]);
+    const sid = eventLog.createSession('sched-brief');
+    runtime.scheduler().schedule({ id: 'task_brief', sessionId: sid, dueAt: NOW - 1000, instruction: 'Daily briefing', createdAt: NOW - 1, role: 'admin', userId: 'user_1', intervalMs: 86_400_000 });
+    const calls: unknown[] = [];
+    runtime.fireDueScheduledTasks(NOW, (c) => calls.push(c));
+    expect(calls).toHaveLength(1); // the briefing turn ran
+    const pending = runtime.scheduler().listPending(sid);
+    expect(pending).toHaveLength(1); // AND a fresh occurrence was scheduled
+    expect(pending[0]?.workflowId).toBeUndefined(); // still a plain agent task
+    expect(pending[0]?.intervalMs).toBe(86_400_000);
+    expect(pending[0]?.dueAt).toBeGreaterThan(NOW);
+  });
+
   it('a failed start leaves the task pending (retry next tick)', () => {
     const runtime = makeRuntime([]);
     const sid = eventLog.createSession('sched2');

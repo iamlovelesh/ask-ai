@@ -525,6 +525,20 @@ describe('runLoopTurn — scheduled follow-up (#8)', () => {
     expect(pending).toHaveLength(1);
   });
 
+  it('session__schedule_briefing creates a RECURRING digest task (intervalMs set)', async () => {
+    const scheduler = openScheduledTasks(sessionsDb);
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    await drive(registry, 'brief me every morning on at-risk deals and overdue invoices', [
+      toolCallResponse('session__schedule_briefing', { cadence: 'daily', when: '+1d', focus: 'at-risk deals and overdue invoices' }),
+      textResponse('Set — a daily briefing is scheduled.'),
+    ], { scheduler });
+    const pending = scheduler.listPending(sessionId);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.intervalMs).toBe(86_400_000); // daily cadence → recurring
+    expect(pending[0]!.workflowId).toBeUndefined(); // an agent-turn briefing, not a workflow
+    expect(pending[0]!.instruction).toMatch(/briefing/i);
+  });
+
   it('is not offered when no scheduler is wired (tests/eval)', async () => {
     const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
     // No scheduler override → the tool is unbound; calling it is an unknown

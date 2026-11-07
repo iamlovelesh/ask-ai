@@ -1953,6 +1953,64 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     });
     tools.push(scheduleFollowUp);
 
+    // Scheduled briefings: a RECURRING proactive digest the assistant prepares
+    // on a cadence (every morning, weekly). The poller runs the instruction as
+    // a turn at each due time and reschedules by intervalMs; the digest lands
+    // as a message in this session. Write-class, same gate as the block.
+    const BRIEFING_MS: Record<'hourly' | 'daily' | 'weekly', number> = { hourly: 3_600_000, daily: 86_400_000, weekly: 604_800_000 };
+    const scheduleBriefing = tool({
+      name: 'session__schedule_briefing',
+      description:
+        'Set up a RECURRING proactive briefing — a digest the assistant prepares on a schedule (e.g. every morning): deals at risk, overdue/unpaid invoices, leads gone quiet, and deals closing soon. Give the cadence and when to FIRST run it; optionally narrow the focus. Each run appears as a message in this session. Use for "brief me every morning", "send me a weekly pipeline summary".',
+      parameters: z.object({
+        cadence: z.enum(['daily', 'weekly', 'hourly']).describe('how often the briefing repeats'),
+        when: z.string().describe('first run time: ISO date/time, or a relative expression like "@today", "+1d", "+2h"'),
+        focus: z.string().nullable().optional().describe('optional: narrow the briefing (e.g. "just overdue invoices and at-risk deals")'),
+      }),
+      execute: async ({ cadence, when, focus }): Promise<string> => {
+        const now = clock.now();
+        const raw = when.trim();
+        const normalized = /^[+-]\d+[mhdw]$/.test(raw) ? `@now${raw}` : raw;
+        const dueAt = resolveRelativeDate(normalized, now) ?? Date.parse(raw);
+        if (!Number.isFinite(dueAt)) {
+          return `Could not understand the time "${when}". Use an ISO date or a relative expression like "@today" or "+1d".`;
+        }
+        // First run may be "today" and already past — fire on the next tick.
+        const firstDue = Math.max(dueAt, now + 1000);
+        const scopeNote = focus && focus.trim() !== '' ? ` Focus especially on: ${focus.trim()}.` : '';
+        const instruction =
+          `Prepare my ${cadence} CRM briefing. Cover, concisely and grounded in real figures: deals at risk ` +
+          `(stalled or past their expected close), overdue or unpaid invoices, leads that have gone quiet, and ` +
+          `deals closing soon. Load the relevant skills (pipeline review, overdue-invoice reminders, lead follow-up) ` +
+          `and read the data with tools — do not invent numbers.${scopeNote}`;
+        const schedKey = `briefing:${cadence}:${(focus ?? '').trim().toLowerCase()}`;
+        const priorDue = scheduledThisTurn.get(schedKey);
+        if (priorDue !== undefined) {
+          return `A ${cadence} briefing was ALREADY scheduled earlier this turn (first run ${new Date(priorDue).toISOString()}) — NOT scheduling a duplicate. Tell the user it is set.`;
+        }
+        scheduledThisTurn.set(schedKey, firstDue);
+        counters.step += 1;
+        const stepId = `s${counters.step}`;
+        emit({ t: 'step.started', turnId, stepId, action: 'session.schedule_briefing', resolvedParams: [{ cadence, when, focus }] });
+        scheduler.schedule({
+          id: `task_${randomUUID()}`,
+          sessionId,
+          dueAt: firstDue,
+          instruction,
+          createdAt: now,
+          role: principal.role,
+          userId: principal.userId,
+          intervalMs: BRIEFING_MS[cadence],
+        });
+        const obs = `Scheduled a ${cadence} briefing, first running ${new Date(firstDue).toISOString()}. It will appear here each time it runs.`;
+        counters.stepsOk += 1;
+        emit({ t: 'step.finished', turnId, stepId, summary: obs, ms: 0 });
+        exits.toolOutputs.push(obs);
+        return obs;
+      },
+    });
+    tools.push(scheduleBriefing);
+
     // workflow__schedule (#flagship L3): run a workflow on a schedule / repeating
     // cron. The poller runs it via the engine at the due time (and reschedules
     // when repeat is set). Write-class, same gate as the block.

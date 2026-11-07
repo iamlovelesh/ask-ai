@@ -447,6 +447,20 @@ export class SessionRuntime {
         const principal = resolvePrincipal({ role: task.role, userId: task.userId });
         start({ sessionId: task.sessionId, instruction: task.instruction, principal });
         this.scheduler().markFired(task.id);
+        if (task.intervalMs !== undefined && task.intervalMs > 0) {
+          // Recurring agent task (e.g. a scheduled briefing) — queue the next
+          // occurrence from now, same as the recurring-workflow branch above.
+          this.scheduler().schedule({
+            id: `task_${randomUUID()}`,
+            sessionId: task.sessionId,
+            dueAt: nowMs + task.intervalMs,
+            instruction: task.instruction,
+            createdAt: nowMs,
+            role: task.role,
+            userId: task.userId,
+            intervalMs: task.intervalMs,
+          });
+        }
         fired += 1;
       } catch (err) {
         // Leave pending to retry next tick — but surface it, so a task that
