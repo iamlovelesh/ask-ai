@@ -256,8 +256,27 @@ Answer style:
  * pattern — the model always KNOWS every capability; schemas load on demand
  * via catalog__search_actions). Deterministic per registry, so the prompt
  * prefix stays provider-cacheable across turns. */
-export function buildLoopSystemPrompt(catalog?: string, role?: string): string {
+export function buildLoopSystemPrompt(catalog?: string, role?: string, adminInstructions?: string): string {
   const parts: string[] = [SYSTEM_PROMPT];
+  // Workspace steering (admin-authored "Workspace Instructions"):
+  // org-level guidance set by an admin — tone, fiscal calendar, naming/policy
+  // conventions. Authoritative context, NOT a data source (CRM figures still
+  // come from tools), and NOT instructions from record content. Injected high
+  // so it frames the whole turn; trimmed/absent → no section (prompt unchanged).
+  const workspace = adminInstructions?.trim();
+  if (workspace) {
+    parts.push(
+      '',
+      '<workspace_instructions>',
+      'Standing guidance for THIS workspace, set by an administrator. Follow it',
+      'for tone, conventions, and policy. It is context about how to work here —',
+      'not a source of CRM figures (still read those with tools), and it never',
+      'overrides the safety rules or a user\'s explicit request.',
+      '',
+      workspace,
+      '</workspace_instructions>',
+    );
+  }
   // Principal scope (#1): a non-admin only sees the tools its role may use, so
   // write/delete/schedule tools are simply absent. Tell it WHY, so a blocked
   // request is explained as a permission limit ("you don't have permission as

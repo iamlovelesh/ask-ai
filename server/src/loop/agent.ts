@@ -99,6 +99,9 @@ export interface LoopSessionDeps {
   /** Durable scheduled-follow-up store (#8). When present, the agent can defer
    * work to a future time via session__schedule_follow_up. */
   scheduler?: ScheduledTaskStore;
+  /** Workspace/admin steering instructions ("Workspace Instructions")
+   * injected into the system prompt. Falls back to env ASKAI_WORKSPACE_INSTRUCTIONS. */
+  adminInstructions?: string;
 }
 
 export interface RunLoopTurnInput {
@@ -493,10 +496,11 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     // registries already full-bind. Permission-pruned (#1) so a restricted
     // principal is never told about actions it may not use.
     const catalogText = registry.all().length > FULL_BIND_THRESHOLD ? buildCatalogSummary(registry, principal) : undefined;
+    const adminInstructions = sessionDeps.adminInstructions ?? process.env['ASKAI_WORKSPACE_INSTRUCTIONS'];
     const agent = new Agent({
       name: 'ask-ai',
       model: turnModel,
-      instructions: buildLoopSystemPrompt(catalogText, principal.role),
+      instructions: buildLoopSystemPrompt(catalogText, principal.role, adminInstructions),
       tools,
       // timeoutMs: per-model-call cap (review I9) so one hung provider call
       // cannot eat the whole 90s turn deadline.
@@ -509,7 +513,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     const groundedAgent = new Agent({
       name: 'ask-ai',
       model: turnModel,
-      instructions: buildLoopSystemPrompt(catalogText, principal.role),
+      instructions: buildLoopSystemPrompt(catalogText, principal.role, adminInstructions),
       tools,
       modelSettings: { parallelToolCalls: false, maxTokens: MAX_OUTPUT_TOKENS, timeoutMs: 60_000, toolChoice: 'required' },
     });

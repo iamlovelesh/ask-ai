@@ -97,6 +97,16 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/RE-RUN the original search|all filters combined/i);
   });
 
+  it('injects workspace/admin steering instructions as an authoritative section', () => {
+    const p = buildLoopSystemPrompt(undefined, undefined, 'Our fiscal year starts in April. Always address customers as Mr/Ms.');
+    expect(p).toMatch(/workspace_instructions/i);
+    expect(p).toContain('Our fiscal year starts in April');
+    // absent → section omitted, prompt unchanged from the no-arg baseline
+    expect(buildLoopSystemPrompt()).not.toMatch(/workspace_instructions/i);
+    expect(buildLoopSystemPrompt(undefined, undefined, '')).toBe(system);
+    expect(buildLoopSystemPrompt(undefined, undefined, '   ')).toBe(system);
+  });
+
   it('adds a role-permission note for non-admin principals, framing refusals as permission', () => {
     const viewer = buildLoopSystemPrompt(undefined, 'viewer');
     expect(viewer).toMatch(/acting as a viewer/i);
