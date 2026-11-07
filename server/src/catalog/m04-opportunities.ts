@@ -322,11 +322,30 @@ const moveOpportunityToStage: ActionDef<z.infer<typeof moveOpportunityToStageInp
         `Stage '${input.stage}' is not configured on pipeline '${pipelineId}' (known stages: ${stages.join(', ')}).`,
       );
     }
-    ctx.db.run(`UPDATE opportunities SET stage = ?, updated_at = ? WHERE id = ?`, [
-      input.stage,
-      ctx.clock.now(),
-      input.id,
-    ]);
+    // Keep `status` (and probability) consistent with the stage — otherwise a
+    // deal moved to a terminal stage stays status=open and shows up under "open
+    // opportunities" (observed: opp with stage=closed_won, status=open). Moving
+    // to a closed stage closes it; moving a closed deal back to an active stage
+    // reopens it; moving between active stages leaves status untouched.
+    const currentStatus = row['status'] as string;
+    if (input.stage === 'closed_won') {
+      ctx.db.run(`UPDATE opportunities SET stage = ?, status = 'won', probability = 100, updated_at = ? WHERE id = ?`, [
+        input.stage, ctx.clock.now(), input.id,
+      ]);
+    } else if (input.stage === 'closed_lost') {
+      ctx.db.run(`UPDATE opportunities SET stage = ?, status = 'lost', probability = 0, updated_at = ? WHERE id = ?`, [
+        input.stage, ctx.clock.now(), input.id,
+      ]);
+    } else if (currentStatus !== 'open') {
+      // reopening a previously won/lost deal into an active stage
+      ctx.db.run(`UPDATE opportunities SET stage = ?, status = 'open', probability = NULL, updated_at = ? WHERE id = ?`, [
+        input.stage, ctx.clock.now(), input.id,
+      ]);
+    } else {
+      ctx.db.run(`UPDATE opportunities SET stage = ?, updated_at = ? WHERE id = ?`, [
+        input.stage, ctx.clock.now(), input.id,
+      ]);
+    }
     return toView(getOpportunityRow(ctx.db, input.id));
   }),
 };
