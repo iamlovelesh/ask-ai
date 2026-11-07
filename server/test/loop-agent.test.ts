@@ -374,6 +374,23 @@ describe('runLoopTurn — data__batch (createMany bulk shape)', () => {
     expect(createSteps).toHaveLength(1);
   });
 
+  it('skips a batch create whose email already EXISTS in the CRM (re-import dedup)', async () => {
+    const PROFILE = 'test-crm-reimport';
+    for (const s of ['', '-wal', '-shm', '-journal']) { const p = crmDbPath(PROFILE) + s; if (existsSync(p)) rmSync(p, { force: true }); }
+    const crm = openCrm(PROFILE);
+    crm.tx((db) => db.run(`INSERT INTO contacts (id, created_at, updated_at, archived, name, first_name, last_name, email) VALUES ('con_seed', 1, 1, 0, 'Ada X', 'Ada', 'X', 'ada@x.com')`));
+    let created = 0;
+    const createAction = { ...action('contacts.create_contact', 'write', async () => { created += 1; return { id: `con_${created}` }; }, z.object({ email: z.string().optional(), name: z.string().optional() })), entities: ['contacts'] };
+    const reg = buildRegistry([[createAction]], []);
+    await drive(reg, 'import these contacts', [
+      toolCallResponse('data__batch', { action: 'contacts__create_contact', records: [{ email: 'ada@x.com', name: 'Ada X' }, { email: 'ben@y.com', name: 'Ben Y' }] }),
+      textResponse('Done.'),
+    ], { crm });
+    expect(created).toBe(1); // ada@x.com already existed → skipped; only ben@y.com created
+    closeRegistered(PROFILE);
+    for (const s of ['', '-wal', '-shm', '-journal']) { const p = crmDbPath(PROFILE) + s; if (existsSync(p)) rmSync(p, { force: true }); }
+  });
+
   it('rejects a batch record that references an unseen id (provenance)', async () => {
     let calls = 0;
     const registry = buildRegistry(

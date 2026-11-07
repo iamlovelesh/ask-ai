@@ -1377,16 +1377,44 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       if (validated.length === 0) {
         return `No valid records to write. Issues: ${preErrors.slice(0, 5).join('; ')}. Fix the parameters (or look up any unseen ids first) and retry.`;
       }
-      // Double-round guard: drop records already written earlier THIS turn
-      // (same action + same params) so a re-issued batch can't duplicate them.
-      // Duplicates WITHIN this one batch are kept (that's the caller's data).
-      const dupeCount = validated.filter((d) => writtenBatchSignatures.has(writeSignature(target.slug, d))).length;
-      const fresh = validated.filter((d) => !writtenBatchSignatures.has(writeSignature(target.slug, d)));
-      if (fresh.length === 0) {
-        return `Those ${validated.length} record(s) were ALREADY created earlier this turn — nothing new to write. Do NOT create them again; report what was already done.`;
-      }
       const noun = target.entities[0] ?? 'record';
-      const dupeNote = dupeCount > 0 ? ` (${dupeCount} already created earlier this turn, skipped)` : '';
+      // Dedup so a create can't make duplicates, from either source:
+      //  (a) the double-round — a re-issued batch repeating rows already
+      //      written THIS turn (natural-key signature), or
+      //  (b) a re-import — rows whose email already matches an EXISTING record
+      //      in the CRM (only for create actions; fail-open if unqueryable).
+      // Duplicates WITHIN this one batch are kept (that's the caller's data).
+      const isCreate = /(^|[._])(create|add|import)([._]|$)/.test(target.slug);
+      const entityTable = target.entities[0] && /^[a-z_]+$/.test(target.entities[0]) ? target.entities[0] : undefined;
+      const emailOf = (d: Record<string, unknown>): string | undefined => {
+        for (const k of ['email', 'email_address', 'contact_email']) {
+          const v = d[k];
+          if (typeof v === 'string' && v.trim() !== '') return v.trim();
+        }
+        return undefined;
+      };
+      const crmHasEmail = (email: string): boolean => {
+        if (!isCreate || entityTable === undefined) return false;
+        try {
+          return crm.tx((db) => db.get(`SELECT 1 FROM ${entityTable} WHERE lower(email) = lower(?) LIMIT 1`, [email])) !== undefined;
+        } catch {
+          return false; // table has no email column / other issue → don't block
+        }
+      };
+      let dupeTurn = 0;
+      let dupeCrm = 0;
+      const fresh = validated.filter((d) => {
+        if (writtenBatchSignatures.has(writeSignature(target.slug, d))) { dupeTurn += 1; return false; }
+        const em = emailOf(d);
+        if (em !== undefined && crmHasEmail(em)) { dupeCrm += 1; return false; }
+        return true;
+      });
+      if (fresh.length === 0) {
+        const why = dupeCrm > 0 ? 'already exist in the CRM (matched by email)' : 'were already created earlier this turn';
+        return `All ${validated.length} ${pluralNoun(noun, validated.length)} ${why} — nothing new to create. Do NOT create duplicates; tell the user they already exist.`;
+      }
+      const skipped = dupeTurn + dupeCrm;
+      const dupeNote = skipped > 0 ? ` (${skipped} already existed, skipped)` : '';
       if (dry_run === true) {
         const obs = `DRY RUN — would ${target.name} on ${fresh.length} ${pluralNoun(noun, fresh.length)}${preErrors.length > 0 ? ` (${preErrors.length} invalid, skipped)` : ''}${dupeNote}. Nothing changed; call again without dry_run to execute (a confirmation will be requested).`;
         publishObs(obs);
