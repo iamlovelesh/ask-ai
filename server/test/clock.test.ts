@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { VirtualClock } from '../src/store/clock';
 import { Prng } from '../src/util/prng';
 import { makeId } from '../src/util/ids';
@@ -41,6 +41,38 @@ describe('VirtualClock', () => {
     const startOfPrevWeekMs = clock.startOfWeek(-1);
     const expectedMs = new Date('2026-10-26T00:00:00Z').getTime();
     expect(startOfPrevWeekMs).toBe(expectedMs);
+  });
+});
+
+describe('VirtualClock wall-clock fallback (VIRTUAL_NOW unset)', () => {
+  // When VIRTUAL_NOW is not set, the clock tracks real wall-clock time so the
+  // running server reports the actual current date rather than a stale pin.
+  it('defaults to real wall-clock time, captured per construction', async () => {
+    vi.resetModules();
+    vi.stubEnv('VIRTUAL_NOW', '');
+    try {
+      const { VirtualClock: FreshClock } = await import('../src/store/clock');
+      const before = Date.now();
+      const nowMs = new FreshClock().now();
+      const after = Date.now();
+      expect(nowMs).toBeGreaterThanOrEqual(before);
+      expect(nowMs).toBeLessThanOrEqual(after);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
+  it('still honors an explicit VIRTUAL_NOW pin', async () => {
+    vi.resetModules();
+    vi.stubEnv('VIRTUAL_NOW', '2030-01-15T08:00:00Z');
+    try {
+      const { VirtualClock: FreshClock } = await import('../src/store/clock');
+      expect(new FreshClock().iso()).toBe('2030-01-15T08:00:00.000Z');
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 });
 

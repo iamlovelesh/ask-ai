@@ -32,7 +32,7 @@ const member: Principal = { userId: 'user_9', role: 'member' };
 
 function toolNamesFor(principal: Principal): string[] {
   const exits: LoopExits = {
-    denied: false, writesLanded: 0, writeActions: new Map(), toolOutputs: [], appliedFilters: [], stop: () => {},
+    denied: false, writesLanded: 0, writeActions: new Map(), writeEntities: new Set(), toolOutputs: [], appliedFilters: [], stop: () => {},
   };
   const tools = buildTurnTools({
     registry,

@@ -21,7 +21,7 @@ afterAll(() => {
 });
 
 function freshExits(): LoopExits {
-  return { denied: false, writesLanded: 0, writeActions: new Map(), toolOutputs: [], appliedFilters: [], stop: () => {} };
+  return { denied: false, writesLanded: 0, writeActions: new Map(), writeEntities: new Set(), toolOutputs: [], appliedFilters: [], stop: () => {} };
 }
 
 function buildInput(memory: MemoryStore | undefined, memoryWritable: boolean, exits: LoopExits): BuildTurnToolsInput {

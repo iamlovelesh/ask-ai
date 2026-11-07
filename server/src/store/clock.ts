@@ -1,5 +1,10 @@
-const VIRTUAL_NOW = process.env.VIRTUAL_NOW || '2026-11-04T10:00:00Z';
-const PINNED_TIME_MS = new Date(VIRTUAL_NOW).getTime();
+// When `VIRTUAL_NOW` is set, the agent clock is PINNED to it — deterministic
+// demos, evals (eval/runner-process.ts sets its own pin), and the test suite
+// (pinned via vitest.config.ts) all rely on this. When it is unset, the clock
+// tracks REAL wall-clock time (captured per `VirtualClock` construction) so the
+// running server reports the actual current date instead of a stale anchor.
+const PINNED_ISO = process.env.VIRTUAL_NOW;
+const PINNED_TIME_MS = PINNED_ISO ? new Date(PINNED_ISO).getTime() : null;
 
 /** Real wall-clock time, in ms. The ONLY sanctioned caller of `Date.now()`
  * besides this module's VirtualClock. Use for genuine real-time bookkeeping
@@ -13,7 +18,7 @@ export class VirtualClock {
   private timeMs: number;
 
   constructor(timeMs?: number) {
-    this.timeMs = timeMs ?? PINNED_TIME_MS;
+    this.timeMs = timeMs ?? PINNED_TIME_MS ?? Date.now();
   }
 
   now(): number {

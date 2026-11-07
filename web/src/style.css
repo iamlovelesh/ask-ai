@@ -554,6 +554,18 @@ button {
 .said-agent p {
   margin: 0;
 }
+/* Honest-disclosure cautions the server appends (⚠ …): amber text + a thin
+   left accent so they read as advisory notes, distinct from ordinary answer
+   prose. Deliberately lighter than the filled confirmation-gate card so the
+   two amber treatments don't read as the same thing. The explicit color also
+   wins over `.said-agent.is-fail`'s inherited red on a failed turn. */
+.said-agent .answer-caution {
+  padding-left: 10px;
+  border-left: 2px solid var(--amber);
+  color: var(--amber-text);
+  font-size: 0.93em;
+  line-height: 1.5;
+}
 .said-agent p + p,
 .said-agent p + ol,
 .said-agent p + ul,

@@ -45,6 +45,21 @@ describe('renderMarkdown', () => {
     expect(renderMarkdown('All done.')).toBe('<p>All done.</p>');
   });
 
+  it('tags a ⚠ caution line with the answer-caution class (amber styling hook)', () => {
+    const html = renderMarkdown(
+      'Here is the total.\n\n⚠ Please double-check these figures against the records — I could not verify them: 1,100',
+    );
+    // the ordinary paragraph stays plain
+    expect(html).toContain('<p>Here is the total.</p>');
+    // the caution paragraph carries the class the CSS colours amber
+    expect(html).toContain('<p class="answer-caution">⚠ Please double-check');
+  });
+
+  it('tags every consecutive ⚠ caution block, not just the first', () => {
+    const html = renderMarkdown('⚠ first warning\n\n⚠ second warning');
+    expect((html.match(/<p class="answer-caution">/g) || []).length).toBe(2);
+  });
+
   it('renders [[record:entity:id:Name]] tokens as record chips (pattern)', () => {
     const html = renderMarkdown('The oldest is [[record:invoices:inv_55:INV-2667]] from May.');
     expect(html).toContain('class="record-chip"');

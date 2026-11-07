@@ -4,6 +4,12 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['test/**/*.test.ts'],
+    // Pin the agent clock for the whole suite. `VirtualClock` now tracks real
+    // wall-clock time when `VIRTUAL_NOW` is unset (so the running server shows
+    // the actual current date); tests, however, assert against the Nov-4
+    // seed anchor, so we restore the pin here for determinism. Must be set
+    // before any test module (and thus `src/store/clock.ts`) loads.
+    env: { VIRTUAL_NOW: '2026-11-04T10:00:00Z' },
     // Deterministic CI/eval runs: `llm/client.ts`'s test seams
     // (`__setTestFetch`/`__setTestSpans`/`__setTestBackoffOptions`,
     // `costMeter`) are module-level mutable state, and running test FILES

@@ -137,12 +137,22 @@ function renderTable(lines: string[]): string {
   return chart !== null ? chart + table : table;
 }
 
+// Server-appended honest-disclosure cautions (loop/agent.ts, count-reconcile.ts)
+// all begin with a warning sign. They render as their own paragraph, tagged so
+// the chat CSS can colour them amber — distinct from the ordinary answer prose.
+const CAUTION_RE = /^\s*⚠/;
+
 function renderBlock(block: string): string {
   const lines = block.split('\n').filter((l) => l.trim() !== '');
   if (lines.length === 0) return '';
 
   if (lines.length >= 2 && lines[0]?.includes('|') && TABLE_DELIM_RE.test(lines[1] as string)) {
     return renderTable(lines);
+  }
+
+  // A caution block (every line a ⚠ disclosure) → amber-styled paragraph.
+  if (lines.every((l) => CAUTION_RE.test(l))) {
+    return `<p class="answer-caution">${lines.map(renderInline).join('<br>')}</p>`;
   }
 
   if (lines.every((l) => ORDERED_RE.test(l))) {
