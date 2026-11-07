@@ -41,7 +41,7 @@ async function onBodyClick(e: MouseEvent): Promise<void> {
     const res = await fetch(`/api/records/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`);
     if (!recordPopover.value || recordPopover.value.id !== id) return; // superseded
     if (!res.ok) {
-      recordPopover.value = { ...recordPopover.value, loading: false, error: 'Record not found.' };
+      recordPopover.value = { ...recordPopover.value, loading: false, error: 'This record no longer exists — it may have been deleted or merged into another.' };
       return;
     }
     const body = (await res.json()) as { fields: Record<string, unknown> };
