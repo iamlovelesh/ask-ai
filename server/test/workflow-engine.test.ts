@@ -173,3 +173,44 @@ describe('workflow engine — DATABASE_EVENT firing (onWrite)', () => {
     expect(await engine.onWrite(readish, { items: [] })).toHaveLength(0);
   });
 });
+
+describe('workflow engine — event-payload interpolation ({{event.field}})', () => {
+  // Capture the params each step receives so we can assert interpolation.
+  const received: Array<Record<string, unknown>> = [];
+  const capturing: ActionDef = testAction('tasks.create_task', async (input) => { received.push(input as Record<string, unknown>); return { id: 'task_1' }; });
+  const createLead2: ActionDef = testAction('leads.create_lead', async () => ({ id: 'lead_9', contact_id: 'con_42', status: 'new' }));
+  const interpRegistry = buildRegistry([[capturing, createLead2]], []);
+
+  function seedWfWithConfig(id: string, type: string, config: Record<string, unknown>): void {
+    crm.tx((db) =>
+      db.run(
+        `INSERT INTO structures (id, created_at, updated_at, archived, kind, name, slug, status, config)
+         VALUES (?, 1, 1, 0, 'workflow', ?, ?, 'active', ?)`,
+        [id, id, id, JSON.stringify({ steps: [{ step_id: 'step_1', type, config, order: 1 }], execution_log: [] })],
+      ),
+    );
+  }
+
+  it('substitutes {{event.field}} in a step config with the triggering record value', async () => {
+    received.length = 0;
+    seedWfWithConfig('wf_interp', 'tasks.create_task', { contact_id: '{{event.contact_id}}', title: 'Welcome {{event.status}} lead' });
+    seedTrigger('trig_i', 'lead.created', {}, 'wf_interp');
+    const engine = createWorkflowEngine({ registry: interpRegistry, crm, clock: new VirtualClock() });
+    await engine.onWrite(createLead2, { id: 'lead_9', contact_id: 'con_42', status: 'new' });
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual({ contact_id: 'con_42', title: 'Welcome new lead' });
+  });
+
+  it('preserves the value type when the whole field is a single {{event.x}} token', async () => {
+    received.length = 0;
+    seedWfWithConfig('wf_interp2', 'tasks.create_task', { score: '{{event.score}}' });
+    seedTrigger('trig_i2', 'lead.created', {}, 'wf_interp2');
+    const engine = createWorkflowEngine({ registry: interpRegistry, crm, clock: new VirtualClock() });
+    // onWrite passes the handler result as the event; craft one with a numeric field
+    const createWithScore: ActionDef = testAction('leads.create_lead', async () => ({ id: 'l', score: 87 }));
+    const reg2 = buildRegistry([[capturing, createWithScore]], []);
+    const engine2 = createWorkflowEngine({ registry: reg2, crm, clock: new VirtualClock() });
+    await engine2.onWrite(createWithScore, { id: 'l', score: 87 });
+    expect(received[0]?.['score']).toBe(87); // number preserved, not "87"
+  });
+});

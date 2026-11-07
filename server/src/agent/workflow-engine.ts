@@ -60,6 +60,34 @@ function conditionsMatch(conditions: Record<string, unknown>, record: Record<str
   return true;
 }
 
+const WHOLE_TOKEN_RE = /^\{\{\s*event\.([a-zA-Z0-9_]+)\s*\}\}$/;
+const INLINE_TOKEN_RE = /\{\{\s*event\.([a-zA-Z0-9_]+)\s*\}\}/g;
+
+/** Substitute {{event.<field>}} references in a step value with the triggering
+ * record's values. A whole-value single token keeps the source type (so a
+ * numeric id stays a number); inline tokens render as text. */
+function interpolateValue(value: unknown, event: Record<string, unknown>): unknown {
+  if (typeof value === 'string') {
+    const whole = WHOLE_TOKEN_RE.exec(value);
+    if (whole) {
+      const key = whole[1] as string;
+      return key in event ? event[key] : value;
+    }
+    return value.replace(INLINE_TOKEN_RE, (_m, key: string) => (key in event ? String(event[key]) : ''));
+  }
+  if (Array.isArray(value)) return value.map((v) => interpolateValue(v, event));
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = interpolateValue(v, event);
+    return out;
+  }
+  return value;
+}
+
+export function interpolateConfig(config: Record<string, unknown>, event: Record<string, unknown>): Record<string, unknown> {
+  return interpolateValue(config, event) as Record<string, unknown>;
+}
+
 export interface WorkflowStepDef {
   step_id: string;
   type: string;
@@ -89,6 +117,9 @@ export interface WorkflowRun {
 export interface RunWorkflowOptions {
   /** Provenance of the run: 'manual', 'event:<entity>.<op>', 'cron'. */
   trigger: string;
+  /** The triggering record, available to steps as {{event.<field>}}. Present
+   * for event-fired runs; absent for manual/cron runs (tokens render empty). */
+  event?: Record<string, unknown>;
 }
 
 export interface WorkflowEngine {
@@ -132,7 +163,8 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps): WorkflowEngine {
         results.push({ step_id: step.step_id, type: step.type, status: 'failed', error: `unknown action "${step.type}"` });
         continue;
       }
-      const coerced = coerceDateParams(step.config ?? {}, clock.now()).params;
+      const resolved = opts.event ? interpolateConfig(step.config ?? {}, opts.event) : (step.config ?? {});
+      const coerced = coerceDateParams(resolved, clock.now()).params;
       const parsed = action.inputSchema.safeParse(coerced);
       if (!parsed.success) {
         results.push({ step_id: step.step_id, type: step.type, status: 'failed', error: 'invalid step config for this action' });
@@ -202,7 +234,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps): WorkflowEngine {
 
       const runs: WorkflowRun[] = [];
       for (const wf of workflowIds) {
-        const run = await runWorkflow(wf, { trigger: `event:${writeEvent}` });
+        const run = await runWorkflow(wf, { trigger: `event:${writeEvent}`, event: record });
         if (run) runs.push(run);
       }
       return runs;

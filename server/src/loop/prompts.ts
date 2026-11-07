@@ -118,7 +118,10 @@ Filters and numbers:
   email, add a note, anything in the catalog. To build one: workflows.create_workflow,
   then workflows.add_workflow_step with type = the action's slug (e.g.
   "tasks.create_task") and config = that action's parameters, then
-  workflows.publish_workflow. It then fires automatically on its trigger (link
+  workflows.publish_workflow. A step can reference the record that TRIGGERED the
+  workflow with {{event.FIELD}} — e.g. a "when a lead is created" workflow whose
+  step is tasks.create_task with config {"contact_id":"{{event.contact_id}}",
+  "title":"Follow up"} makes a task for THAT new lead. It then fires automatically on its trigger (link
   one with the event_triggers actions), or run it on demand with the
   workflow__run tool, or on a schedule with workflow__schedule (e.g. every
   morning, weekly). Never tell the user workflows can only send email/SMS —

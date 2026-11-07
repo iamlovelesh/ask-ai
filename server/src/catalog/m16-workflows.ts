@@ -228,7 +228,7 @@ const addWorkflowStepInput = z.strictObject({
     .string()
     .min(1)
     .describe('the CRM action this step runs, as its exact action slug — e.g. "tasks.create_task", "email.send_email", "contacts.create_contact". When the workflow runs, this action is executed with `config` as its parameters.'),
-  config: z.record(z.string(), z.unknown()).optional().describe('parameters for the step\'s action, exactly as that action expects them (e.g. for tasks.create_task: { contact_id, title, due_at }).'),
+  config: z.record(z.string(), z.unknown()).optional().describe('parameters for the step\'s action, exactly as that action expects them (e.g. for tasks.create_task: { contact_id, title, due_at }). To use a value from the record that triggered the workflow, write {{event.FIELD}} — e.g. { contact_id: "{{event.contact_id}}", title: "Follow up" } creates a task for whichever lead fired the trigger.'),
 });
 
 const addWorkflowStep: ActionDef<z.infer<typeof addWorkflowStepInput>, WorkflowView> = {

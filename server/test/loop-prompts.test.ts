@@ -119,6 +119,7 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toContain('workflow__run');
     expect(system).toMatch(/type = the action'?s slug|run ANY CRM action/i);
     expect(system).toMatch(/never tell the user workflows can only send email/i);
+    expect(system).toMatch(/\{\{event\./); // event-payload interpolation guidance
   });
 
   it('tells the model to STOP after completing the requested writes — no re-search for extra records (double-round fix)', () => {
