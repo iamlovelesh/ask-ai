@@ -355,6 +355,25 @@ describe('runLoopTurn — data__batch (createMany bulk shape)', () => {
     expect(completedOf(events).status).toBe('done');
   });
 
+  it('does NOT re-create records a prior batch already wrote this turn (double-round dedup)', async () => {
+    let calls = 0;
+    const registry = buildRegistry(
+      [[{ ...action('contacts.create_contact', 'write', async () => { calls += 1; return { id: `con_${calls}` }; }, z.object({ email: z.string().optional(), name: z.string().optional(), company: z.string().optional() })), entities: ['contacts'] }]],
+      [],
+    );
+    const events = await drive(registry, 'create a contact for each row', [
+      toolCallResponse('data__batch', { action: 'contacts__create_contact', records: [{ email: 'ada@x.com', name: 'Ada' }, { email: 'ben@x.com', name: 'Ben' }] }),
+      // the double-round: the model re-issues the SAME people, but with slightly
+      // different extra fields — natural-key (email) dedup must still catch them.
+      toolCallResponse('data__batch', { action: 'contacts__create_contact', records: [{ email: 'ada@x.com', name: 'Ada', company: 'X' }, { email: 'ben@x.com', name: 'Ben', company: 'Y' }] }),
+      textResponse('Created 2 contacts.'),
+    ]);
+    expect(calls).toBe(2); // the second batch (same emails) wrote nothing
+    // only ONE create step landed (the second batch short-circuited before its gate)
+    const createSteps = events.filter((e) => e.t === 'step.started' && e.action === 'contacts.create_contact');
+    expect(createSteps).toHaveLength(1);
+  });
+
   it('rejects a batch record that references an unseen id (provenance)', async () => {
     let calls = 0;
     const registry = buildRegistry(

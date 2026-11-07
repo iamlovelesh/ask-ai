@@ -460,6 +460,35 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   // declined the first). Keyed by slug + sorted id-shaped params so a
   // legitimately different target can still be proposed (review MED-1).
   const deniedActions = new Set<string>();
+  // Turn-level write idempotency (double-round guard): the model sometimes
+  // re-issues the SAME batch after it already succeeded (planning wobble),
+  // creating duplicate records. Signature = action slug + the record's exact
+  // params; a record already written this turn is skipped on a later batch.
+  const writtenBatchSignatures = new Set<string>();
+  const stableStringify = (v: unknown): string => {
+    if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+      return `{${Object.keys(v as Record<string, unknown>).sort().map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`).join(',')}}`;
+    }
+    if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
+    return JSON.stringify(v ?? null);
+  };
+  // Natural identity of a to-be-created record, robust to the model varying
+  // which optional fields it sends between a batch and its re-issued twin:
+  // prefer an email, then a name, then the full content. This is what makes the
+  // double-round guard actually catch a re-imported CSV row.
+  const naturalKey = (data: Record<string, unknown>): string => {
+    for (const k of ['email', 'email_address', 'contact_email']) {
+      const v = data[k];
+      if (typeof v === 'string' && v.trim() !== '') return `e:${v.trim().toLowerCase()}`;
+    }
+    const named = data['name'] ?? data['full_name'] ?? data['company_name'] ?? data['title'];
+    if (typeof named === 'string' && named.trim() !== '') return `n:${named.trim().toLowerCase()}`;
+    const fn = data['first_name'];
+    const ln = data['last_name'];
+    if (typeof fn === 'string' && typeof ln === 'string' && (fn + ln).trim() !== '') return `n:${`${fn} ${ln}`.trim().toLowerCase()}`;
+    return `f:${stableStringify(data)}`;
+  };
+  const writeSignature = (slug: string, data: Record<string, unknown>): string => `${slug}:${naturalKey(data)}`;
   const denialKey = (slug: string, params: Record<string, unknown>): string => {
     const ids: string[] = [];
     for (const v of Object.values(params)) {
@@ -1348,9 +1377,18 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       if (validated.length === 0) {
         return `No valid records to write. Issues: ${preErrors.slice(0, 5).join('; ')}. Fix the parameters (or look up any unseen ids first) and retry.`;
       }
+      // Double-round guard: drop records already written earlier THIS turn
+      // (same action + same params) so a re-issued batch can't duplicate them.
+      // Duplicates WITHIN this one batch are kept (that's the caller's data).
+      const dupeCount = validated.filter((d) => writtenBatchSignatures.has(writeSignature(target.slug, d))).length;
+      const fresh = validated.filter((d) => !writtenBatchSignatures.has(writeSignature(target.slug, d)));
+      if (fresh.length === 0) {
+        return `Those ${validated.length} record(s) were ALREADY created earlier this turn — nothing new to write. Do NOT create them again; report what was already done.`;
+      }
       const noun = target.entities[0] ?? 'record';
+      const dupeNote = dupeCount > 0 ? ` (${dupeCount} already created earlier this turn, skipped)` : '';
       if (dry_run === true) {
-        const obs = `DRY RUN — would ${target.name} on ${validated.length} ${pluralNoun(noun, validated.length)}${preErrors.length > 0 ? ` (${preErrors.length} invalid, skipped)` : ''}. Nothing changed; call again without dry_run to execute (a confirmation will be requested).`;
+        const obs = `DRY RUN — would ${target.name} on ${fresh.length} ${pluralNoun(noun, fresh.length)}${preErrors.length > 0 ? ` (${preErrors.length} invalid, skipped)` : ''}${dupeNote}. Nothing changed; call again without dry_run to execute (a confirmation will be requested).`;
         publishObs(obs);
         return obs;
       }
@@ -1359,16 +1397,16 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       }
       counters.step += 1;
       const stepId = `s${counters.step}`;
-      const sampleIds = validated
+      const sampleIds = fresh
         .map((r) => Object.values(r).find((v) => typeof v === 'string' && /^[a-z][a-z_]*_\d+$/.test(v)))
         .filter((x): x is string => typeof x === 'string')
         .slice(0, 5);
       const confirmId = `cf_${randomUUID()}`;
       const scope: ConfirmationScope = {
         actions: [target.slug],
-        affectedCount: validated.length,
+        affectedCount: fresh.length,
         targetSample: sampleIds,
-        description: `${target.name} — ${validated.length} ${pluralNoun(noun, validated.length)}.`,
+        description: `${target.name} — ${fresh.length} ${pluralNoun(noun, fresh.length)}.`,
       };
       markTtfur();
       emit({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
@@ -1380,19 +1418,20 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       if (!approved) {
         exits.denied = true;
         deniedActions.add(`${target.slug}|batch`);
-        return `DENIED by the user — "${target.name}" was NOT executed for any of the ${validated.length} records. Nothing was changed; do NOT propose it again this turn.`;
+        return `DENIED by the user — "${target.name}" was NOT executed for any of the ${fresh.length} records. Nothing was changed; do NOT propose it again this turn.`;
       }
-      emit({ t: 'step.started', turnId, stepId, action: target.slug, resolvedParams: [{ batch: validated.length }] });
+      emit({ t: 'step.started', turnId, stepId, action: target.slug, resolvedParams: [{ batch: fresh.length }] });
       const startedAt = performance.now();
       let ok = 0;
       const errors: string[] = [];
       const createdIds: string[] = [];
-      for (const [i, data] of validated.entries()) {
+      for (const [i, data] of fresh.entries()) {
         try {
           const res = await crm.tx((db) =>
             target.handler(data, { db, clock, idempotencyKey: `${turnId}:0:${stepId}:${i}`, format: 'concise' } satisfies ActionContext),
           );
           ok += 1;
+          writtenBatchSignatures.add(writeSignature(target.slug, data)); // don't recreate this record later this turn
           const rid = rowId(res);
           if (rid !== undefined && createdIds.length < 5) createdIds.push(rid);
         } catch (err) {
@@ -1401,15 +1440,15 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         }
       }
       const ms = performance.now() - startedAt;
-      const failed = validated.length - ok;
+      const failed = fresh.length - ok;
       if (ok > 0) {
         counters.stepsOk += 1;
         exits.writesLanded += ok;
         exits.writeActions.set(target.name, (exits.writeActions.get(target.name) ?? 0) + ok);
       }
       if (failed > 0 && ok === 0) counters.stepsFailed += 1;
-      emit({ t: 'step.finished', turnId, stepId, summary: `${target.name}: ${ok}/${validated.length} ${pluralNoun(noun, validated.length)} written`, ms });
-      const obs = `Batch "${target.name}" on ${validated.length} ${pluralNoun(noun, validated.length)}: ${ok} succeeded, ${failed} failed${createdIds.length > 0 ? ` (e.g. ${createdIds.join(', ')})` : ''}${errors.length > 0 ? ` [errors: ${errors.join('; ')}]` : ''}${preErrors.length > 0 ? ` (${preErrors.length} skipped before write)` : ''}.`;
+      emit({ t: 'step.finished', turnId, stepId, summary: `${target.name}: ${ok}/${fresh.length} ${pluralNoun(noun, fresh.length)} written`, ms });
+      const obs = `Batch "${target.name}" on ${fresh.length} ${pluralNoun(noun, fresh.length)}: ${ok} succeeded, ${failed} failed${createdIds.length > 0 ? ` (e.g. ${createdIds.join(', ')})` : ''}${errors.length > 0 ? ` [errors: ${errors.join('; ')}]` : ''}${preErrors.length > 0 ? ` (${preErrors.length} skipped before write)` : ''}${dupeNote}.`;
       publishObs(obs);
       return obs;
     },
