@@ -602,10 +602,11 @@ button {
   width: 300px;
   max-height: 60vh;
   overflow: auto;
-  background: var(--surface, #16161c);
-  border: 1px solid var(--border, #2a2a33);
+  background: var(--raised);
+  color: var(--ink);
+  border: 1px solid var(--hair-strong);
   border-radius: 12px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--ink) 22%, transparent);
   padding: 12px 14px;
   font-size: 12px;
 }
@@ -615,7 +616,7 @@ button {
   gap: 8px;
   margin-bottom: 8px;
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--border, #2a2a33);
+  border-bottom: 1px solid var(--hair-strong);
 }
 .rp-entity {
   font-weight: 600;
@@ -1121,7 +1122,7 @@ button {
 }
 .confirm-edit-row input {
   padding: 5px 8px;
-  border: 1px solid var(--border, #2a2a33);
+  border: 1px solid var(--hair-strong);
   border-radius: 6px;
   background: transparent;
   color: inherit;
@@ -1129,7 +1130,7 @@ button {
 }
 .btn-edit {
   padding: 7px 14px;
-  border: 1px solid var(--border, #2a2a33);
+  border: 1px solid var(--hair-strong);
   background: transparent;
   color: inherit;
   border-radius: 6px;
@@ -1879,7 +1880,7 @@ button {
   width: 100%;
   padding: 10px 12px;
   margin-bottom: 10px;
-  border: 1px solid var(--border, #2a2a33);
+  border: 1px solid var(--hair-strong);
   border-radius: 10px;
   background: transparent;
   cursor: pointer;
