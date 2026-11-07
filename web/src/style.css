@@ -1039,6 +1039,48 @@ button {
   margin-bottom: 4px;
 }
 
+/* Answer provenance: a quiet "How I got this" disclosure under an answer that
+ * lists the tool steps behind it — opt-in, so it never clutters the reply. */
+.provenance {
+  margin-top: 8px;
+  font-size: 13px;
+}
+.provenance > summary {
+  cursor: pointer;
+  color: var(--ink-soft, #8a8a94);
+  user-select: none;
+  list-style: none;
+}
+.provenance > summary::-webkit-details-marker {
+  display: none;
+}
+.provenance > summary::before {
+  content: '› ';
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+.provenance[open] > summary::before {
+  transform: rotate(90deg);
+}
+.provenance-list {
+  margin: 6px 0 2px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.provenance-list li {
+  color: var(--ink-soft, #8a8a94);
+}
+.provenance-step {
+  font-weight: 600;
+  color: var(--ink, inherit);
+}
+.provenance-detail {
+  margin-left: 6px;
+  opacity: 0.85;
+}
+
 /* Approval-kind badge (per-tool templates): a small uppercase chip
  * that names the action class; destructive deletes/merges get a red accent so
  * they read differently from a routine update. */

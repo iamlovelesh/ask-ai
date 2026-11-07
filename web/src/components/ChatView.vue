@@ -12,6 +12,7 @@ import AuditFeed from './AuditFeed.vue';
 import RecordPopover, { type RecordPopoverState } from './RecordPopover.vue';
 import { formatSessionLedger, sumSessionMetrics } from '../lib/ledger.js';
 import { renderMarkdown } from '../lib/markdown.js';
+import { buildProvenance } from '../lib/provenance.js';
 
 const props = defineProps<{ sessionId: string }>();
 defineEmits<{ 'toggle-nav': [] }>();
@@ -407,6 +408,21 @@ async function onCopyLink(): Promise<void> {
               v-html="renderMarkdown(turn.finalText || turn.deltaText || turn.unsupportedReason || '')"
               @click="onBodyClick"
             ></div>
+
+            <!-- Answer provenance: a plain-language "how I got this" from the
+                 turn's tool steps, so every figure is traceable to its source. -->
+            <details
+              v-if="turn.status && (turn.finalText || turn.unsupportedReason) && buildProvenance(turn).length > 0"
+              class="provenance"
+            >
+              <summary>How I got this</summary>
+              <ol class="provenance-list">
+                <li v-for="(p, i) in buildProvenance(turn)" :key="i">
+                  <span class="provenance-step">{{ p.label }}</span>
+                  <span v-if="p.detail" class="provenance-detail">{{ p.detail }}</span>
+                </li>
+              </ol>
+            </details>
           </div>
 
           <div v-if="turn.status" class="turn-foot">
