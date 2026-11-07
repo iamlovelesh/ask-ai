@@ -33,6 +33,8 @@ import { resolveRelativeDate } from '../agent/date-expr.js';
 import type { ConfirmationScope, Event } from '../events/types.js';
 import { coerceDateParams, widenForModel } from './date-rail.js';
 import { isWebSearchConfigured, webSearch, renderWebResults } from './web-search.js';
+import { entityForId } from './name-resolve.js';
+import { gatherRelated, renderRelated } from './record-related.js';
 import { loadSkills } from './skills/registry.js';
 import { DATE_FIELD_RE } from '../agent/date-expr.js';
 import type { MemoryStore } from '../memory/store.js';
@@ -2025,6 +2027,40 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     });
     tools.push(webSearchTool);
   }
+  // Record 360 (relational graph): everything connected to one record
+  // — a contact's deals/notes/tasks/invoices/tickets + company, or a company's
+  // contacts/deals — in ONE read. Ids are harvested so the model can then act
+  // on them. Read-class; available to every role.
+  const relatedTool = tool({
+    name: 'data__related',
+    description:
+      "Get the records RELATED to one record in a single call — for a contact: its opportunities, invoices, tickets, tasks, notes, orders, quotes, and parent company; for a company: its contacts, opportunities, and quotes. Use this for 'everything about <record>', account reviews, and meeting prep instead of many separate searches. Give the exact record id (e.g. con_8, co_3).",
+    parameters: z.object({ record_id: z.string().describe('the record id, e.g. con_8 or co_3') }),
+    execute: async ({ record_id }): Promise<string> => {
+      counters.step += 1;
+      const stepId = `s${counters.step}`;
+      emit({ t: 'step.started', turnId, stepId, action: 'data.related', resolvedParams: [{ record_id }] });
+      const entity = entityForId(record_id);
+      if (entity === undefined) {
+        counters.stepsFailed += 1;
+        emit({ t: 'step.failed', turnId, stepId, error: { code: 'UNKNOWN_ID', message: `unrecognized id ${record_id}` }, ms: 0 });
+        return `"${record_id}" is not a recognizable record id. Find the record first, then pass its exact id.`;
+      }
+      const result = crm.tx((db) => gatherRelated(db, entity, record_id));
+      if (result === null) {
+        counters.stepsOk += 1;
+        emit({ t: 'step.finished', turnId, stepId, summary: `No relations for ${record_id}`, ms: 0 });
+        return `No related-record map for ${record_id} (relations are available for contacts and companies). The record may not exist — look it up first.`;
+      }
+      const obs = renderRelated(result);
+      counters.stepsOk += 1;
+      emit({ t: 'step.finished', turnId, stepId, summary: `Related to ${record_id}: ${result.groups.length} group(s)`, ms: 0 });
+      exits.toolOutputs.push(obs);
+      harvestIds(obs, input.knownIds);
+      return obs;
+    },
+  });
+  tools.push(relatedTool);
   tools.push(searchActions, sortRef, filterRef, searchRef, aggregateRef, groupByRef, applyToRef, batchWrite, loadSkillsTool, askUser, requestForm, refuse);
   if (memory) tools.push(memorySave, memoryRecall);
   return tools;
