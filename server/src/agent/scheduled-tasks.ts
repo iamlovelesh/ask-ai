@@ -30,6 +30,12 @@ export interface ScheduledTask {
    * as THIS role/user, never escalating to admin. */
   role: string;
   userId: string;
+  /** When set, firing runs this workflow (via the engine) instead of re-running
+   * the agent — a CRON-style scheduled automation. */
+  workflowId?: string;
+  /** When set with workflowId, the poller reschedules the run every intervalMs
+   * (recurring cron). Absent = one-shot. */
+  intervalMs?: number;
 }
 
 export interface ScheduleInput {
@@ -40,6 +46,8 @@ export interface ScheduleInput {
   createdAt: number;
   role: string;
   userId: string;
+  workflowId?: string;
+  intervalMs?: number;
 }
 
 export interface ScheduledTaskStore {
@@ -70,10 +78,12 @@ const DDL = [
 const MIGRATIONS = [
   `ALTER TABLE scheduled_tasks ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`,
   `ALTER TABLE scheduled_tasks ADD COLUMN user_id TEXT NOT NULL DEFAULT 'user_1'`,
+  `ALTER TABLE scheduled_tasks ADD COLUMN workflow_id TEXT`,
+  `ALTER TABLE scheduled_tasks ADD COLUMN interval_ms INTEGER`,
 ];
 
 function rowToTask(r: Record<string, unknown>): ScheduledTask {
-  return {
+  const task: ScheduledTask = {
     id: String(r['id']),
     sessionId: String(r['session_id']),
     dueAt: Number(r['due_at']),
@@ -83,6 +93,9 @@ function rowToTask(r: Record<string, unknown>): ScheduledTask {
     role: String(r['role'] ?? 'admin'),
     userId: String(r['user_id'] ?? 'user_1'),
   };
+  if (r['workflow_id'] != null) task.workflowId = String(r['workflow_id']);
+  if (r['interval_ms'] != null) task.intervalMs = Number(r['interval_ms']);
+  return task;
 }
 
 export function openScheduledTasks(db: SessionsDb): ScheduledTaskStore {
@@ -98,9 +111,9 @@ export function openScheduledTasks(db: SessionsDb): ScheduledTaskStore {
   return {
     schedule(input: ScheduleInput): ScheduledTask {
       db.run(
-        `INSERT INTO scheduled_tasks (id, session_id, due_at, instruction, status, created_at, role, user_id)
-         VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
-        [input.id, input.sessionId, input.dueAt, input.instruction, input.createdAt, input.role, input.userId],
+        `INSERT INTO scheduled_tasks (id, session_id, due_at, instruction, status, created_at, role, user_id, workflow_id, interval_ms)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+        [input.id, input.sessionId, input.dueAt, input.instruction, input.createdAt, input.role, input.userId, input.workflowId ?? null, input.intervalMs ?? null],
       );
       return { ...input, status: 'pending' };
     },

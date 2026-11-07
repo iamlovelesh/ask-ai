@@ -134,6 +134,30 @@ describe('SessionRuntime.fireDueScheduledTasks (#8 auto-resume)', () => {
     expect(seen).toEqual({ role: 'viewer', userId: 'user_7' });
   });
 
+  it('a due WORKFLOW task runs the workflow (not the agent) and marks it fired', () => {
+    const runtime = makeRuntime([]);
+    const sid = eventLog.createSession('sched-wf');
+    runtime.scheduler().schedule({ id: 'task_wf', sessionId: sid, dueAt: NOW - 1000, instruction: 'daily cleanup', createdAt: NOW - 1, role: 'admin', userId: 'user_1', workflowId: 'wf_9' });
+    const agentCalls: unknown[] = [];
+    const wfCalls: string[] = [];
+    const fired = runtime.fireDueScheduledTasks(NOW, (c) => { agentCalls.push(c); }, (wfId) => { wfCalls.push(wfId); });
+    expect(fired).toBe(1);
+    expect(agentCalls).toHaveLength(0); // did NOT re-run the agent
+    expect(wfCalls).toEqual(['wf_9']); // ran the workflow instead
+    expect(runtime.scheduler().listPending(sid)).toHaveLength(0);
+  });
+
+  it('a recurring WORKFLOW task reschedules itself for the next interval', () => {
+    const runtime = makeRuntime([]);
+    const sid = eventLog.createSession('sched-cron');
+    runtime.scheduler().schedule({ id: 'task_cron', sessionId: sid, dueAt: NOW - 1000, instruction: 'hourly', createdAt: NOW - 1, role: 'admin', userId: 'user_1', workflowId: 'wf_h', intervalMs: 3_600_000 });
+    runtime.fireDueScheduledTasks(NOW, () => {}, () => {});
+    const pending = runtime.scheduler().listPending(sid);
+    expect(pending).toHaveLength(1); // a fresh occurrence was scheduled
+    expect(pending[0]?.workflowId).toBe('wf_h');
+    expect(pending[0]?.dueAt).toBeGreaterThan(NOW); // in the future
+  });
+
   it('a failed start leaves the task pending (retry next tick)', () => {
     const runtime = makeRuntime([]);
     const sid = eventLog.createSession('sched2');

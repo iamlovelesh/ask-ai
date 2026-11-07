@@ -21,6 +21,8 @@ import type { Crm } from '../store/db.js';
 import type { SessionsDb } from '../store/sessions-db.js';
 import type { EventLog } from '../events/log.js';
 import { createRefStore, type RefStore } from '../agent/refs.js';
+import { createWorkflowEngine } from '../agent/workflow-engine.js';
+import { VirtualClock } from '../store/clock.js';
 import { createMemoryStore, type MemoryStore } from '../memory/store.js';
 import type { ConfirmBroker, ConfirmRequest, ConfirmVerdict } from '../agent/executor.js';
 import type { Playbook } from '../playbooks/loader.js';
@@ -399,11 +401,39 @@ export class SessionRuntime {
     nowMs: number,
     start: (task: { sessionId: string; instruction: string; principal: Principal }) => void = ({ sessionId, instruction, principal }) =>
       void this.startTurn({ sessionId, userText: instruction, agent: 'optimized', principal }),
+    runWorkflow: (workflowId: string, nowMs: number) => void = (workflowId, now) => {
+      // CRON firing (#flagship L3): run the workflow via the engine, pinned to
+      // the fire time. Fire-and-forget — never block the poller tick.
+      const engine = createWorkflowEngine({ registry: this.registry, crm: this.getCrm(), clock: new VirtualClock(now) });
+      void engine.runWorkflow(workflowId, { trigger: 'cron' });
+    },
   ): number {
     let fired = 0;
     for (const task of this.scheduler().due(nowMs)) {
       if (this.isRunning(task.sessionId)) continue; // retry next tick
       try {
+        if (task.workflowId !== undefined) {
+          // A scheduled WORKFLOW run (cron automation) — run it, not the agent.
+          runWorkflow(task.workflowId, nowMs);
+          this.scheduler().markFired(task.id);
+          if (task.intervalMs !== undefined && task.intervalMs > 0) {
+            // Recurring: schedule the next occurrence from now (avoids catch-up
+            // storms if the poller was late).
+            this.scheduler().schedule({
+              id: `task_${randomUUID()}`,
+              sessionId: task.sessionId,
+              dueAt: nowMs + task.intervalMs,
+              instruction: task.instruction,
+              createdAt: nowMs,
+              role: task.role,
+              userId: task.userId,
+              workflowId: task.workflowId,
+              intervalMs: task.intervalMs,
+            });
+          }
+          fired += 1;
+          continue;
+        }
         // Resume as the principal that SCHEDULED it (review CRITICAL) — never
         // escalate an unattended turn to admin. An unrecognized stored role
         // resolves back to a safe concrete principal.

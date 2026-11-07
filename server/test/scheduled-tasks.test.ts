@@ -22,6 +22,21 @@ describe('ScheduledTaskStore (#8 suspension/wait)', () => {
     return id;
   }
 
+  it('persists an optional workflowId + intervalMs (cron workflow runs)', () => {
+    const id = `task_${randomUUID()}`;
+    store.schedule({ id, sessionId: sid, dueAt: NOW - DAY, instruction: 'run workflow', createdAt: NOW, role: 'admin', userId: 'user_1', workflowId: 'wf_7', intervalMs: DAY });
+    const [task] = store.due(NOW);
+    expect(task?.workflowId).toBe('wf_7');
+    expect(task?.intervalMs).toBe(DAY);
+  });
+
+  it('leaves workflowId/intervalMs undefined for a plain reminder task', () => {
+    schedule(NOW - DAY, 'plain reminder');
+    const [task] = store.due(NOW);
+    expect(task?.workflowId).toBeUndefined();
+    expect(task?.intervalMs).toBeUndefined();
+  });
+
   it('persists the scheduling principal (role + userId) for non-escalating resume', () => {
     schedule(NOW - DAY, 'viewer reminder', 'viewer', 'user_7');
     const [task] = store.due(NOW);

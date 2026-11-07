@@ -1541,6 +1541,43 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       },
     });
     tools.push(scheduleFollowUp);
+
+    // workflow__schedule (#flagship L3): run a workflow on a schedule / repeating
+    // cron. The poller runs it via the engine at the due time (and reschedules
+    // when repeat is set). Write-class, same gate as the block.
+    const REPEAT_MS: Record<string, number> = { hourly: 3_600_000, daily: 86_400_000, weekly: 604_800_000 };
+    const scheduleWorkflow = tool({
+      name: 'workflow__schedule',
+      description:
+        'Run a workflow automatically at a future time, optionally on a repeating schedule (cron). Give the workflow id and when to first run it; set repeat for a recurring automation. Use for "run this every morning", "every Monday", "in 2 hours". For event-based firing (when a record changes) use event triggers instead.',
+      parameters: z.object({
+        workflow_id: z.string().describe('the workflow id to run'),
+        when: z.string().describe('first run time: ISO date/time, or a relative offset like "+2h", "+1d", or "@today"'),
+        repeat: z.enum(['hourly', 'daily', 'weekly']).nullable().optional().describe('recurring cadence; omit for a one-time run'),
+      }),
+      execute: async ({ workflow_id, when, repeat }): Promise<string> => {
+        const now = clock.now();
+        const raw = when.trim();
+        const normalized = /^[+-]\d+[mhdw]$/.test(raw) ? `@now${raw}` : raw;
+        const dueAt = resolveRelativeDate(normalized, now) ?? Date.parse(raw);
+        if (!Number.isFinite(dueAt)) return `Could not understand the time "${when}". Use an ISO date or a relative expression like "+2h" or "+1d".`;
+        if (dueAt <= now) return `"${when}" is not in the future — schedule the run for a later time.`;
+        const intervalMs = repeat ? REPEAT_MS[repeat] : undefined;
+        scheduler.schedule({
+          id: `task_${randomUUID()}`,
+          sessionId,
+          dueAt,
+          instruction: `Run workflow ${workflow_id}`,
+          createdAt: now,
+          role: principal.role,
+          userId: principal.userId,
+          workflowId: workflow_id,
+          ...(intervalMs !== undefined ? { intervalMs } : {}),
+        });
+        return `Scheduled workflow ${workflow_id} to run at ${new Date(dueAt).toISOString()}${repeat ? `, repeating ${repeat}` : ''}.`;
+      },
+    });
+    tools.push(scheduleWorkflow);
   }
 
   // workflow__run (#flagship): execute a workflow's steps now. Write-class
