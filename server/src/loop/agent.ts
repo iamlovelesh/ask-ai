@@ -440,7 +440,10 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
   }
 
   try {
-    record({ t: 'turn.started', turnId, sessionId, userText, ts: clock.now(), ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}) });
+    // History keeps only attachment metadata — the (possibly large) text
+    // content is for the agent's prompt, not the event log / UI.
+    const historyAttachments = input.attachments?.map((a) => ({ filename: a.filename, mime: a.mime, size: a.size, url: a.url }));
+    record({ t: 'turn.started', turnId, sessionId, userText, ts: clock.now(), ...(historyAttachments && historyAttachments.length > 0 ? { attachments: historyAttachments } : {}) });
 
     const priorEvents = eventLog.list(sessionId).map((se) => se.event);
     const sessionCtx = buildSessionCtx(priorEvents);
@@ -513,7 +516,14 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       currentUser,
       recalledMemories: recalled,
       ...(input.attachments && input.attachments.length > 0
-        ? { attachments: input.attachments.map((a) => `- ${a.filename} (${a.mime}, ${a.size} bytes) — url: ${a.url}`).join('\n') }
+        ? {
+            attachments: input.attachments
+              .map((a) => {
+                const head = `- ${a.filename} (${a.mime}, ${a.size} bytes) — url: ${a.url}`;
+                return a.content !== undefined ? `${head}\n  content:\n  """\n${a.content}\n  """` : head;
+              })
+              .join('\n\n'),
+          }
         : {}),
     });
 

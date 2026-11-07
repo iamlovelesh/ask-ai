@@ -314,7 +314,7 @@ export function buildLoopUserPrompt(input: LoopUserPromptInput): string {
   if (input.attachments !== undefined && input.attachments.trim() !== '') {
     parts.push(
       '<attachments>',
-      'The user attached the following file(s) to this message. To save one into the CRM, call media_assets.upload_media_asset with its url, mime_type, and size_bytes; then reference or attach it as the request needs.',
+      'The user attached the following file(s) to this message. For a TEXT file its content is shown below — READ it and act on the request: parse a CSV/JSON and create the records with data__batch, summarize it, extract values, answer questions about it, etc. (A file with no content shown is binary — you cannot read it; offer to register it with media_assets.upload_media_asset instead.) To save any file into the CRM as an asset, call media_assets.upload_media_asset with its url, mime_type, and size_bytes.',
       input.attachments,
       '</attachments>',
       '',

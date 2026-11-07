@@ -75,6 +75,10 @@ export interface AttachmentRef {
   mime: string;
   size: number;
   url: string;
+  /** For TEXT files, the readable content (capped) given to the agent so it can
+   * parse/summarize/import it. Omitted for binary files, and stripped from the
+   * turn.started history event (history keeps only the metadata). */
+  content?: string;
 }
 
 export interface ConfirmationScope {

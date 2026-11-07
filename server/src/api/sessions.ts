@@ -17,7 +17,7 @@ import { resolvePrincipal, routeAgentForRole } from '../agent/permissions.js';
 import { fetchModelCatalog, catalogHas } from '../llm/model-catalog.js';
 import { llmCall } from '../llm/client.js';
 import { generateTitle, TITLE_MAX_CHARS } from './title.js';
-import { openUploads, uploadUrl } from '../store/uploads.js';
+import { openUploads, uploadUrl, attachmentTextContent } from '../store/uploads.js';
 import type { AppDeps } from './types.js';
 
 /** Inline-blob cap for uploads (#6): small files only in this simulated CRM. */
@@ -282,7 +282,12 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
     const attachments = (parsed.data.attachments ?? [])
       .map((upId) => uploads.get(upId))
       .filter((u): u is NonNullable<typeof u> => u !== undefined)
-      .map((u) => ({ filename: u.filename, mime: u.mime, size: u.size, url: uploadUrl(u.id) }));
+      .map((u) => {
+        // Text files: include the content so the agent can actually work with
+        // it (parse a CSV, summarize, import). Binary stays metadata-only.
+        const content = attachmentTextContent(u.filename, u.mime, u.bytes);
+        return { filename: u.filename, mime: u.mime, size: u.size, url: uploadUrl(u.id), ...(content !== undefined ? { content } : {}) };
+      });
     turnId = runtime.startTurn({ sessionId, userText: text, agent: routedAgent, model, principal, ...(attachments.length > 0 ? { attachments } : {}) });
   });
 

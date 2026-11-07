@@ -54,6 +54,26 @@ export function uploadUrl(id: string): string {
   return `/api/uploads/${id}`;
 }
 
+/** Max characters of file content surfaced to the agent (per file). */
+export const MAX_ATTACHMENT_CONTENT_CHARS = 16_000;
+
+const TEXT_MIME_RE = /^text\/|\b(json|csv|tsv|xml|yaml|markdown|javascript|ndjson|plain)\b/i;
+const TEXT_EXT_RE = /\.(csv|tsv|txt|json|md|markdown|log|xml|yaml|yml|html?)$/i;
+
+/** True when a file is textual enough to read as UTF-8 and reason over. */
+export function isTextualAttachment(filename: string, mime: string): boolean {
+  return TEXT_MIME_RE.test(mime) || TEXT_EXT_RE.test(filename);
+}
+
+/** The readable content of a TEXT attachment (capped), or undefined for a
+ * binary file (image/PDF/etc.) whose bytes can't be shown as text. */
+export function attachmentTextContent(filename: string, mime: string, bytes: Buffer): string | undefined {
+  if (!isTextualAttachment(filename, mime)) return undefined;
+  const text = bytes.toString('utf-8');
+  if (text.length <= MAX_ATTACHMENT_CONTENT_CHARS) return text;
+  return `${text.slice(0, MAX_ATTACHMENT_CONTENT_CHARS)}\n…[truncated — ${text.length} characters total]`;
+}
+
 export function openUploads(db: SessionsDb): UploadStore {
   db.run(DDL);
   return {

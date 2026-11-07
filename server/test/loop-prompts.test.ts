@@ -254,6 +254,8 @@ describe('buildLoopUserPrompt', () => {
     expect(prompt).toContain('<attachments>');
     expect(prompt).toContain('invoice.pdf');
     expect(prompt).toMatch(/media_assets\.upload_media_asset/);
+    // the agent is told it can READ a text file's content and act on it
+    expect(prompt).toMatch(/parse a CSV|create the records with data__batch|READ it/i);
   });
 
   it('omits the <attachments> block when none are attached', () => {
