@@ -27,6 +27,7 @@ import { emptyWorkingState } from '../agent/memory.js';
 import type { TurnResult } from '../agent/pipeline.js';
 import { retrieve, type Card, type SessionCtx } from '../agent/retrieval.js';
 import { plannerModel } from '../llm/router.js';
+import { isSlowModel } from '../llm/models.js';
 import {
   createLoopRunner,
   runLoopOnce,
@@ -119,6 +120,11 @@ export interface RunLoopTurnInput {
 // what keeps fan-out to ONE step instead of N in the first place.
 const MAX_LOOP_STEPS = 30;
 const LOOP_DEADLINE_MS = 90_000;
+// Slow tiers (smart / extra-smart) have high per-call latency, so a multi-step
+// turn (e.g. workflow authoring: create → add step → publish) needs more than
+// the fast-tier 90s or it is cut off mid-build. Observed: gemini-2.5-pro
+// workflow authoring timed out at 90s ~2/3 of the time.
+const SLOW_LOOP_DEADLINE_MS = 180_000;
 /** Providers pre-authorize max_tokens against remaining account credit —
  * the SDK's unlimited default turned a low OpenRouter balance into 402s on
  * EVERY call. Answers here are short; 4096 is generous. */
@@ -305,7 +311,11 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
   const clock = new VirtualClock();
   const startedAtMs = performance.now();
   const maxTurns = input.budget?.maxTurns ?? MAX_LOOP_STEPS;
-  const deadlineMs = input.budget?.deadlineMs ?? LOOP_DEADLINE_MS;
+  // The model that runs this turn — the user's picked (already Auto-resolved)
+  // model, else the deployed default. Needed here to pick the turn deadline.
+  const turnModel = sessionDeps.model ?? plannerModel();
+  const deadlineMs =
+    input.budget?.deadlineMs ?? (isSlowModel(turnModel) ? SLOW_LOOP_DEADLINE_MS : LOOP_DEADLINE_MS);
   const planHash = createHash('sha256').update(turnId).digest('hex');
 
   let ttfurAtMs: number | undefined;
@@ -317,10 +327,6 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
   let tokensIn = 0;
   let tokensOut = 0;
   let costUsd = 0;
-  /** The model that runs this turn — the user's picked model, else the
-   * deployed default. Hoisted so both the Agent construction and the turn
-   * metrics (persisted → shown in the trace) use one source of truth. */
-  const turnModel = sessionDeps.model ?? plannerModel();
 
   // Principal this turn runs as (#1); defaults to admin scoped to DEMO_USER_ID.
   const principal = sessionDeps.principal ?? { ...defaultPrincipal(), userId: process.env['DEMO_USER_ID'] || 'user_1' };
@@ -360,6 +366,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     denied: false,
     writesLanded: 0,
     writeActions: new Map(),
+    writeEntities: new Set(),
     toolOutputs: [],
     appliedFilters: [],
     stop: () => stopController.abort(),
@@ -630,7 +637,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
             // the one real warning and reads as leaked internal state.
             const listed = finalCheck.unsupported.slice(0, 5);
             const rest = finalCheck.unsupported.length - listed.length;
-            finalText += `\n\n⚠ Please double-check these figures against the records — I could not verify them: ${listed.join(', ')}${rest > 0 ? ` (and ${rest} more)` : ''}`;
+            finalText += `\n\n⚠ I couldn't confirm ${listed.length === 1 ? 'this figure' : 'these figures'} against the data I looked up this turn, so please double-check ${listed.length === 1 ? 'it' : 'them'} before relying on ${listed.length === 1 ? 'it' : 'them'}: ${listed.join(', ')}${rest > 0 ? ` (and ${rest} more)` : ''}`;
           }
           // Scope-claim disclosure (support round-7b N1): a totality answer
           // computed with filters the user never asked for must say so —
@@ -656,15 +663,21 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
           // cannot (non-numeric claims) and makes the guarantee explicit,
           // independent of figure-matching. Observed live: an optimized turn
           // answered "251 leads" with stepsOk:0 and no caution.
-          const groundedByMemoryBelt =
-            recalled !== '' &&
+          // Suppress the belt when the answer is grounded WITHOUT a read — every
+          // figure traces to the user's own words or recalled memory — and it is
+          // not a live-data/audit question. This covers acknowledgement and
+          // memory-save turns ("saved: your target is $50k"), which read no CRM
+          // data by design and must not be told "no data was read this turn".
+          // A genuine live-data question with zero reads still fails this guard
+          // (isLiveDataQuestion) and is flagged.
+          const groundedWithoutReads =
             !AUDIT_CLAIM_RE.test(finalText) &&
             !isLiveDataQuestion(userText) &&
             numberCheck(finalText, [], userText, recalledEvidence).ok;
           if (
             needsGrounding(finalText, counters.step + counters.virtualReads, isLiveDataQuestion(userText)) &&
-            !groundedByMemoryBelt &&
-            !/could not verify|double-check this/i.test(finalText)
+            !groundedWithoutReads &&
+            !/could not verify|could ?n'?t confirm|double-check/i.test(finalText)
           ) {
             finalText += `\n\n⚠ I could not verify this against your records — no data was read this turn. Please ask again so I can look it up.`;
           }
@@ -731,7 +744,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       // Batch-overclaim guard: correct the prose BEFORE the footer so the
       // footer's own numbers can't be mis-read as a claim. Persona eval: a
       // batch wrote 3 tasks but the answer narrated "for the 5 newest leads".
-      const writeNote = writeCountReconcileNote(finalText, exits.writesLanded);
+      const writeNote = writeCountReconcileNote(finalText, exits.writesLanded, exits.writeEntities);
       if (writeNote !== null) finalText += `\n\n${writeNote}`;
       const parts = [...exits.writeActions.entries()].map(([name, n]) => `${name} ×${n}`).join(', ');
       finalText += `\n\n— Changes this turn: ${exits.writesLanded} (${parts})`;

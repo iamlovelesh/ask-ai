@@ -121,16 +121,51 @@ const AUTO_PICKER_ENTRY: SelectableModel = {
 const COMPLEX_RE =
   /\b(compare|compari|versus|vs\.?|analy[sz]e|analysis|break ?down|trend|forecast|correlat|segment|cohort|for each|per (rep|user|agent|month|quarter|region|owner)|across (all|the)|why\b|explain\b|rank(ed|ing)?|distribution|year[- ]over[- ]year|quarter[- ]over[- ]quarter)\b/i;
 
+// Write/action intent. The smart tier (slow, streaming) cannot complete a
+// multi-round bulk write within the turn deadline — a CSV import phrased
+// "create a contact for each row" matched COMPLEX_RE, routed to smart, and
+// timed out at 90s before reaching the write. Balanced is the tier tuned for
+// reliable multi-step tool use, so any clear write/action stays on balanced
+// even when COMPLEX_RE fires. Deliberately omits ambiguous verbs (change,
+// set, move) that commonly appear in read/analysis prose.
+const WRITE_INTENT_RE =
+  /\b(create|add|update|delete|remove|archive|import|upload|assign|merge|draft|register|enroll|insert)\b/i;
+
+// Workflow/automation AUTHORING — building an automation, especially an
+// event-triggered one ("when a lead is created, create a task"). The balanced
+// tier (haiku) intermittently refuses these as impossible ("workflows can't
+// create tasks") despite the capability existing; the smart tier builds them
+// reliably. Plain workflow reads/runs ("show my workflows", "run workflow X")
+// are NOT authoring and stay on balanced.
+const WORKFLOW_AUTHOR_RE =
+  /\bautomat\w*\b|\b(?:creat|make|build|set ?up|design)\w*\b[^.?!]*\bworkflow\b|\bworkflow\b[^.?!]*\b(?:when|trigger|automatically)\b|\bwhen (?:a|an|the)\b[^.?!]*\b(?:is|are|gets?)\s+(?:created|updated|added|changed|won|lost|closed|paid)\b/i;
+
 /** Resolve the Auto sentinel to a concrete tier id from the request text. */
 export function resolveAutoModel(userText: string): string {
   const smart = SELECTABLE_MODELS.find((m) => m.tier === 'smart')!.id;
   const balanced = (SELECTABLE_MODELS.find((m) => m.recommended) ?? SELECTABLE_MODELS.find((m) => m.tier === 'balanced'))!.id;
+  // Workflow authoring takes precedence over the write-downgrade below — it is
+  // a write, but it needs the smart tier's reliability, not balanced's speed.
+  if (WORKFLOW_AUTHOR_RE.test(userText)) return smart;
   const complex = COMPLEX_RE.test(userText) || userText.length > 280;
+  // Writes never escalate to smart — balanced is both faster and tuned for
+  // tool use, and smart can't finish a multi-round write in time.
+  if (complex && WRITE_INTENT_RE.test(userText)) return balanced;
   return complex ? smart : balanced;
 }
 
 export function listModels(): readonly SelectableModel[] {
   return SELECTABLE_MODELS;
+}
+
+/** A "slow" tier (smart / extra-smart, speed ≤ 2): strong reasoning but high
+ * per-call latency. Multi-step work on these needs a longer turn deadline than
+ * the fast-tier default, or it is cut off mid-build (observed: workflow
+ * authoring on gemini-2.5-pro timed out at 90s). Unknown ids default to false
+ * (treated as fast). */
+export function isSlowModel(id: string): boolean {
+  const m = BY_ID.get(id);
+  return m !== undefined && m.speed <= 2;
 }
 
 /** The picker's option list: Auto first, then the five tiers. Kept separate

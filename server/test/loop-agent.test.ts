@@ -510,6 +510,21 @@ describe('runLoopTurn — scheduled follow-up (#8)', () => {
     expect(pending[0]!.dueAt).toBeGreaterThan(0);
   });
 
+  it('does not create a duplicate reminder when the schedule tool is re-invoked the same turn', async () => {
+    // A verification re-run (or any double-round) that re-calls the ungated
+    // schedule tool must NOT insert a second task for the same instruction —
+    // observed live: one request produced two pending reminders.
+    const scheduler = openScheduledTasks(sessionsDb);
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    await drive(registry, 'remind me to follow up with the Acme deal next Friday', [
+      toolCallResponse('session__schedule_follow_up', { when: '+1w', instruction: 'follow up with the Acme deal' }),
+      toolCallResponse('session__schedule_follow_up', { when: '+8d', instruction: 'follow up with the Acme deal' }),
+      textResponse('Done — reminder set.'),
+    ], { scheduler });
+    const pending = scheduler.listPending(sessionId);
+    expect(pending).toHaveLength(1);
+  });
+
   it('is not offered when no scheduler is wired (tests/eval)', async () => {
     const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
     // No scheduler override → the tool is unbound; calling it is an unknown
@@ -1032,8 +1047,8 @@ describe('runLoopTurn — ref data tools', () => {
     // every ranked row's identity must be visible to the model
     for (let i = 20; i < 30; i += 1) expect(followUp).toContain(`INV-${1000 + i}`);
     // "combined value of the top N" must come from the tool, not model math:
-    // sum of (21..30)*1000 = 255000
-    expect(followUp).toContain('Sum of total_cents over these top 10: 255000');
+    // sum of (21..30)*1000 = 255000 cents → $2,550.00 (money fields render as $)
+    expect(followUp).toContain('Sum of total_cents over these top 10: $2,550.00');
     expect(completedOf(events).status).toBe('done');
   });
 
@@ -1115,8 +1130,32 @@ describe('runLoopTurn — ref data tools', () => {
     };
     for await (const ev of runLoopTurn(input)) events.push(ev);
     const obs = seen.bodies[1] ?? '';
-    expect(obs).toContain('750'); // avg of (1000-250)
+    expect(obs).toContain('$7.50'); // avg of (1000-250)=750 cents → dollars
     expect(obs).not.toContain('1000');
+  });
+
+  it('data__aggregate_ref renders a *_cents sum in dollars, not raw cents (100× bug)', async () => {
+    // Live bug: the model read the raw cents sum and reported it as dollars —
+    // $79,234,000 instead of $792,335.89. Totals over a cents field are now
+    // handed to the model already in dollars.
+    const centRows = [{ id: 'inv_1', total_cents: 200000 }, { id: 'inv_2', total_cents: 50000 }];
+    const seen: Seen = { bodies: [] };
+    const events: Event[] = [];
+    const input: RunLoopTurnInput = {
+      sessionId, turnId: `t_${randomUUID()}`, userText: 'total owed across unpaid invoices',
+      sessionDeps: {
+        registry: buildRegistry([[action('invoices.search', 'read', async () => ({ items: [], total: 2 }))]], []),
+        crm: fakeCrm, refs: refsWithRows(centRows, true), eventLog, confirm: approveAll,
+        testFetch: scriptedFetch([
+          toolCallResponse('data__aggregate_ref', { ref: 'r_t1_s1', field: 'total_cents', op: 'sum' }),
+          textResponse('The total is $2,500.00.'),
+        ], seen),
+      },
+    };
+    for await (const ev of runLoopTurn(input)) events.push(ev);
+    const obs = seen.bodies[1] ?? '';
+    expect(obs).toContain('$2,500.00');
+    expect(obs).not.toMatch(/\b250000\b/); // raw cents must not be the headline figure
   });
 
   it('data__aggregate_ref computes a true average, not the sum', async () => {
@@ -1135,8 +1174,8 @@ describe('runLoopTurn — ref data tools', () => {
     };
     for await (const ev of runLoopTurn(input)) events.push(ev);
     const followUp = seen.bodies[1] ?? '';
-    // avg of 100..6000 step 100 = 3050
-    expect(followUp).toContain('3050');
+    // avg of 100..6000 step 100 = 3050 cents → $30.50 (value_cents is money)
+    expect(followUp).toContain('$30.50');
     expect(followUp).not.toContain('183000');
   });
 
@@ -1462,10 +1501,14 @@ describe('runLoopTurn — data__group_by_ref ( group_by pattern)', () => {
     for await (const ev of runLoopTurn(input)) events.push(ev);
     const obs = seen.bodies[1] ?? '';
     expect(obs).toMatch(/\\?"won\\?"/);
-    expect(obs).toContain('6000');
+    expect(obs).toContain('$60.00'); // 6000 cents → dollars (value_cents is money)
     expect(obs).toMatch(/\\?"lost\\?"/);
-    expect(obs).toContain('500');
+    expect(obs).toContain('$5.00'); // 500 cents → dollars
     expect(obs).toMatch(/count\\?":3/);
+    // Grand total across groups is tool-computed so the model needn't hand-sum:
+    // won 1000+3000+2000 + lost 500 = 6500 cents → $65.00 over 4 records.
+    expect(obs).toContain('Total across all groups');
+    expect(obs).toContain('$65.00');
   });
 
   it('op count needs no measure and groups correctly', async () => {
@@ -2074,6 +2117,20 @@ describe('runLoopTurn — zero-read data answer is flagged unverifiable', () => 
     ]);
     const final = finalOf(events);
     expect(final).toMatch(/could not verify|no record was read|double-check/i);
+  });
+});
+
+describe('runLoopTurn — acknowledgement / memory-save turns are not falsely flagged', () => {
+  it('echoing the user\'s own stated figure on a 0-read turn adds no unverified caution', async () => {
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    // A memory-save acknowledgement that repeats the user's own "$50k" — not a
+    // data question, no tool read. It must NOT get an unverified-figure caution
+    // or the "no data was read this turn" belt.
+    const events = await drive(registry, 'please remember that my sales target is $50k', [
+      textResponse('Noted — your sales target of $50k is saved.'),
+    ]);
+    const final = finalOf(events);
+    expect(final).not.toMatch(/could not verify|no data was read|double-check/i);
   });
 });
 

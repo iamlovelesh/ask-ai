@@ -8,6 +8,7 @@ import {
   defaultModelId,
   resolveModelId,
   resolveAutoModel,
+  isSlowModel,
   AUTO_MODEL_ID,
 } from '../src/llm/models';
 
@@ -101,6 +102,42 @@ describe('Auto model mode', () => {
     expect(resolveAutoModel('compare Q3 and Q4 revenue by region and explain the trend')).toBe(SMART);
     expect(resolveAutoModel('for each sales rep, break down win rate versus last quarter')).toBe(SMART);
     expect(resolveAutoModel('analyze why churn increased across the enterprise segment')).toBe(SMART);
+  });
+
+  it('keeps write/import actions on the reliable balanced tier, even phrased like "for each"', () => {
+    // The slow smart tier cannot finish a multi-round bulk write within the
+    // turn deadline (observed: a CSV import routed to smart timed out at 90s),
+    // and balanced is the tier tuned for reliable multi-step tool use.
+    expect(resolveAutoModel('create a contact for each row in the attached CSV')).toBe(BALANCED);
+    expect(resolveAutoModel('import these and add a company for each')).toBe(BALANCED);
+    expect(resolveAutoModel('update the status for each lead in the list')).toBe(BALANCED);
+  });
+
+  it('still escalates an analytical read that merely mentions "for each"', () => {
+    // No write verb → genuine analysis stays on smart (guards against the
+    // write-guard over-matching ordinary breakdowns).
+    expect(resolveAutoModel('for each sales rep, break down win rate versus last quarter')).toBe(SMART);
+  });
+
+  it('routes workflow/automation AUTHORING to the smart tier', () => {
+    // Haiku intermittently refuses valid event-triggered automations
+    // ("workflows can't create tasks"); the smart tier builds them reliably.
+    expect(resolveAutoModel('Make a workflow that, when a lead is created, creates a follow-up task.')).toBe(SMART);
+    expect(resolveAutoModel('Create a workflow with a step that updates the opportunity.')).toBe(SMART);
+    expect(resolveAutoModel('When a deal is won, add a note automatically.')).toBe(SMART);
+  });
+
+  it('keeps plain workflow reads/runs on the balanced tier (not authoring)', () => {
+    expect(resolveAutoModel('show me my workflows')).toBe(BALANCED);
+    expect(resolveAutoModel('run workflow struct_12')).toBe(BALANCED);
+  });
+
+  it('isSlowModel flags the smart/extra-smart tiers, not the fast ones', () => {
+    expect(isSlowModel(SMART)).toBe(true); // gemini-2.5-pro
+    expect(isSlowModel('openai/gpt-5')).toBe(true); // extra-smart
+    expect(isSlowModel(BALANCED)).toBe(false); // haiku
+    expect(isSlowModel('google/gemini-2.5-flash-lite')).toBe(false); // extra-fast
+    expect(isSlowModel('nonexistent/model')).toBe(false); // unknown → fast
   });
 
   it('never downgrades below balanced (avoids the weaker-model correctness risk)', () => {
