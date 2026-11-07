@@ -68,6 +68,15 @@ export interface TurnMetrics {
 
 export type TurnStatus = 'done' | 'clarify' | 'refused' | 'failed' | 'cancelled';
 
+/** A file the user attached to a message (#6) — shown in history and offered
+ * to the agent as context. */
+export interface AttachmentRef {
+  filename: string;
+  mime: string;
+  size: number;
+  url: string;
+}
+
 export interface ConfirmationScope {
   actions: string[];
   affectedCount: number;
@@ -89,7 +98,7 @@ export interface ConfirmationScope {
 }
 
 export type Event =
-  | { t: 'turn.started'; turnId: string; sessionId: string; userText: string; ts: number }
+  | { t: 'turn.started'; turnId: string; sessionId: string; userText: string; ts: number; attachments?: AttachmentRef[] }
   | { t: 'retrieval.done'; turnId: string; candidates: string[]; playbook?: string; ms: number }
   | {
       t: 'plan.ready';

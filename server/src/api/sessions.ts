@@ -277,17 +277,13 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
     // enforce principal permissions, so a non-admin is forced onto the
     // permission-aware "optimized" loop regardless of the requested agent.
     const routedAgent = routeAgentForRole(principal.role, agent) as typeof agent;
-    // Attachments (#6): resolve the uploaded files to agent-visible context
-    // (filename / mime / size / url), from the store (not client-trusted meta).
-    let attachments: string | undefined;
-    if (parsed.data.attachments && parsed.data.attachments.length > 0) {
-      const lines = parsed.data.attachments
-        .map((upId) => uploads.get(upId))
-        .filter((u): u is NonNullable<typeof u> => u !== undefined)
-        .map((u) => `- ${u.filename} (${u.mime}, ${u.size} bytes) — url: ${uploadUrl(u.id)}`);
-      if (lines.length > 0) attachments = lines.join('\n');
-    }
-    turnId = runtime.startTurn({ sessionId, userText: text, agent: routedAgent, model, principal, ...(attachments !== undefined ? { attachments } : {}) });
+    // Attachments (#6): resolve the uploaded files from the store (not
+    // client-trusted metadata) into refs shown in history + given to the agent.
+    const attachments = (parsed.data.attachments ?? [])
+      .map((upId) => uploads.get(upId))
+      .filter((u): u is NonNullable<typeof u> => u !== undefined)
+      .map((u) => ({ filename: u.filename, mime: u.mime, size: u.size, url: uploadUrl(u.id) }));
+    turnId = runtime.startTurn({ sessionId, userText: text, agent: routedAgent, model, principal, ...(attachments.length > 0 ? { attachments } : {}) });
   });
 
   // --- GET /api/sessions/:id/scheduled (pending follow-ups, #8) -----------

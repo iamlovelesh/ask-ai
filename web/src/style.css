@@ -503,6 +503,41 @@ button {
   color: var(--ink);
 }
 
+/* attachments shown under the user's message in history (#6) */
+.said-attachments {
+  padding-left: 14px;
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.said-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--hair-strong);
+  border-radius: 7px;
+  background: var(--raised);
+  text-decoration: none;
+  color: var(--ink);
+  font-size: 12px;
+  transition: border-color var(--tick-ease);
+}
+.said-attach:hover {
+  border-color: var(--petrol);
+}
+.said-attach-icon {
+  opacity: 0.65;
+}
+.said-attach-name {
+  font-weight: 500;
+}
+.said-attach-size {
+  color: var(--slate-soft);
+  font-variant-numeric: tabular-nums;
+}
+
 .agent-section + .agent-section {
   margin-top: 12px;
 }
@@ -1664,32 +1699,48 @@ button {
   gap: 8px;
 }
 .role-picker-label {
-  font-size: 11px;
-  opacity: 0.55;
+  font-size: 10px;
+  color: var(--slate-soft);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
+  font-weight: 600;
 }
 .role-seg {
   display: inline-flex;
-  border: 1px solid var(--border, #2a2a33);
+  border: 1px solid var(--hair-strong);
   border-radius: 8px;
   overflow: hidden;
+  background: var(--sunken);
 }
 .role-seg-btn {
-  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
   border: none;
   background: transparent;
-  color: inherit;
+  color: var(--slate);
+  font: inherit;
   font-size: 12px;
   cursor: pointer;
-  border-left: 1px solid var(--border, #2a2a33);
+  border-left: 1px solid var(--hair);
+  transition: background var(--tick-ease), color var(--tick-ease);
 }
 .role-seg-btn:first-child {
   border-left: none;
 }
+.role-seg-btn:hover:not(:disabled):not(.is-on) {
+  background: color-mix(in srgb, var(--petrol) 7%, transparent);
+  color: var(--ink);
+}
 .role-seg-btn.is-on {
-  background: color-mix(in srgb, var(--petrol, #6b8afd) 22%, transparent);
+  background: var(--petrol);
+  color: var(--petrol-contrast);
   font-weight: 600;
+}
+.role-seg-icon {
+  font-size: 12px;
+  line-height: 1;
 }
 .role-seg-btn:disabled {
   opacity: 0.5;

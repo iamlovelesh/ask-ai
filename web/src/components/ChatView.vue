@@ -188,6 +188,11 @@ async function onFilesSelected(e: Event): Promise<void> {
 function removeAttachment(id: string): void {
   pendingAttachments.value = pendingAttachments.value.filter((a) => a.id !== id);
 }
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 async function onSend(): Promise<void> {
   const text = draft.value.trim();
@@ -349,6 +354,21 @@ async function onCopyLink(): Promise<void> {
             <span class="speaker-rule"></span>
           </div>
           <div class="said said-user">{{ turn.userText }}</div>
+          <div v-if="turn.attachments && turn.attachments.length" class="said-attachments">
+            <a
+              v-for="att in turn.attachments"
+              :key="att.url"
+              class="said-attach"
+              :href="att.url"
+              target="_blank"
+              rel="noopener"
+              :title="`${att.mime} · ${formatBytes(att.size)}`"
+            >
+              <span class="said-attach-icon">📎</span>
+              <span class="said-attach-name">{{ att.filename }}</span>
+              <span class="said-attach-size">{{ formatBytes(att.size) }}</span>
+            </a>
+          </div>
 
           <div class="speaker" style="margin-top: 16px">
             <span class="speaker-name">Ask AI</span>
@@ -424,7 +444,7 @@ async function onCopyLink(): Promise<void> {
           @keydown="onKeydown"
           @input="autosizeTextarea"
         ></textarea>
-        <input ref="fileInput" type="file" multiple style="display: none" @change="onFilesSelected" />
+        <input ref="fileInput" type="file" multiple class="sr-only" @change="onFilesSelected" />
         <button
           v-if="!chat.running"
           class="btn-attach"

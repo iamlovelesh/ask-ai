@@ -14,7 +14,7 @@
  * frames in a turn.
  */
 
-import type { AppEvent, ConfirmationScope, TurnMetrics, TurnStatus } from './events.js';
+import type { AppEvent, AttachmentRef, ConfirmationScope, TurnMetrics, TurnStatus } from './events.js';
 
 export type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
 
@@ -74,6 +74,8 @@ export interface TurnView {
   /** Durable-memory operations the post-turn extractor performed for this turn
    * (ADD/UPDATE/DELETE), shown in the trace. */
   memoryOps: MemoryOpView[];
+  /** Files the user attached to this message (#6), shown in the user bubble. */
+  attachments?: AttachmentRef[];
 }
 
 export interface MemoryOpView {
@@ -173,6 +175,7 @@ export function applyEvent(chat: SessionChatState, ev: AppEvent): void {
     case 'turn.started': {
       const turn = findOrCreateTurn(chat, ev.turnId, ev.userText);
       turn.userText = ev.userText;
+      if (ev.attachments && ev.attachments.length > 0) turn.attachments = ev.attachments;
       chat.running = true;
       chat.activeTurnId = ev.turnId;
       chat.error = null;

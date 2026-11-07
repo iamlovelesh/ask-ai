@@ -322,9 +322,11 @@ export const useSessionStore = defineStore('session', {
      * read a POST response). Folds every frame as it arrives; an
      * unexpected drop hands off to `reconnect` with the latest known seq
      * (never 0 — see Task 15's binding ruling). */
-    /** Upload a file for the active session (#6); returns its upload id or null. */
-    async uploadFile(file: File): Promise<{ id: string; filename: string; mime: string; size: number } | null> {
-      const id = this.activeId;
+    /** Upload a file for a session (#6); returns its upload id or null.
+     * `sessionId` defaults to the active session — pass it explicitly when
+     * uploading for a just-created session before it becomes active. */
+    async uploadFile(file: File, sessionId?: string): Promise<{ id: string; filename: string; mime: string; size: number } | null> {
+      const id = sessionId ?? this.activeId;
       if (!id) return null;
       try {
         const buf = await file.arrayBuffer();

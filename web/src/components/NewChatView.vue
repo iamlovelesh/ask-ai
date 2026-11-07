@@ -16,6 +16,22 @@ const textareaEl = ref<HTMLTextAreaElement | null>(null);
 const starting = ref(false);
 const TEXTAREA_MAX_LINES = 4;
 
+// Attachments (#6): on the first message there is no session yet, so hold the
+// raw files and upload them once the session is created in onSend.
+const fileInput = ref<HTMLInputElement | null>(null);
+const pendingFiles = ref<File[]>([]);
+function openFilePicker(): void {
+  fileInput.value?.click();
+}
+function onFilesSelected(e: Event): void {
+  const input = e.target as HTMLInputElement;
+  pendingFiles.value.push(...Array.from(input.files ?? []).slice(0, 5 - pendingFiles.value.length));
+  input.value = '';
+}
+function removeFile(i: number): void {
+  pendingFiles.value.splice(i, 1);
+}
+
 const EXAMPLE_PROMPTS = [
   'Find leads created in the last week',
   'Show me unpaid invoices that are overdue',
@@ -34,8 +50,15 @@ async function onSend(): Promise<void> {
     const id = await store.newSession();
     if (!id) return; // creation failed — a toast was already surfaced.
     draft.value = '';
+    // Upload any attached files for the new session, then send with their ids.
+    const attachmentIds: string[] = [];
+    for (const f of pendingFiles.value) {
+      const rec = await store.uploadFile(f, id);
+      if (rec) attachmentIds.push(rec.id);
+    }
+    pendingFiles.value = [];
     await router.push({ name: 'session', params: { sessionId: id } });
-    await store.send(text);
+    await store.send(text, attachmentIds.length > 0 ? attachmentIds : undefined);
   } finally {
     starting.value = false;
   }
@@ -95,6 +118,12 @@ watch(draft, () => void nextTick(autosizeTextarea));
     </div>
 
     <div class="composer">
+      <div v-if="pendingFiles.length" class="composer-attachments">
+        <span v-for="(f, i) in pendingFiles" :key="i" class="attach-chip">
+          <span class="attach-icon">📎</span>{{ f.name }}
+          <button class="attach-remove" type="button" title="Remove" @click="removeFile(i)">×</button>
+        </span>
+      </div>
       <div class="composer-inner">
         <textarea
           ref="textareaEl"
@@ -104,6 +133,8 @@ watch(draft, () => void nextTick(autosizeTextarea));
           @keydown="onKeydown"
           @input="autosizeTextarea"
         ></textarea>
+        <input ref="fileInput" type="file" multiple class="sr-only" @change="onFilesSelected" />
+        <button class="btn-attach" type="button" :disabled="starting" title="Attach a file" @click="openFilePicker">📎</button>
         <button class="btn-send" :disabled="!draft.trim() || starting" @click="onSend">Send</button>
       </div>
       <ModelPicker :disabled="starting" />

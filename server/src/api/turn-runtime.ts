@@ -32,7 +32,7 @@ import { modelStreamsTools, defaultModelId } from '../llm/models.js';
 import { runLoopTurn, type LoopSessionDeps } from '../loop/agent.js';
 import { resolvePrincipal, type Principal } from '../agent/permissions.js';
 import { openScheduledTasks, type ScheduledTaskStore } from '../agent/scheduled-tasks.js';
-import type { Event } from '../events/types.js';
+import type { Event, AttachmentRef } from '../events/types.js';
 
 /** 'optimized' = the production tool-loop agent (plan rev 3 pivot);
  * 'plandsl' = the retired plan-then-execute pipeline, kept callable as the
@@ -105,9 +105,9 @@ interface RunningTurn {
   cancel: AbortController;
   /** Principal this turn runs as (#1); undefined = admin default. */
   principal?: Principal;
-  /** Pre-rendered attachment context (#6): files the user attached to this
-   * message, surfaced to the agent so it can register/attach them. */
-  attachments?: string;
+  /** Files the user attached to this message (#6) — shown in history and
+   * surfaced to the agent so it can register/attach them. */
+  attachments?: AttachmentRef[];
 }
 
 export interface StartTurnInput {
@@ -119,8 +119,8 @@ export interface StartTurnInput {
   model?: string;
   /** Principal this turn runs as (#1); undefined = admin default. */
   principal?: Principal;
-  /** Pre-rendered attachment context (#6). */
-  attachments?: string;
+  /** Files attached to this message (#6). */
+  attachments?: AttachmentRef[];
 }
 
 export type ConfirmResolution =

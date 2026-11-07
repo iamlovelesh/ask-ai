@@ -37,6 +37,13 @@ export interface TurnMetrics {
 
 export type TurnStatus = 'done' | 'clarify' | 'refused' | 'failed' | 'cancelled';
 
+export interface AttachmentRef {
+  filename: string;
+  mime: string;
+  size: number;
+  url: string;
+}
+
 export interface ConfirmationScope {
   actions: string[];
   affectedCount: number;
@@ -80,7 +87,7 @@ export type PlanOutcome =
  * also carries `seq` (added by the server — `server/src/api/sse.ts`'s
  * `{seq, ...event}` spread). */
 export type AppEvent =
-  | { t: 'turn.started'; seq: number; turnId: string; sessionId: string; userText: string; ts: number }
+  | { t: 'turn.started'; seq: number; turnId: string; sessionId: string; userText: string; ts: number; attachments?: AttachmentRef[] }
   | { t: 'retrieval.done'; seq: number; turnId: string; candidates: string[]; playbook?: string; ms: number }
   | { t: 'plan.ready'; seq: number; turnId: string; outcome: PlanOutcome; planRev: number; planHash: string; llm: LlmUsage }
   | { t: 'repair' | 'replan' | 'search'; seq: number; turnId: string; round: number; reason: string; llm: LlmUsage }

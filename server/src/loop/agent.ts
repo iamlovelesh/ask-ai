@@ -21,7 +21,7 @@ import type { Crm } from '../store/db.js';
 import { VirtualClock } from '../store/clock.js';
 import type { RefStore } from '../agent/refs.js';
 import type { EventLog } from '../events/log.js';
-import type { Event, TurnMetrics, TurnStatus } from '../events/types.js';
+import type { Event, TurnMetrics, TurnStatus, AttachmentRef } from '../events/types.js';
 import type { ConfirmBroker } from '../agent/executor.js';
 import { emptyWorkingState } from '../agent/memory.js';
 import type { TurnResult } from '../agent/pipeline.js';
@@ -105,9 +105,9 @@ export interface RunLoopTurnInput {
   turnId: string;
   userText: string;
   sessionDeps: LoopSessionDeps;
-  /** Pre-rendered attachment context (#6): files the user attached to this
-   * message (filename/type/size/url), surfaced to the agent. */
-  attachments?: string;
+  /** Files the user attached to this message (#6) — shown in history and
+   * surfaced to the agent as context. */
+  attachments?: AttachmentRef[];
   /** Test seam: budget overrides; production uses the defaults below. */
   budget?: { maxTurns?: number; deadlineMs?: number };
 }
@@ -440,7 +440,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
   }
 
   try {
-    record({ t: 'turn.started', turnId, sessionId, userText, ts: clock.now() });
+    record({ t: 'turn.started', turnId, sessionId, userText, ts: clock.now(), ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}) });
 
     const priorEvents = eventLog.list(sessionId).map((se) => se.event);
     const sessionCtx = buildSessionCtx(priorEvents);
@@ -512,7 +512,9 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       recentTurns: renderRecentTurns(priorEvents),
       currentUser,
       recalledMemories: recalled,
-      ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
+      ...(input.attachments && input.attachments.length > 0
+        ? { attachments: input.attachments.map((a) => `- ${a.filename} (${a.mime}, ${a.size} bytes) — url: ${a.url}`).join('\n') }
+        : {}),
     });
 
     let finalText: string | undefined;
