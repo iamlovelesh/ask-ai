@@ -564,6 +564,13 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
   // Matches by the first identifying field present on BOTH the record and the
   // table (email → phone → name) so re-imports of contacts (email), companies
   // (name), etc. all dedup. Fail-open on any query issue.
+  // Re-import dedup applies ONLY to people/org records, where a natural key
+  // (email/phone/name) genuinely identifies a duplicate. Structures
+  // (workflows, pipelines, reports), tasks, notes, etc. must NEVER dedup on
+  // create — a workflow named like an existing one is a NEW workflow, and
+  // "skipping" it as a duplicate broke the create→add-step→publish chain
+  // (the returned id was then unusable), looping create_workflow forever.
+  const DEDUP_ENTITIES = new Set(['contacts', 'leads', 'companies']);
   const NATURAL_MATCH: Array<{ fields: string[]; col: string }> = [
     { fields: ['email', 'email_address', 'contact_email'], col: 'email' },
     { fields: ['phone', 'phone_number', 'mobile'], col: 'phone' },
@@ -734,9 +741,10 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
           emit({ t: 'step.finished', turnId, stepId, summary: `${action.name}: reused existing (already created this turn)`, ms: 0, inlineResult: prior });
           counters.stepsOk += 1;
           const reuseObs = `This ${action.entities[0] ?? 'record'} was ALREADY created earlier this turn — reusing it, NOT creating a duplicate. Do not create it again; use this existing record: ${renderObservationBody(prior, '')}`;
-          // Ground the reused record's id/name as evidence (else NumberCheck
-          // flags the id the model then cites — producing a mangled caution).
+          // Ground the reused record's id/name as evidence and keep its id
+          // provenance-known (so a follow-up step can reference it).
           exits.toolOutputs.push(reuseObs);
+          harvestIds(JSON.stringify(prior ?? ''), input.knownIds);
           return reuseObs;
         }
         // Re-import guard (parity with data__batch #4): a single create whose
@@ -747,7 +755,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         // Fail-open: no entity table / unqueryable → behaves as before.
         if (isCreate) {
           const createEntityTable =
-            action.entities[0] && /^[a-z_]+$/.test(action.entities[0]) ? action.entities[0] : undefined;
+            action.entities[0] && DEDUP_ENTITIES.has(action.entities[0]) ? action.entities[0] : undefined;
           const existingRecord = createEntityTable !== undefined ? findRecordInCrm(createEntityTable, params) : undefined;
           if (existingRecord !== undefined) {
             const noun = action.entities[0] ?? 'record';
@@ -755,9 +763,12 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
             emit({ t: 'step.finished', turnId, stepId, summary: `${action.name}: already exists in CRM (skipped duplicate)`, ms: 0, inlineResult: existingRecord });
             counters.stepsOk += 1;
             const existsObs = `This ${noun} already EXISTS in the CRM — reusing it, NOT creating a duplicate. Do not create it again; use this existing record: ${renderObservationBody(existingRecord, '')}`;
-            // Ground the existing record's id/name as evidence (else NumberCheck
-            // flags the id the model then cites — producing a mangled caution).
+            // Ground the existing record's id/name as evidence AND mark its id
+            // provenance-known, so the model can both cite it (no mangled
+            // NumberCheck caution) and REFERENCE it in a follow-up step (else
+            // the firewall rejects "id not seen" and the model loops).
             exits.toolOutputs.push(existsObs);
+            harvestIds(JSON.stringify(existingRecord ?? ''), input.knownIds);
             return existsObs;
           }
         }
@@ -1605,7 +1616,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         if (writtenBatchSignatures.has(writeSignature(target.slug, d))) { dupeTurn += 1; return false; }
         // #4: for a create, skip rows whose natural key (email/phone/name)
         // already matches an EXISTING record in the entity's table.
-        if (isCreate && entityTable !== undefined && recordExistsInCrm(entityTable, d)) { dupeCrm += 1; return false; }
+        if (isCreate && entityTable !== undefined && DEDUP_ENTITIES.has(entityTable) && recordExistsInCrm(entityTable, d)) { dupeCrm += 1; return false; }
         return true;
       });
       if (fresh.length === 0) {

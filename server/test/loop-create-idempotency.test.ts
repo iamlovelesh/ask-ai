@@ -192,6 +192,46 @@ describe('create idempotency (duplicate saved report guard)', () => {
     expect(exits.writesLanded).toBe(0);
   });
 
+  it('does NOT dedupe a non-person create (workflow/structure) by name — only people/orgs dedup', async () => {
+    // Regression: create_workflow (entities:['structures']) matched an existing
+    // structure by name, returned "already exists", and the model could not
+    // then use that id — an infinite create_workflow retry loop.
+    let n = 0;
+    const action: ActionDef = {
+      id: 'workflows.create_workflow', slug: 'workflows.create_workflow', module: 'workflows',
+      name: 'Create workflow', description: 'Create a workflow', risk: 'write', entities: ['structures'],
+      inputSchema: z.object({ name: z.string() }), outputSchema: z.any(),
+      searchCard: { synonyms: [], examplePhrasings: [] },
+      handler: (async (input: Record<string, unknown>) => { n += 1; return { id: `struct_${n}`, name: input['name'] }; }) as ActionDef['handler'],
+    };
+    const exits = freshExits();
+    const base = buildInput(action, exits);
+    const db = {
+      all: (sql: string) => (/PRAGMA table_info/i.test(sql) ? [{ name: 'id' }, { name: 'name' }] : []),
+      get: (sql: string, params: unknown[]) =>
+        /SELECT \* FROM structures WHERE lower\(name\)/i.test(sql) && String(params?.[0]).toLowerCase() === 'new lead follow-up task'
+          ? { id: 'struct_422', name: 'New Lead Follow-up Task' } : undefined,
+      run: () => ({ changes: 0 }),
+    };
+    const crm = { tx: (fn: (d: unknown) => unknown) => fn(db), close: () => {} } as unknown as BuildTurnToolsInput['crm'];
+    const tools = buildTurnTools({ ...base, crm });
+    const tool = findTool(tools, 'workflows__create_workflow');
+    const obs = (await tool.invoke({}, JSON.stringify({ name: 'New Lead Follow-up Task' }))) as string;
+    expect(n).toBe(1); // handler RAN — the workflow was actually created, not skipped
+    expect(obs).not.toMatch(/already exist/i);
+  });
+
+  it('registers a reused record id as seen, so the model can reference it next step', async () => {
+    const { action } = makeCreateContactAction();
+    const exits = freshExits();
+    const knownIds = new Set<string>();
+    const tools = buildTurnTools({ ...buildInputWithExistingContact(action, exits), knownIds });
+    const tool = findTool(tools, 'contacts__create_contact');
+    await tool.invoke({}, JSON.stringify({ name: 'Already Here', email: 'taken@x.com' }));
+    // con_999 (the reused existing record) must be provenance-known now
+    expect(knownIds.has('con_999')).toBe(true);
+  });
+
   it('still creates a contact whose email is NOT yet in the CRM', async () => {
     const { action, calls } = makeCreateContactAction();
     const exits = freshExits();
