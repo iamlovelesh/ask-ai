@@ -26,8 +26,18 @@ const MONTHS: Record<string, number> = {
 const NUMBER_RE = /\$?\d[\d,]*(?:\.\d+)?/g;
 const MONTH_DAY_RE =
   /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:,?\s+(\d{4}))?\b/gi;
+// Day-before-month spoken order ("13 November 2026", "13 Nov 2026") — the EU
+// way a scheduling confirmation reads a date. Without this the leading day
+// number is scanned as a bare unverified figure ("could not verify: 13").
+const DAY_MONTH_RE =
+  /\b(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?(?:,?\s+(\d{4}))?\b/gi;
 // no trailing \b — ISO timestamps continue with 'T' (digit→T is no boundary)
 const ISO_DATE_RE = /\b(\d{4})-(\d{2})-(\d{2})/g;
+// Slash-separated numeric date (13/11/2026 EU, 11/13/2026 US). Requires TWO
+// slashes and a 2-4 digit year so a bare ratio ("3/5") is never a date. The
+// day/month order is ambiguous, so both interpretations are tried; the date's
+// day number must never be scanned as a standalone unverified figure.
+const NUMERIC_DATE_RE = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g;
 const TIME_RE = /\b\d{1,2}:\d{2}\b/g;
 
 const SMALL_INT_MAX = 12;
@@ -43,6 +53,44 @@ const ISO_TIMESTAMP_RE = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/g;
 
 function parseNum(raw: string): number {
   return Number(raw.replace(/[$,]/g, ''));
+}
+
+// Magnitude suffixes a model uses to present a grounded figure in human form
+// ("$19.1M", "2.3 billion", "1.1k"). Captured as part of the figure so the
+// token is never mangled to "$19.1", and expanded so the value can match the
+// underlying grounded number.
+const SUFFIX_MULT: Record<string, number> = {
+  k: 1e3, thousand: 1e3, m: 1e6, mn: 1e6, million: 1e6, b: 1e9, bn: 1e9, billion: 1e9,
+};
+// A draft figure: optional $, digits/commas, optional decimals, optional
+// magnitude suffix (word-bounded so "5 meeting rooms" is not "5 million").
+const DRAFT_FIGURE_RE =
+  /\$?\d[\d,]*(?:\.\d+)?(?:\s?(?:thousand|million|billion|mn|bn|k|m|b)\b)?/gi;
+const FIGURE_PARTS_RE =
+  /^(\$?)([\d,]+(?:\.\d+)?)(?:\s?(thousand|million|billion|mn|bn|k|m|b))?$/i;
+
+/** Parse a draft figure into its numeric value and its DISPLAYED precision —
+ * the place value of its least-significant shown digit (decimals, trailing
+ * zeros, and any magnitude suffix taken into account). Precision > 1 means the
+ * figure is rounded, so it may verify against a nearby grounded value. */
+function parseFigure(raw: string): { value: number; precision: number } | null {
+  const mm = FIGURE_PARTS_RE.exec(raw.trim());
+  if (!mm) return null;
+  const digits = (mm[2] as string).replace(/,/g, '');
+  const base = Number(digits);
+  if (!Number.isFinite(base)) return null;
+  const suf = mm[3] ? (mm[3] as string).toLowerCase() : '';
+  const mult = suf ? (SUFFIX_MULT[suf] ?? 1) : 1;
+  const dot = digits.indexOf('.');
+  let precision: number;
+  if (dot >= 0) {
+    const frac = digits.length - dot - 1;
+    precision = Math.pow(10, -frac) * mult;
+  } else {
+    const z = digits.length - digits.replace(/0+$/, '').length; // trailing zeros
+    precision = Math.pow(10, z) * mult;
+  }
+  return { value: base * mult, precision };
 }
 
 function isYear(n: number, raw: string): boolean {
@@ -93,11 +141,33 @@ export function numberCheck(
     memExact.push(n, n / 100, n * 100);
     if (memExact.length >= MAX_POOL * 3) break;
   }
-  const supported = (claim: number): boolean => {
+  // Figures the USER stated in THIS request are supported — echoing the user's
+  // own number back ("your target is $50k") is never fabrication. Parsed with
+  // the magnitude-aware scanner so "$50k" matches "$50,000"; exact membership
+  // only (no cross-number derivation), like memory.
+  const userExact: number[] = [];
+  for (const m of userText.matchAll(DRAFT_FIGURE_RE)) {
+    const pf = parseFigure(m[0].trim());
+    if (pf && Number.isFinite(pf.value)) userExact.push(pf.value, pf.value / 100, pf.value * 100);
+    if (userExact.length >= MAX_POOL * 3) break;
+  }
+  // Raw output numbers (the `n` of each [n, n/100, n*100] triple) — the basis
+  // for pairwise derivation and rounded-figure matching.
+  const rawNums = pool.filter((_, i) => i % 3 === 0);
+  const supported = (claim: number, precision = 1): boolean => {
     if (pool.some((c) => close(claim, c))) return true;
     if (memExact.some((c) => close(claim, c))) return true; // memory: exact only
+    if (userExact.some((c) => close(claim, c))) return true; // user's own stated figure
+    // Rounded figure (precision > 1, e.g. "$19.1M", "~1,100"): accept if a
+    // grounded value rounds to it at its displayed precision. Checked against
+    // the raw output number and its dollars (÷100) variant only — never the
+    // ×100 variant, so a small unrelated number cannot scale up into range.
+    if (precision > 1) {
+      const tol = precision / 2 + EPS;
+      if (rawNums.some((c) => Math.abs(c - claim) <= tol || Math.abs(c / 100 - claim) <= tol)) return true;
+    }
     // pairwise sum/difference of raw output figures (first variant only)
-    const raws = pool.filter((_, i) => i % 3 === 0).slice(0, 120);
+    const raws = rawNums.slice(0, 120);
     for (let i = 0; i < raws.length; i += 1) {
       for (let j = i; j < raws.length; j += 1) {
         const a = raws[i] as number;
@@ -142,6 +212,8 @@ export function numberCheck(
   const numericDraft = draft
     .replace(RECORD_TOKEN_RE, ' ')
     .replace(BARE_ID_RE, ' ')
+    .replace(NUMERIC_DATE_RE, ' ')
+    .replace(DAY_MONTH_RE, ' ')
     .replace(MONTH_DAY_RE, ' ')
     .replace(TIME_RE, ' ')
     .replace(ISO_DATE_RE, (iso) => {
@@ -150,22 +222,49 @@ export function numberCheck(
     return ' ';
   });
 
-  for (const m of numericDraft.matchAll(NUMBER_RE)) {
-    const raw = m[0];
-    const n = parseNum(raw);
+  for (const m of numericDraft.matchAll(DRAFT_FIGURE_RE)) {
+    const raw = m[0].trim();
+    const parsed = parseFigure(raw);
+    if (parsed === null) continue;
+    const { value: n, precision } = parsed;
     if (!Number.isFinite(n)) continue;
     if (!raw.startsWith('$') && Math.abs(n) <= SMALL_INT_MAX && Number.isInteger(n)) continue;
     if (isYear(n, raw)) continue;
-    if (!supported(n)) unsupported.push(raw);
+    if (!supported(n, precision)) unsupported.push(raw);
   }
 
-  for (const m of draft.matchAll(MONTH_DAY_RE)) {
+  // Day-before-month spoken dates ("13 November 2026") — verified first, then
+  // removed so the month-day scan below cannot mis-read "November 2026" as a
+  // bogus "November 20".
+  for (const m of draft.matchAll(DAY_MONTH_RE)) {
+    const day = Number(m[1]);
+    const month = MONTHS[(m[2] as string).slice(0, 3).toLowerCase()] as number;
+    const year = m[3];
+    const key = year ? `${month}-${day}-${year}` : `${month}-${day}`;
+    if (!outputDates.has(key) && !outputDates.has(`${month}-${day}`)) unsupported.push(m[0]);
+  }
+  const draftSansDayMonth = draft.replace(DAY_MONTH_RE, ' ');
+  for (const m of draftSansDayMonth.matchAll(MONTH_DAY_RE)) {
     const month = MONTHS[(m[1] as string).slice(0, 3).toLowerCase()] as number;
     const day = Number(m[2]);
     const year = m[3];
     const key = year ? `${month}-${day}-${year}` : `${month}-${day}`;
     const keyNoYear = `${month}-${day}`;
     if (!outputDates.has(key) && !outputDates.has(keyNoYear)) unsupported.push(m[0]);
+  }
+
+  // Numeric slash dates: supported if EITHER day/month ordering matches an
+  // output date (the format is locale-ambiguous). Only orderings with a valid
+  // 1-12 month and 1-31 day are considered.
+  for (const m of draft.matchAll(NUMERIC_DATE_RE)) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    let yr = Number(m[3]);
+    if (yr < 100) yr += 2000;
+    const keys: string[] = [];
+    if (b >= 1 && b <= 12 && a >= 1 && a <= 31) keys.push(`${b}-${a}-${yr}`, `${b}-${a}`); // DD/MM
+    if (a >= 1 && a <= 12 && b >= 1 && b <= 31) keys.push(`${a}-${b}-${yr}`, `${a}-${b}`); // MM/DD
+    if (keys.length === 0 || !keys.some((k) => outputDates.has(k))) unsupported.push(m[0]);
   }
 
   // Entity verification (round-7 support): reference tokens must cite an id
@@ -177,7 +276,10 @@ export function numberCheck(
     const id = m[2] as string;
     const name = (m[3] as string).trim();
     tokenIds.add(id);
-    if (!evidence.includes(id)) unsupported.push(`[[record:…:${id}]]`);
+    // Report the plain id, NOT a `[[record:…:id]]` pseudo-token: name-resolve
+    // runs over the whole answer (including this caution) and would wrap the
+    // bare id inside the pseudo-token, producing a mangled nested chip.
+    if (!evidence.includes(id)) unsupported.push(id);
     else if (name.length > 1 && !evidenceLower.includes(name.toLowerCase())) unsupported.push(name);
   }
   const draftSansTokens = draft.replace(RECORD_TOKEN_RE, ' ');

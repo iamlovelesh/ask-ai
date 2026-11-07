@@ -46,6 +46,76 @@ describe('numberCheck', () => {
     expect(numberCheck('Okay — I stopped. Nothing further was changed.', []).ok).toBe(true);
   });
 
+  it('verifies numeric (DD/MM/YYYY and MM/DD/YYYY) date claims, not their day number', () => {
+    // EU-format preference renders "Friday, 13/11/2026". The day "13" is a date
+    // component, not an unverified figure — it must verify against the ISO date
+    // in outputs, in either day/month order.
+    const outs = ['Scheduled a follow-up for 2026-11-13T00:00:00.000Z: Follow up with Acme'];
+    expect(numberCheck('Done! I scheduled it for Friday, 13/11/2026.', outs).ok).toBe(true);
+    expect(numberCheck('Done! I scheduled it for 11/13/2026.', outs).ok).toBe(true);
+  });
+
+  it('still flags a numeric date that does NOT match any output date', () => {
+    const outs = ['Scheduled a follow-up for 2026-11-13T00:00:00.000Z: Follow up with Acme'];
+    const r = numberCheck('Done! I scheduled it for 25/12/2026.', outs);
+    expect(r.ok).toBe(false);
+    expect(r.unsupported.join(' ')).toContain('25/12/2026');
+  });
+
+  it('verifies a rounded magnitude figure ($19.1M) against the exact grounded value', () => {
+    // The model presents a grounded total in human-friendly rounded form.
+    // "$19.1M" must verify against $19,098,279.08 (stored as cents), and the
+    // reported token must keep its suffix — never be mangled to "$19.1".
+    const outs = ['opportunities aggregate: sum of value_cents over 712 records: 1909827908'];
+    expect(numberCheck('Your open pipeline is about $19.1M across the deals.', outs).ok).toBe(true);
+  });
+
+  it('flags a fabricated magnitude figure and keeps its full token (suffix intact)', () => {
+    const outs = ['opportunities aggregate: sum of value_cents over 712 records: 1909827908'];
+    const r = numberCheck('Your open pipeline is $50.0M.', outs);
+    expect(r.ok).toBe(false);
+    expect(r.unsupported.join(' ')).toContain('$50.0M');
+    expect(r.unsupported.join(' ')).not.toContain('$50.0 ');
+  });
+
+  it('verifies a rounded count (~1,100) against a nearby grounded count', () => {
+    const outs = ['Search leads: 1087 leads [ref r_1]'];
+    expect(numberCheck('You have about 1,100 leads.', outs).ok).toBe(true);
+  });
+
+  it('keeps an exact (non-rounded) count strict — 711 is not 712', () => {
+    const outs = ['Search opportunities: 712 opportunities in total'];
+    const r = numberCheck('You have 711 open opportunities.', outs);
+    expect(r.ok).toBe(false);
+    expect(r.unsupported.join(' ')).toContain('711');
+  });
+
+  it('verifies a day-before-month spelled date ("13 November 2026"), not its day number', () => {
+    // A scheduling confirmation renders the EU spoken order "13 November 2026".
+    // The day "13" is a date part, verified against the ISO date in outputs —
+    // it must NOT be scanned as an unverified figure.
+    const outs = ['Scheduled a follow-up for 2026-11-13T00:00:00.000Z: Follow up with Acme'];
+    expect(numberCheck('All set — reminder for 13 November 2026.', outs).ok).toBe(true);
+    expect(numberCheck('All set — reminder for 13 Nov 2026.', outs).ok).toBe(true);
+    // a wrong day-month spelled date still flags
+    expect(numberCheck('Reminder for 25 December 2026.', outs).ok).toBe(false);
+  });
+
+  it('treats a figure the USER stated as supported (echoing it is not fabrication)', () => {
+    // Pure acknowledgement / memory-save turn: the only figure is the user's own
+    // stated value. Repeating it back must not raise an "unverified" caution.
+    expect(numberCheck('Saved: your sales target is $50k.', [], 'remember my sales target is $50k').ok).toBe(true);
+    expect(numberCheck('Noted — target $50,000 and quota 120 deals.', [], 'my target is $50,000 and quota is 120 deals').ok).toBe(true);
+    // a figure NOT stated by the user and not in outputs still flags
+    expect(numberCheck('Your target is $99,999.', [], 'remember my sales target is $50k').ok).toBe(false);
+  });
+
+  it('does not treat a non-date fraction/ratio as a numeric date', () => {
+    // "3/5" is one slash, not a date — must not be mis-parsed; 3 and 5 are small
+    // ints anyway, so a clean ratio mention passes.
+    expect(numberCheck('The win rate is 3/5 for the sample.', []).ok).toBe(true);
+  });
+
   it('round-7c: a figure late in large outputs is still verified (date digits must not exhaust the pool)', () => {
     // Live failure: 30 wide rows × 5 ISO timestamps each shed ~7 digit
     // tokens apiece, hitting the pool cap before the tool-computed sum at
