@@ -15,3 +15,6 @@ server/data/crm-evalrun-*
 # benchmark run data (regenerable; see docs/BENCHMARK.md for the report)
 results/
 results-archive/
+
+# auto-generated demo video (reproduce via scripts/demo-video.mjs)
+demo-out/
