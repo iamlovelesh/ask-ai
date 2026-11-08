@@ -26,17 +26,18 @@ comparison table can be generated mechanically.
 |---|---|---|
 | Direct TTFUR, p50 | **< 2s** | See §3 "direct" row |
 | Direct TTFUR, p95 | **< 4s** | See §3 "direct" row |
-| Complex `plan.ready` latency, p50 | **< 4s** | Time from `turn.started` to the `plan.ready` event that carries a validated multi-step plan (`outcome.kind==='plan'`, `plan.steps.length > 1`) |
+| Complex TTFUR latency, p50 | **< 4s** | Time from `turn.started` to TTFUR (first useful response, see §3) on complex turns — production loop agent. (The metric was originally defined against the retired plan-DSL's `plan.ready` event; it carries over to the loop as the TTFUR of a multi-action turn.) |
 | Complex end-to-end (E2E) latency, p50 | **< 12s** | Time from `turn.started` to `turn.completed` (`metrics.totalMs`), complex turns only |
 | Complex end-to-end (E2E) latency, p95 | **< 25s** | Same as above, p95 |
 
 "Direct" vs "complex" bucketing (normative — used identically by `eval/report.ts`):
-a turn is **complex** iff its `plan.ready` event carries `outcome.kind==='plan'` AND
-`outcome.plan.steps.length > 1`. Every other outcome (`respond`, `clarify`,
-`unsupported`, or a single-step `plan`) is **direct**. This is a property of the
-*turn's actual outcome*, not of the scenario's `category` label — a `multistep`-category
-scenario whose planner chose a 1-step plan still buckets as direct for latency purposes,
-and the report calls out any such mismatch as a note.
+for the production loop agent a turn is **complex** iff it dispatched more than one action
+(`dispatchedActions().length > 1`); every other turn (a single action, or a
+`respond`/`clarify`/`unsupported` with none) is **direct**. (For the retired plan-DSL
+comparator the equivalent signal was a `plan.ready` carrying `outcome.kind==='plan'` with
+`steps.length > 1`.) This is a property of the *turn's actual work*, not of the scenario's
+`category` label — a `multistep`-category scenario the agent resolved in one action still
+buckets as direct for latency purposes, and the report calls out any such mismatch as a note.
 
 ## 2. Quality / Cost
 
@@ -51,32 +52,28 @@ and the report calls out any such mismatch as a note.
 
 TTFUR ("time to first useful response") is measured differently depending on how a turn
 resolves — there is no single universal "first byte" definition that is meaningful across
-a plan-led multi-step turn and a one-line clarifying question. Every turn records BOTH
-`plan.ready`'s timestamp and the first `answer.delta`'s timestamp regardless of which
-definition below applies to it (LLD §9.2: "so the definition can be defended or
-re-sliced"), and `turn.completed.metrics.ttfurMs` (the field the optimized pipeline
-itself computes and the one these targets are graded against) already applies the
-correct rule per outcome:
+a multi-action turn and a one-line clarifying question (LLD §9.2: "so the definition can be
+defended or re-sliced"). The rule applied per outcome:
 
-| Outcome | TTFUR measured at |
+| Outcome (production loop agent) | TTFUR measured at |
 |---|---|
-| Plan-led turn (`plan.ready` with `outcome.kind==='plan'`) | the `plan.ready` event (repair latency included — it fires AFTER validation) |
-| `respond` / `clarify` outcome | the first `answer.delta` chunk |
-| Destructive/bulk/external action taken directly (no multi-step plan) | the `confirmation.required` event |
-| `unsupported` / refused outcome | the first `answer.delta` chunk (the refusal message) |
-| Baseline agent (any outcome) | the first assistant-visible token OR the first tool-intent event (`confirmation.required` if the first dispatched call gates, else `step.started`) — whichever comes first |
+| `respond` / `clarify` / `unsupported` (refusal) | the first `answer.delta` chunk |
+| First useful act is a destructive/bulk/external confirmation | the `confirmation.required` event |
+| Any other turn (incl. multi-action) | the first `answer.delta` chunk (the loop marks TTFUR at the first useful output via `markTtfur`) |
+| Baseline comparator (any outcome) | the first assistant-visible token OR the first tool-intent event (`confirmation.required` if the first dispatched call gates, else `step.started`) — whichever comes first |
+| Retired plan-DSL comparator (plan-led turn) | the `plan.ready` event (repair latency included — it fires AFTER validation) |
 
-"Direct" scenarios in §1 are turns whose TTFUR definition above is `answer.delta` or
-`confirmation.required` (no multi-step plan involved); "complex" scenarios use the
-`plan.ready` definition.
+`turn.completed.metrics.ttfurMs` is the field the production loop computes and the one these
+targets are graded against; it already applies the correct rule per outcome.
 
 ## 4. Measurement conditions (must hold for every number in BENCHMARK.md)
 
-- **Provider:** OpenRouter, `usage:{include:true}`. `PROVIDER_ORDER` (if set) pins the
-  upstream provider per model so a flaky/variable-priced fallback provider never silently
-  skews one run's cost or latency relative to another's — a run that could not get a
-  pinned provider for a model in the matrix discloses this explicitly rather than
-  reporting mixed-provider numbers as if they were comparable.
+- **Provider:** OpenRouter, `usage:{include:true}`. `PROVIDER_ORDER` is **reserved — not yet
+  wired** (no code reads it today); the intent is to pin the upstream provider per model so a
+  flaky/variable-priced fallback provider never silently skews one run's cost or latency
+  relative to another's. Until it is wired, a run that could not hold a single provider for a
+  model in the matrix discloses this explicitly rather than reporting mixed-provider numbers
+  as if they were comparable.
 - **Clock:** `VIRTUAL_NOW` pinned to `2026-11-04T10:00:00Z` for every run (never real
   wall-clock "today" — scenarios hardcode dates, never relative ones).
 - **Profile:** `standard` (~50k rows, the committed `crm-standard.template.db`). The
@@ -90,8 +87,8 @@ correct rule per outcome:
   is measured on the optimized agent only, disclosed").
 - **Budget:** `EVAL_BUDGET_USD=8.50` as a hard process-wide ceiling (revised 2026-11-05,
   pre-benchmark: total available API credit is $10; ceiling leaves headroom). Consequences,
-  decided before any run: optimized = full 110 scenarios ×3 trials; baseline = stratified
-  40-scenario subset ×1 trial (full-catalog ReAct at ~12k tokens/step cannot fit $10 at
-  110 scenarios — disclosed in BENCHMARK.md); model matrix reduced to a ≤10-scenario spot
+  decided before any run: optimized = full corpus ×3 trials; baseline = full corpus ×1 trial
+  (full-catalog ReAct at ~12k tokens/step, so the baseline is held to a single trial rather
+  than the optimized agent's 3 — disclosed in BENCHMARK.md); model matrix reduced to a ≤10-scenario spot
   check only if residual budget permits; a run that aborts on budget
   reports a partial table, not a padded/extrapolated one.

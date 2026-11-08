@@ -25,7 +25,8 @@
     "eval:lint": "tsx eval/lint.ts",
     "benchmark:report": "tsx eval/report.ts",
     "build": "npm -w server run build && npm -w web run build",
-    "test": "vitest run",
+    "test": "npm -w server run test && npm -w web run test && npm -w eval run test",
+    "test:node": "vitest run",
     "typecheck": "npm -w server run typecheck && npm -w eval run typecheck"
   },
   "devDependencies": {

@@ -7,16 +7,19 @@ conditional, ambiguous, and follow-up requests; selects and sequences the right 
 of 500; executes them against a seeded SQLite store; and reports grounded results — never
 results the model made up.
 
-The thesis that shapes every architectural choice here: **the LLM is an untrusted planner;
-deterministic code owns execution.** The model emits a typed plan, never touches the
-database directly, never decides when a write needs human approval, and never gets credit
-for a result it didn't actually produce. The agentic loop runs at *phase* granularity
-(plan → validate → execute → observe → replan), not per-action — a direct request costs one
-LLM call, a nine-step workflow costs one to three, regardless of how many of the 500 actions
-it touches. This repo also carries the evidence for why that shape beats the alternatives:
-a baseline ReAct agent sharing the same handlers and gates, a 60-query retrieval probe set,
-and a benchmark harness that computes every published number from the same trace store the
-UI renders live.
+The thesis that shapes every architectural choice here: **the LLM is an untrusted actor;
+deterministic code owns execution.** The model calls tools, but it never touches the
+database directly, never decides when a write needs human approval, never invents a record
+id, and never gets credit for a result it didn't actually produce. The production agent is a
+**tool-calling loop** (`server/src/loop/agent.ts`, `runLoopTurn`): the model sees the full
+500-action catalog as "slug: description" lines in a cacheable system prompt, starts each
+turn with a retrieval-selected shortlist of action tools bound, and binds more on demand via
+`catalog__search_actions` — then reads and writes by calling those tools, with every call
+wrapped in deterministic rails (date coercion, schema re-validation, a confirmation gate, a
+provenance firewall). This repo also carries the evidence for why that shape beats the
+alternatives: a baseline ReAct agent and a retired plan-DSL pipeline that share the same
+handlers and gates, a 60-query retrieval probe set, and a benchmark harness that computes
+every published number from the same trace store the UI renders live.
 
 ## Demo video
 
@@ -43,7 +46,7 @@ npm run dev:web              # Vue 3 + Vite on :5173, proxies /api -> :3000
 ```
 
 Open `http://localhost:5173`. New chat → type a request → watch the task tracker stream
-`plan.ready`, step cards, confirmation prompts, and the grounded final answer.
+step cards, confirmation prompts, and the grounded final answer as the tool-loop runs.
 
 ### Environment variables (`.env.example`, committed)
 
@@ -54,12 +57,19 @@ Open `http://localhost:5173`. New chat → type a request → watch the task tra
 | `FAST_MODEL` | Direct-path / simple-query model. | `google/gemini-2.5-flash-lite` |
 | `PROFILE` | CRM seed profile to boot against. | `standard` (~50k rows) |
 | `VIRTUAL_NOW` | Frozen virtual clock — handlers never call `Date.now()`. | `2026-11-04T10:00:00Z` |
-| `EVAL_BUDGET_USD` | Hard process-wide spend ceiling for `npm run eval`. | `8.50` (project's actual credit-constrained ceiling) |
+| `EVAL_BUDGET_USD` | Hard process-wide spend ceiling for `npm run eval`. | `25` (matches `.env.example` and the code default in `server/src/llm/client.ts`; the `$8.50` figure in `docs/TARGETS.md` is the benchmark total-**spend** target, a separate thing) |
 | `PORT` | Server port. | `3000` |
-| `PROVIDER_ORDER` | Optional OpenRouter provider pin (e.g. avoid a flaky fallback route skewing latency/cost). | *(empty)* |
+| `WEB_SEARCH_ENABLED` | Opt-in flag for the `web__search` tool — external public info via OpenRouter's native web plugin (reuses `OPENROUTER_API_KEY`, no separate account). The tool is bound only when on. | *(empty — off; `1`/`true`/`on`/`yes` enables)* |
+| `WEB_SEARCH_MAX` | Max web-search results returned per query. | `5` |
+| `WEB_SEARCH_MODEL` | Model used to run the web search. | *(empty → falls back to `FAST_MODEL`)* |
+| `COMPOSER_POLISH` | Retired-pipeline only: one extra conversational-polish LLM call (`server/src/agent/composer.ts`); off for benchmarks. | `1` in `.env.example`; unset = off |
+| `ASKAI_WORKSPACE_INSTRUCTIONS` | Org/admin steering text injected into the agent's system prompt (tone, fiscal calendar, naming/policy conventions). | *(empty)* |
+| `SCHEDULER_POLL_MS` | Poll interval for firing due scheduled follow-ups/briefings; `0` disables the poller. | `30000` |
+| `DEMO_USER_ID` | Acting-user id the single-tenant demo runs as — memory scoping and "me"/"my"/"I" resolution. | `user_1` |
+| `PROVIDER_ORDER` | **Reserved — not yet wired** (no code reads it today): an intended OpenRouter provider pin to stop a flaky fallback route skewing latency/cost. | *(empty)* |
 
 Without `OPENROUTER_API_KEY` the server still boots and the UI still renders, but every
-planner/joiner call fails — see `server/src/llm/mock-fetch.ts` and `MOCK_LLM_SCRIPT` for the
+model call fails — see `server/src/llm/mock-fetch.ts` and `MOCK_LLM_SCRIPT` for the
 offline harness-verification path used by `eval/test/runner-e2e.test.ts` (excluded from all
 benchmark numbers, see §Evaluation).
 
@@ -73,47 +83,54 @@ flowchart LR
 
   subgraph Server["Node 22.5+ / TypeScript / Fastify"]
     API[REST + SSE API]
-    subgraph Agent["Agent Pipeline — one call site, not per-action"]
-      WM[Working Memory<br/>+ query rewrite] --> RET[Retrieval<br/>BM25 + boosts]
-      RET --> PLN[Planner LLM<br/>Plan DSL, 1 call]
-      PLN --> VAL[Validator<br/>Zod + ref graph, ≤2 repairs]
-      VAL --> EXE[DAG Executor<br/>sequential, gated writes]
-      EXE --> JOIN[Joiner<br/>results vs expects]
-      JOIN -->|diverged, ≤2 rounds| PLN
-      JOIN --> CMP[Composer<br/>grounded templates]
+    subgraph Agent["Tool-loop agent — loop/agent.ts (runLoopTurn)"]
+      SYS[System prompt<br/>honesty rules + full 500-action<br/>catalog as slug:description · cacheable]
+      RET[Retrieval shortlist<br/>BM25 + boosts → bind ~20 action tools]
+      LOOP[Tool-calling loop<br/>model ↔ tools · ≤30 steps / 90s]
+      SYS --> LOOP
+      RET --> LOOP
+      LOOP -->|capability not bound| CAT[catalog__search_actions<br/>binds more tools on demand]
+      CAT --> LOOP
+      LOOP --> RAILS[Per-call rails<br/>date-coerce · re-validate · gate · firewall]
+      LOOP --> GND[Grounding / NumberCheck<br/>≤1 verification re-run]
     end
-    REG[(Action Registry<br/>500 ActionDefs + 3 playbooks)]
-    LLM[LLM Client Layer<br/>Vercel AI SDK -> OpenRouter]
+    REG[(Action Registry<br/>500 ActionDefs)]
+    MEM[(Durable user memory<br/>+ load-on-demand skills)]
+    LLM[LLM Client Layer<br/>@openai/agents -> OpenRouter]
     EVT[(Event Log<br/>node:sqlite, append-only)]
     CRM[(CRM Store<br/>node:sqlite, ~50k rows<br/>standard profile)]
   end
 
   UI <-->|SSE + REST| API
   API --> Agent
-  Agent --> REG
-  REG -->|handlers| CRM
-  PLN & CMP --> LLM
+  LOOP --> REG
+  LOOP <--> MEM
+  RAILS -->|handlers| CRM
+  LOOP & GND --> LLM
   Agent -->|append events| EVT
   EVT -->|4 projections| API
 ```
 
-**The LLM-is-an-untrusted-planner thesis, concretely:** the planner's one job is to emit a
-typed `Plan` (or `clarify`/`unsupported`/`respond`/`search`). It never writes to the store,
-never resolves which rows a bulk action touches (the executor resolves `$ref`s server-side,
-never from model-echoed literal ID lists), and never decides whether a write needs human
-confirmation — that's a hard-coded predicate in `executor.ts` keyed on `risk` and resolved
-`affectedCount`, not a model judgment call. If the model hallucinates a step the validator
-rejects it; if a repaired plan still doesn't parse, the turn fails loudly rather than
-executing something unvalidated.
+**The LLM-is-untrusted thesis, concretely:** the model's job is to call tools; it never
+writes to the store directly. Every tool call passes through deterministic rails in
+`loop/tools.ts` before a handler runs — placeholder filters are scrubbed, relative dates are
+coerced, and the args are re-validated against the action's real strict Zod `inputSchema`; a
+**provenance firewall** rejects any record id the model didn't actually see in a tool result
+or the user's message (no guessed ids); and whether a write needs human confirmation is a
+hard-coded predicate keyed on `risk` and resolved `affectedCount` (plus a value-based
+policy for high-value/financial writes), never a model judgment call. If the model targets
+an unbound or unknown tool the call is rescued (renamed or rerouted to catalog search),
+never a dead turn.
 
-**Loop granularity is the latency/cost story.** Most agent frameworks loop per tool call —
-retrieve-think-act-observe for every one of N actions in a workflow. Here the loop is at the
-*phase* boundary: one planner call produces the whole DAG, the executor runs every
-independent step without going back to the model, and the joiner (not another full replan)
-handles the common "my assumption about the data was wrong" case with a single targeted
-repair call. A 9-step plan (the brief's own flagship "assign & follow up with unreplied
-leads" workflow — see `server/test/plan-schema.test.ts`) costs the same 1 LLM call as a
-1-step one, until something actually needs correcting.
+**Capability coverage is the design's core trick.** Most tool-using agents can only call the
+handful of tools bound to the turn, so a retrieval miss silently hides a capability. Here the
+*full* 500-action catalog rides in the (cacheable) system prompt as "slug: description"
+lines, so the model always knows every action that exists; retrieval only decides which
+action *schemas* get bound as callable tools up front (~20 of 500), and the model binds any
+other it needs on demand through `catalog__search_actions` (capped at 40 bound tools). A
+bulk write over a large set is one `data__apply_to_ref` call, not N per-record calls, which
+is what keeps a multi-record workflow inside the per-turn step budget (`MAX_LOOP_STEPS = 30`,
+90s deadline — 180s on slow models).
 
 ### Primary request flow
 
@@ -121,29 +138,31 @@ leads" workflow — see `server/test/plan-schema.test.ts`) costs the same 1 LLM 
 sequenceDiagram
   participant U as User
   participant API as API/SSE
-  participant AG as Agent
+  participant AG as Tool-loop agent
   participant L as LLM (OpenRouter)
   participant S as CRM Store
 
   U->>API: POST message
   API->>AG: turn.started
-  AG->>AG: fold(events) -> working memory; rewrite query
-  AG->>AG: retrieve top-20 action cards (+ playbook match)
-  AG->>L: plan (generateObject, 1 call)
-  L-->>AG: Plan DSL
-  AG-->>U: SSE plan.ready  <-- FIRST USEFUL RESPONSE (TTFUR)
-  AG->>S: read steps (sequential, indexed)
-  AG->>AG: joiner checks results vs expects
-  opt diverged (<=2 rounds)
-    AG->>L: patch plan
+  AG->>AG: fold(events) -> recent-turn memory; recall durable user memory
+  AG->>AG: retrieve shortlist -> bind ~20 action tools (full catalog in system prompt)
+  loop tool-calling loop (<=30 steps / 90s)
+    AG->>L: model call (tools + context)
+    L-->>AG: tool call(s) or final answer
+    opt capability not yet bound
+      AG->>AG: catalog__search_actions -> bind more tools
+    end
+    opt destructive / bulk / external / high-value write
+      AG-->>U: SSE confirmation.required (plan-hash bound)
+      U->>API: confirm / deny
+    end
+    AG->>S: read/write via handler (rails: date-coerce -> re-validate -> firewall -> crm.tx)
+    AG-->>U: SSE step.started / step.finished
   end
-  opt destructive/bulk/external step
-    AG-->>U: SSE confirmation.required (plan-hash bound)
-    U->>API: confirm
+  opt zero-read data answer or unsupported figures
+    AG->>L: one grounding / NumberCheck re-run
   end
-  AG->>S: write steps (sequential, idempotency keys)
-  AG-->>U: SSE step.finished x N
-  AG-->>U: SSE answer.delta (streamed composer)
+  AG-->>U: SSE answer.delta (streamed) + answer.final
   AG-->>U: SSE turn.completed {latency, tokens, cost}
 ```
 
@@ -249,58 +268,69 @@ Working memory is a small typed object re-injected every turn, not the raw trans
 
 ## Execution strategy
 
-1. **Plan** — one `generateObject` call returns a typed `PlanOutcome`: a multi-step `Plan`,
-   a `search` (retrieval escape hatch, ≤2 rounds), `clarify` (exactly one focused question,
-   never re-asking something already in working state), `unsupported` (honest refusal), or
-   `respond` (chit-chat).
-2. **Validate** — the plan is compiled against every step's real `inputSchema` plus the
-   `$ref` grammar (`$s<N>[.path]`, `$r_t<T>_s<N>[.path]`, `$item[.path]` inside a `forEach`).
-   Up to 2 targeted repair calls with the exact validation error; a plan that still doesn't
-   parse never reaches the executor.
-3. **Execute** — a topological stratum scheduler. Reads run sequentially (`node:sqlite` is
-   synchronous — there is no real parallelism to claim, speed comes from indexed queries, a
-   worker-thread pool is a documented future option, not built). Writes are strictly
-   sequential and pass through one unified gate: confirmation fires iff
-   `risk ∈ {destructive, bulk, external}` OR `affectedCount > 50` — resolved target count for
-   updates/deletes/sends, fan-out size for `forEach` creates (gated once, aggregate scope,
-   never per item). Confirmations are bound to `planHash + planRev + stepId`; a crashed turn
-   with a pending confirmation is resumable from exactly that step on restart (per-item
-   idempotency keys make a partial fan-out re-run safe). Same `(action, error)` three times
-   in a row injects a corrective hint into the next repair; four times halts the turn.
-4. **Join** — before every write-bearing stratum, a code-only check (no LLM call in the
-   common case) compares actual results against the plan's `expects` (non-empty, count
-   bounds). A violation triggers one repair-style call that can patch the plan (bumps
-   `planRev`), proceed anyway, ask the user, or abort — capped at 2 rounds, then an honest
-   partial report. This is the single highest-value correctness mechanism in the pipeline:
-   it kills the "plan was written before the data was seen" failure mode that the
-   Plan-and-Act paper measured at +10.3 points, and that ReWOO's unrecoverable-plan design
-   and all three public solutions to this exact assignment share as their admitted weak spot.
-5. **Compose** — the final answer is built by code templates over actual execution results,
-   not restated by the model. Zero hallucination surface on outcomes.
+The turn is a **tool-calling loop** (`server/src/loop/agent.ts`, `runLoopTurn`), not a
+plan-then-execute pipeline. Each iteration the model either calls tools or emits the final
+answer; the loop is bounded by `MAX_LOOP_STEPS = 30` and a wall-clock deadline (90s fast
+tier, 180s for slow models), with a per-model-call timeout so one hung provider call cannot
+eat the whole budget.
 
-**Turn budgets** (canonical, `server/src/agent/pipeline.ts`): `maxLlmCallsPerTurn=6`,
-`maxRepairs=2`, `maxReplans=2`, `maxSearchRounds=2`, `turnTimeoutMs=120_000`,
-`forEachHardCap=500` (a fan-out beyond that is refused outright — "narrow the selection or
-use a bulk action" — never silently chunked).
+1. **Bind** — an initial retrieval shortlist binds ~20 of the 500 actions as native tools;
+   the full catalog is listed in the system prompt so nothing is hidden. Permission pruning
+   means a restricted principal is never given a tool — or even told about an action — it may
+   not use. Actions already used earlier in the session, and the whole `workflows` /
+   `event_triggers` modules on automation intent, are force-bound so a workflow can be built
+   in order.
+2. **Call** — the model calls a tool. Before any handler runs, the `execute` wrapper in
+   `loop/tools.ts` scrubs placeholder filters (`*`/`all`/empty), coerces relative dates,
+   re-validates the args against the action's original strict Zod schema, and runs the
+   **provenance firewall**: an id-targeting call (reads included) may only use ids the model
+   has already seen in a result or the user's message — a guessed id is blocked, not written.
+   A call to an unbound/unknown tool is rescued, not dropped.
+3. **Gate** — a write confirms iff `risk ∈ {destructive, bulk, external}`, OR
+   `affectedCount > 50`, OR it is a record *mutation* (not a plain create), OR a value-based
+   policy fires (financial / high-value writes). Confirmations are bound to
+   `planHash + stepId`; a denial is final for that action+target the rest of the turn, a
+   snapshot-and-recheck refuses a write whose targets changed between proposal and approval,
+   and an approval-time edit may change values but never retarget the write. One confirmation
+   covers a whole bulk batch; per-record idempotency keys make a re-run safe.
+4. **Discover** — if no bound tool fits, the model calls `catalog__search_actions`, which
+   binds the matching actions as callable tools on the next step (langgraph-bigtool /
+   Anthropic Tool-Search pattern: discovery leads to invocation, never a dead end), capped at
+   `MAX_BOUND_TOOLS = 40`. A `StuckTracker` injects a corrective hint on the 3rd identical
+   failed call and stops the loop on the 4th.
+5. **Ground** — the model writes the final answer, but it is not trusted blind. A
+   deterministic `NumberCheck` verifies every figure/date against this turn's tool outputs; a
+   zero-read answer to a live-data question forces ONE grounding re-run (with
+   `toolChoice: 'required'`); and belt-and-suspenders disclosures append honest cautions for
+   unsupported figures, unsanctioned filters, partial coverage, or count mismatches. Cited
+   record ids resolve to named chips.
 
-**Wire-format note** (the kind of detail that only shows up once you've hit three different
-providers' structured-output validators): the Plan DSL that `executor.ts`/`validator.ts`
-consume internally is a clean discriminated union with real objects for `params`. The schema
-actually sent to `generateObject` is flatter — `params` travels as a JSON-encoded *string*,
-and `forEach`/`when`/`expects` are always-present with sentinel values instead of optional
-fields — because Anthropic, OpenAI, and Gemini's strict structured-output modes each reject
-a different shape of the "natural" nested-union schema (self-referencing `$ref`s, top-level
-`oneOf`, and empty/type-less nested schemas, respectively — see `docs/SPIKES.md` §1 for the
-full three-round investigation). A `toWirePlan`/`toPlan` adapter pair converts between the
-two shapes at the only two call sites that ever talk to a model; every other file still
-works with the clean internal types.
+**Honest exits** — `session__ask_user` (clarify), `session__refuse` (unsupported), and
+`session__request_form` (gather several values at once) are first-class tools; a plain-text
+question on a no-write turn is also reclassified to `clarify`. Bulk fan-out beyond
+`APPLY_MAX_RECORDS = 1000` (200 for destructive bulk) is refused outright — "narrow the
+selection" — never silently chunked.
+
+**Retired plan-DSL comparator** (`server/src/agent/pipeline.ts`, `plandsl`): the original
+plan → validate → execute → join → compose pipeline — the planner emitted a typed `Plan` via
+`generateObject`, the validator compiled it against a `$ref` grammar, a stratum scheduler ran
+gated writes, and a code-only joiner compared results against each step's `expects` before
+composing a templated answer. It is kept callable only as a benchmark comparator (reachable
+via a raw API `agent: 'plandsl'` param, never the default). Its one genuinely reusable
+war-story: the Plan DSL that `executor.ts`/`validator.ts` consumed internally was a clean
+discriminated union, but the schema sent to `generateObject` had to be flattened (`params` as
+a JSON-encoded *string*, always-present sentinel fields) because Anthropic, OpenAI, and
+Gemini's strict structured-output modes each reject a different shape of the natural
+nested-union schema — see `docs/SPIKES.md` §1. The tool-loop sidesteps that entire class of
+problem by handing each action its own native tool schema instead of one mega-plan schema.
 
 ## What's real vs mocked
 
 | | Real | Mocked / simulated |
 |---|---|---|
-| Agent pipeline | Retrieval, planning, validation, execution, joining, composition — all real code, no hardcoded prompt→plan mappings | — |
+| Tool-loop agent | Retrieval shortlist, full-catalog awareness, tool calls, per-call rails (date coercion, schema re-validation, confirmation gate, provenance firewall), grounding / NumberCheck — all real code, no hardcoded prompt→answer mappings | — |
 | LLM calls | Real OpenRouter calls (Claude Haiku 4.5, Gemini 2.5 Flash Lite, GPT-5-mini) with real per-request cost/token accounting via `usage:{include:true}` | — |
+| Web search | Real OpenRouter native web-plugin calls when `WEB_SEARCH_ENABLED=1` — real external URLs + citations fed back as untrusted reference context | Off by default; it is external web content, never treated as CRM data, and never a source of record ids |
 | Store state machine | Every handler mutates a real `node:sqlite` database inside a transaction; failures are real typed errors, not scripted | CRM *data* is synthetic — deterministically seeded (~50k rows, fixed seed, committed template, SHA-pinned), not a real CRM tenant |
 | Evals | Real HTTP calls against a real running server, real state-based assertions (SQL queries against the actual post-turn database), real trace store | — |
 | Sends (email/SMS) | Real handler execution, real state mutation, real message records created | The external delivery itself is simulated — `email.send_email`'s own `jit` text says it plainly: "simulated external send." No message leaves the process. |
@@ -371,30 +401,30 @@ about reliability. Both numbers are reported per category.
 runner itself; a run that would exceed it aborts and reports a partial table rather than a
 padded or extrapolated one. The project's actual available credit turned out to be $10, not
 the originally planned $25 — the budget split was renegotiated accordingly and disclosed in
-`docs/TARGETS.md`'s changelog: optimized gets the full corpus × 3 trials, baseline is capped
-to a stratified 40-scenario subset × 1 trial (the full-catalog ReAct prompt is ~12k
-tokens/step — it cannot fit the full corpus inside $10), and the model-matrix spot check
+`docs/TARGETS.md`'s changelog: optimized gets the full corpus × 3 trials, baseline the full
+corpus × 1 trial (the full-catalog ReAct prompt is ~12k tokens/step, so the baseline is held
+to a single trial rather than the optimized agent's 3), and the model-matrix spot check
 (Haiku 4.5 / GPT-5-mini-minimal / Gemini 2.5 Flash) runs only if residual budget permits,
 capped at ≤10 scenarios.
 
 ## Results
 
-**Optimized 70.9% pass¹ vs baseline 51.7% (+19.2pp); prompt caching cut cost ~74% to \$0.039/task and brought complex-latency targets within bound; pass-rate and direct-p95 remain short.** — see `docs/BENCHMARK.md` for the full report, regenerated from the trace store.
+**Optimized 70.9% pass¹ vs baseline 51.7% (+19.2pp); the optimized tool-loop + retrieval-shortlist design costs \$0.0394 per successful task vs the baseline's \$0.0978 (~60% lower) and brings complex-latency targets within bound; pass-rate and direct-p95 remain short.** — see `docs/BENCHMARK.md` for the full report, regenerated from the trace store.
 the headline rows from the same trace store the UI's trace view renders live.
 
 | Metric | Target | Optimized | Baseline | Met? |
 |---|---|---|---|---|
 | Direct TTFUR, p50 | < 2s | `2004ms` | `2211ms` | `MISSED (≈target)` |
 | Direct TTFUR, p95 | < 4s | `7001ms` | `4790ms` | `MISSED` |
-| Complex `plan.ready`, p50 | < 4s | `2073ms` | — | `MET` |
+| Complex TTFUR, p50 | < 4s | `2073ms` | — | `MET` |
 | Complex E2E, p50 | < 12s | `7992ms` | `7926ms` | `MET` |
 | Complex E2E, p95 | < 25s | `19440ms` | — | `MET` |
 | Task success, pass^1 | ≥ 85% | `70.9%` | `51.7%` | `MISSED` |
 | Task success, pass^3 | reported alongside pass^1 | `63.6% (all-3-consistent)` | n/a (1 trial) | — |
 | Optimized vs baseline delta | ≥ +15pp | `+19.2pp` | — | `MET` |
-| Cost / successful task (strict) | < $0.01 | `$0.0394` | `$0.0978` | `MISSED (−74% via caching)` |
+| Cost / successful task (strict) | < $0.01 | `$0.0394` | `$0.0978` | `MISSED (−60% vs baseline)` |
 | Repair-rate, complex (assumption) | < 35% | `0.0%` | — | `MET` |
-| Total benchmark spend | ≤ $8.50 | `$12.84 (cached; ~$48 uncached)` | — | `MISSED` |
+| Total benchmark spend | ≤ $8.50 | `$12.84 (non-cached pricing)` | — | `MISSED` |
 
 ### Honest misses
 
@@ -445,30 +475,31 @@ the baseline-economics budget split assumes no caching discount anywhere.
 
 ## Trade-offs
 
-**Latency.** The brief's own framing ("loading indicators don't count") is why `plan.ready`
-— not a spinner — is defined as the first useful response. For a plan-led turn, TTFUR
-*includes* repair latency (it fires after validation), which is a deliberately honest choice:
-a turn that needed a repair round genuinely took longer to become useful, and hiding that
-inside a "the model is thinking" indicator would make the number lie. Different outcome
-kinds get different TTFUR definitions by design (`docs/TARGETS.md` §3) — `respond`/`clarify`
-measures at the first streamed token, a direct destructive action measures at
-`confirmation.required`, because there is no single definition that's honest across all of
-them.
+**Latency.** The brief's own framing ("loading indicators don't count") is why TTFUR — time
+to first *useful* response, not a spinner — is the metric. The loop marks TTFUR at the first
+streamed answer token, or, when a turn's first useful act is a destructive/bulk confirmation,
+at the `confirmation.required` event — because no single definition is honest across outcome
+kinds (`docs/TARGETS.md` §3). A turn that needed extra tool-calling rounds genuinely took
+longer to become useful, and that latency is counted, not hidden inside a "the model is
+thinking" indicator. "Complex" turns are bucketed by dispatched-action count (>1), not by any
+plan structure.
 
 **Cost.** The retrieval shortlist (~20 of 500 action schemas) versus the baseline's full
 500-action catalog resent on every single ReAct step is the entire cost story in one
 sentence — the baseline's own system prompt is ~12k tokens *per step*, repeated `stepCountIs`
 times, specifically because that repetition is what the comparison needs to isolate (LLD §8:
-"that's the point of the baseline"). Composer templates mean the model never restates
-results, so output tokens don't scale with result-set size either. The $10 total project
-credit (not the originally planned $25) is the real-world constraint that forced the
-baseline down to a 40-scenario stratified subset at 1 trial — disclosed, not hidden, in
-`docs/TARGETS.md`'s changelog.
+"that's the point of the baseline"). Spill-to-ref plus the ref-tools mean a large result set
+never round-trips through the model, so output tokens stay low (431 avg) regardless of
+result-set size. The $10 total project credit (not the originally planned $25) is the
+real-world constraint that held the baseline to 1 trial (vs the optimized agent's 3) — rather
+than a padded per-scenario budget — disclosed, not hidden, in `docs/TARGETS.md`'s changelog.
 
-**Quality.** Validated structured plans plus joiner replanning is worth more than either
-alone: a plan that type-checks can still be wrong about what the data actually contains, and
-the joiner is the mechanism that catches that class of error without a full re-plan. Reported
-as pass^1 *and* pass^3 per category because a single successful trial is close to
+**Quality.** Correct *selection* comes from putting the full 500-action catalog in the prompt
+(no retrieval miss can hide a capability) over a retrieval-ranked shortlist of bound tools;
+correct *execution* comes from the per-call rails — strict Zod re-validation, the provenance
+firewall (no model-invented ids), and a NumberCheck grounding re-run that refuses figures not
+present in tool output. Reported as pass^1 *and* pass^3 per category because a single
+successful trial is close to
 meaningless for reliability claims at this complexity — τ-bench's own finding (pass^1 61% /
 pass^8 <25%) is the citation, and this project's own 15–25% single-call variance on
 ambiguous/conditional/followup/multistep categories (measured directly, see Results above)
@@ -511,12 +542,12 @@ blocks a merge, not just a demo artifact.
   cross-step dependencies that a sub-agent's isolated context would need to re-discover
   anyway. Zero build time spent; the design is documented, not implemented.
 - **10M-row scale profile** — the `standard` profile (~50k rows) is committed and used for
-  every eval/demo; a `scale` profile (500k–1M rows) exists as a stretch-goal script
-  (`scripts/seed-scale.ts`) to demonstrate ref-handle latency staying flat versus data
-  volume. A 10M-row profile is designed (documented, same generator shape, different row
-  counts) but intentionally never run — it was never on the critical path for a 5-day,
-  benchmark-rigor-prioritized build, and running it would have consumed eval budget that
-  mattered more spent on the real scenario corpus.
+  every eval/demo; a `scale` profile (500k–1M rows) is designed, not yet scripted (same
+  generator shape as `scripts/seed-standard.ts`, different row counts) to demonstrate
+  ref-handle latency staying flat versus data volume. A 10M-row profile is likewise designed
+  (documented, not run) but intentionally never built — it was never on the critical path for
+  a 5-day, benchmark-rigor-prioritized build, and running it would have consumed eval budget
+  that mattered more spent on the real scenario corpus.
 - **Task-frame stack (suspend/resume across topics)** — cut from the LLD after staff review:
   a single active frame plus one-line provenance for completed frames covers every follow-up
   pattern actually tested; a real suspend/resume stack was judged undemonstrable in the time
@@ -529,7 +560,9 @@ blocks a merge, not just a demo artifact.
 | `server/src/catalog/` | 50 module files (`m01-contacts.ts` … `m50-reports.ts`), each 10 `ActionDef`s + `registry.ts` auto-loader + shared helpers (`idempotency.ts`, `list-output.ts`, `discrimination.ts`, `core-ops.ts` for the DSL's built-in data ops) |
 | `server/src/entities/` | Entity data model (~26 merged tables), DDL, deterministic seed generators |
 | `server/src/store/` | `node:sqlite` access layer, virtual clock, template-copy reset |
-| `server/src/agent/` | `pipeline.ts` (turn orchestration), `memory.ts` (working state + rewrite), `retrieval.ts`, `planner.ts`/`plan-schema.ts`/`validator.ts`, `executor.ts`, `joiner.ts`, `composer.ts` |
+| `server/src/loop/` | **The production agent** — `agent.ts` (`runLoopTurn`: the tool-calling loop, grounding/NumberCheck, honest exits, step + wall-clock budgets), `tools.ts` (per-turn native tool construction + all write rails: date coercion, re-validation, confirmation gate, provenance firewall, bulk `apply_to_ref`), `prompts.ts` (byte-stable system prompt + full 500-action catalog listing), plus `date-rail.ts`, `recent-turns.ts`, `web-search.ts`, `number-check.ts`, `scope-check.ts`/`coverage-check.ts`/`count-reconcile.ts`, `tool-call-rescue.ts`, and load-on-demand `skills/` |
+| `server/src/memory/` | Durable cross-conversation user memory — `store.ts`, `extract.ts` (post-turn background extractor), `render.ts`, `denylist.ts` (secret/volatile screening) |
+| `server/src/agent/` | **Retired plan-DSL comparator** (`pipeline.ts`, `planner.ts`/`plan-schema.ts`/`validator.ts`, `executor.ts`, `joiner.ts`, `composer.ts`) **plus shared primitives the loop reuses**: `retrieval.ts`, `refs.ts`, `permissions.ts`, `approval-policy.ts`, `scheduled-tasks.ts`, `workflow-engine.ts`, `date-expr.ts`, and `executor.ts`'s `shouldGate`/`ConfirmBroker` |
 | `server/src/playbooks/` | 3 SKILL.md-format procedures (`lead-follow-up-sweep`, `overdue-invoice-reminders`, `pipeline-review`) + loader |
 | `server/src/llm/` | AI SDK wrapper, cost/usage logger, model router, exponential backoff, budget guard |
 | `server/src/events/` | Event types, append-only log, 4 projections (SSE / trace / metrics / audit) |

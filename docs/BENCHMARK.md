@@ -60,7 +60,7 @@ _Generated 2026-11-08T12:01:24.969Z by `eval/report.ts` from 604 recorded (scena
 |---|---|---|---|
 | Direct TTFUR p50 | < 2000ms | 2004ms | MISSED |
 | Direct TTFUR p95 | < 4000ms | 7001ms | MISSED |
-| Complex plan.ready p50 | < 4000ms | 2073ms | MET |
+| Complex TTFUR p50 | < 4000ms | 2073ms | MET |
 | Complex E2E p50 | < 12000ms | 7992ms | MET |
 | Complex E2E p95 | < 25000ms | 19440ms | MET |
 | Optimized task success (pass^1) | >= 85.0% | 70.9% | MISSED |

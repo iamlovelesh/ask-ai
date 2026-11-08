@@ -151,7 +151,7 @@ function renderTargetsTable(rows: readonly ResultRow[]): string {
     '|---|---|---|---|',
     `| Direct TTFUR p50 | < ${TARGETS.directTtfurP50Ms}ms | ${fmtMs(directLat.p50TtfurMs)} | ${met(directLat.p50TtfurMs < TARGETS.directTtfurP50Ms)} |`,
     `| Direct TTFUR p95 | < ${TARGETS.directTtfurP95Ms}ms | ${fmtMs(directLat.p95TtfurMs)} | ${met(directLat.p95TtfurMs < TARGETS.directTtfurP95Ms)} |`,
-    `| Complex plan.ready p50 | < ${TARGETS.complexPlanReadyP50Ms}ms | ${fmtMs(complexLat.p50TtfurMs)} | ${met(complexLat.p50TtfurMs < TARGETS.complexPlanReadyP50Ms)} |`,
+    `| Complex TTFUR p50 | < ${TARGETS.complexPlanReadyP50Ms}ms | ${fmtMs(complexLat.p50TtfurMs)} | ${met(complexLat.p50TtfurMs < TARGETS.complexPlanReadyP50Ms)} |`,
     `| Complex E2E p50 | < ${TARGETS.complexE2eP50Ms}ms | ${fmtMs(complexLat.p50E2eMs)} | ${met(complexLat.p50E2eMs < TARGETS.complexE2eP50Ms)} |`,
     `| Complex E2E p95 | < ${TARGETS.complexE2eP95Ms}ms | ${fmtMs(complexLat.p95E2eMs)} | ${met(complexLat.p95E2eMs < TARGETS.complexE2eP95Ms)} |`,
     `| Optimized task success (pass^1) | >= ${fmtPct(TARGETS.optimizedSuccessRateMin)} | ${fmtPct(optSuccess.rate)} | ${met(optSuccess.rate >= TARGETS.optimizedSuccessRateMin)} |`,

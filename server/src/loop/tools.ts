@@ -1439,6 +1439,12 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const target = registry.get(slug);
       if (!target) return `Unknown action "${actionName}" — check the tool name.`;
       if (target.risk === 'read') return `"${actionName}" is a read action — call it directly, apply_to_ref is for writes.`;
+      // Permission pruning (#1): apply_to_ref dispatches an arbitrary action by
+      // name, so it MUST re-check the principal here — otherwise it bypasses the
+      // per-tool pruning the bind choke point enforces (same fix as scheduling).
+      if (!canUseAction(principal, target)) {
+        return `PERMISSION: "${actionName}" requires more than your current role (${principal.role}) allows. Tell the user plainly you don't have permission to do that as a ${principal.role} and suggest they ask an admin — do not say the capability doesn't exist.`;
+      }
       let id_param = providedIdParam;
       if (id_param === undefined || id_param === '') {
         const js = JSON.parse(JSON.stringify(z.toJSONSchema(target.inputSchema as z.ZodType, { io: 'input', target: 'draft-7' }))) as { properties?: Record<string, unknown>; required?: string[] };
@@ -1612,6 +1618,12 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       const target = registry.get(slug);
       if (!target) return `Unknown action "${actionName}" — check the tool name.`;
       if (target.risk === 'read') return `"${actionName}" is a read action — call it directly, data__batch is for writes.`;
+      // Permission pruning (#1): data__batch dispatches an arbitrary action by
+      // name, so it MUST re-check the principal here (same fix as apply_to_ref /
+      // scheduling) or it bypasses per-tool role pruning.
+      if (!canUseAction(principal, target)) {
+        return `PERMISSION: "${actionName}" requires more than your current role (${principal.role}) allows. Tell the user plainly you don't have permission to do that as a ${principal.role} and suggest they ask an admin — do not say the capability doesn't exist.`;
+      }
       // Dual-accept: native array (the schema) or a JSON string (defensive —
       // a non-strict provider may still stringify it).
       let arr: unknown = a['records'];

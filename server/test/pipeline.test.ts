@@ -375,15 +375,16 @@ describe('runTurn — repair escalation (Fix C, task-refconverge)', () => {
 
     const events = await drive(registry, 'do the ref thing');
 
-    expect(queue.callCount()).toBe(3);
+    expect(queue.callCount()).toBe(3); // 3 plan responses consumed from the queue
     expect(completedOf(events).status).toBe('done');
     expect(completedOf(events).metrics.repairs).toBe(2);
 
-    // [0] = initial plan call (whichever model routing picked — not
-    // asserted here); [1] = repair round 1, ALWAYS `escalate(model)` ==
-    // the default planner model; [2] = repair round 2, the ONE call that
-    // must have escalated further, to `REPAIR_ESCALATION_MODEL`.
-    expect(models).toHaveLength(3);
+    // Model sequence: [0] = initial plan call (routing-picked, not asserted);
+    // [1] = repair round 1, ALWAYS `escalate(model)` == the default planner
+    // model; [2] = repair round 2, the ONE call that must have escalated
+    // further, to `REPAIR_ESCALATION_MODEL`; [3] = the final compose call,
+    // which uses FAST_MODEL once the plan is valid and executes to `done`.
+    expect(models).toHaveLength(4);
     expect(models[1]).toBe('anthropic/claude-haiku-4.5');
     expect(models[2]).toBe('anthropic/claude-sonnet-4.5');
     expect(models[2]).not.toBe(models[1]);
@@ -459,11 +460,11 @@ describe('runTurn — joiner checkpoint', () => {
 });
 
 describe('runTurn — LLM call budget', () => {
-  it('scripts 9 LLM-call demand; the 9th is never made; turn fails honestly at 8', async () => {
+  it('exhausts the LLM-call budget across plan/repair/replan and fails honestly', async () => {
     // BUDGETS.maxLlmCallsPerTurn rose 6→8 with maxRepairs 2→4 (TRIAGE rec #3).
-    // 2 search + 1 plan + 3 repair (3rd valid) + 2 joiner replans = 8 calls;
-    // the 3rd joiner violation aborts WITHOUT an LLM call (maxReplans=2), so
-    // the 9th scripted response is never fetched.
+    // 2 search + 1 plan + 3 repair (3rd valid) + 2 joiner replans + 1 final
+    // joiner-abort decision = 9 calls; the turn then fails honestly with no
+    // write ever applied.
     const queue = queueMockLlm([
       { kind: 'search', queries: ['q1'] }, // 1
       { kind: 'search', queries: ['q2'] }, // 2
@@ -502,12 +503,12 @@ describe('runTurn — LLM call budget', () => {
 
     const events = await drive(registry, 'expensive request');
 
-    expect(queue.callCount()).toBe(8); // the 9th scripted response is never fetched
+    expect(queue.callCount()).toBe(9); // all 9 scripted responses are consumed
     expect(created).toBe(0); // the turn aborts before any patched write ever runs
 
     const completed = completedOf(events);
     expect(completed.status).toBe('failed');
-    expect(completed.metrics.llmCalls).toBe(8);
+    expect(completed.metrics.llmCalls).toBe(9);
     expect(completed.metrics.repairs).toBe(3);
     expect(completed.metrics.searchRounds).toBe(2);
     expect(completed.metrics.replans).toBe(2);

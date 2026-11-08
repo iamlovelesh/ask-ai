@@ -30,11 +30,11 @@ const registry = buildRegistry([[readAction, writeAction, destructiveAction]], [
 const viewer: Principal = { userId: 'user_9', role: 'viewer' };
 const member: Principal = { userId: 'user_9', role: 'member' };
 
-function toolNamesFor(principal: Principal): string[] {
+function toolsFor(principal: Principal): ReturnType<typeof buildTurnTools> {
   const exits: LoopExits = {
     denied: false, writesLanded: 0, writeActions: new Map(), writeEntities: new Set(), toolOutputs: [], appliedFilters: [], stop: () => {},
   };
-  const tools = buildTurnTools({
+  return buildTurnTools({
     registry,
     cards: [
       { slug: 'leads.search_leads', text: '', score: 1 },
@@ -59,7 +59,19 @@ function toolNamesFor(principal: Principal): string[] {
     sessionId: 'sess_x',
     scheduler: openScheduledTasks(openSessions(`/tmp/permsched-${randomUUID()}.db`)),
   });
-  return tools.map((t) => t.name);
+}
+
+function toolNamesFor(principal: Principal): string[] {
+  return toolsFor(principal).map((t) => t.name);
+}
+
+const admin: Principal = { userId: 'user_1', role: 'admin' };
+
+/** Invoke a meta-tool (apply_to_ref / batch) by name with raw args. */
+async function invokeTool(principal: Principal, name: string, args: unknown): Promise<string> {
+  const t = toolsFor(principal).find((x) => x.name === name);
+  if (!t) throw new Error(`tool ${name} not bound`);
+  return (await t.invoke({} as never, JSON.stringify(args))) as string;
 }
 
 describe('permission-pruned tool binding (#1)', () => {
@@ -90,6 +102,27 @@ describe('permission-pruned tool binding (#1)', () => {
   it('the workflow__schedule tool is write-class: members get it, viewers do not', () => {
     expect(toolNamesFor(member)).toContain('workflow__schedule');
     expect(toolNamesFor(viewer)).not.toContain('workflow__schedule');
+  });
+
+  // The bulk meta-tools (data__apply_to_ref / data__batch) are bound for
+  // everyone, so they MUST re-check the principal against the action they
+  // dispatch — otherwise they bypass per-tool pruning (review CRITICAL).
+  it('data__apply_to_ref refuses a destructive action for a viewer and member', async () => {
+    expect(await invokeTool(viewer, 'data__apply_to_ref', { ref: 'r_t1_s1', action: 'leads__delete_lead' })).toContain('PERMISSION');
+    expect(await invokeTool(member, 'data__apply_to_ref', { ref: 'r_t1_s1', action: 'leads__delete_lead' })).toContain('PERMISSION');
+  });
+
+  it('data__apply_to_ref refuses a WRITE action for a viewer but not for a member', async () => {
+    expect(await invokeTool(viewer, 'data__apply_to_ref', { ref: 'r_t1_s1', action: 'leads__update_lead' })).toContain('PERMISSION');
+    // a member MAY write → it passes the permission gate (and fails later on the
+    // missing ref, with a non-PERMISSION message).
+    expect(await invokeTool(member, 'data__apply_to_ref', { ref: 'r_t1_s1', action: 'leads__update_lead' })).not.toContain('PERMISSION');
+  });
+
+  it('data__batch refuses a destructive action for a viewer/member but admin passes the gate', async () => {
+    expect(await invokeTool(viewer, 'data__batch', { action: 'leads__delete_lead', records: [{ id: 'lead_1' }] })).toContain('PERMISSION');
+    expect(await invokeTool(member, 'data__batch', { action: 'leads__delete_lead', records: [{ id: 'lead_1' }] })).toContain('PERMISSION');
+    expect(await invokeTool(admin, 'data__batch', { action: 'leads__delete_lead', records: [{ id: 'lead_1' }] })).not.toContain('PERMISSION');
   });
 
   it('the model-facing catalog summary is pruned to the principal’s permissions', () => {
