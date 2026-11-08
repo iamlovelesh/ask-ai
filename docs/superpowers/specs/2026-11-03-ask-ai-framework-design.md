@@ -20,8 +20,7 @@ where known public attempts at this assignment were weakest.
 
 ### Competitive context (informs, must not be copied)
 
-Three public GitHub solutions to this exact assignment exist (a public solution to this assignment,
-mohdey01/ask-ai-framework, thanushiyay/ask-ai). All converge on: LLM-as-untrusted-planner
+Three public GitHub solutions to this exact assignment exist. All converge on: LLM-as-untrusted-planner
 emitting a typed JSON plan in ONE call, deterministic DAG executor, retrieval shortlist
 (top 10–22 of 500) instead of full catalog, Zod schemas everywhere, code-enforced confirmation
 gates, final-state eval assertions. Their weak spots: multi-turn follow-ups, retrieval misses

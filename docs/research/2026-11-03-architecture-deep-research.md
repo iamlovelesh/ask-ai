@@ -96,8 +96,7 @@ Key head-to-head numbers:
   ([link](https://www.infoq.com/news/2026/11/uber-mcp-gateway-ai-agents/)).
 - **a commercial CRM's Ask-AI product** (grader signal): advertises 500+ actions from chat;
   emphasizes permission checks mirroring user role, **confirmation step for every
-  write/destructive/bulk op**, live task tracker, audit feed, bulk scope confirmation
-  ([docs](https://help.crm-vendor.com/support/solutions/articles/155000005327-overview-of-ask-ai-assistant)).
+  write/destructive/bulk op**, live task tracker, audit feed, bulk scope confirmation.
 
 ## 4. Implications for our design (deltas vs the draft)
 
@@ -149,7 +148,7 @@ Cloudflare, Vercel, LangChain, Berkeley Gorilla) — deep-read in full; (2) prod
 studies (Sierra, Intercom, Decagon, Ada, Salesforce, Shopify, commercial CRM product docs,
 Dropbox, Notion, LinkedIn, Uber, DoorDash, Airbnb); (3) published head-to-head evidence
 (LLMCompiler, ReWOO, CodeAct, Plan-and-Act, HuggingGPT, τ/τ²-bench, CRMArena-Pro, WorkBench,
-ToolSandbox, RAG-MCP, ToolRet). Gaps acknowledged: no public internals for a commercial CRM's own
+ToolSandbox, RAG-MCP, ToolRet). Gaps acknowledged: no public internals for the commercial product's own
 routing, ClickUp Brain, Monday Sidekick, Forethought; complexity-routing and mid-program
 confirmation in code agents have thin evidence; most cross-architecture numbers come from
 QA/web tasks, not transactional CRM.

@@ -66,7 +66,7 @@ Each item: **what / source / what it buys / effort / where it lands in our code*
 
 ### 7. Conditional approval policies
 - **Source:** Budibase escalation gate (`ToolExecutionRule`s with data-filter conditions decide WHICH writes need approval; single-use approvals; pending → `toolChoice: 'none'`).
-- **Why:** today gating is risk-class + count; admins can't say "gate refunds over $5k, auto-allow small ones". This is the admin-configurable admin-control story.
+- **Why:** today gating is risk-class + count; admins can't say "gate refunds over $5k, auto-allow small ones". This is the admin-configurable gating story.
 - **Effort:** M–L. **Lands in:** `agent/executor.ts shouldGate` + config surface.
 
 ### 8. False-promise classifier
