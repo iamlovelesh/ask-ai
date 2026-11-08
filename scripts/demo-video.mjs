@@ -98,7 +98,7 @@ async function main() {
   T0 = Date.now(); // recording clock starts ~here (video began at context creation)
   await page.goto(`${WEB}/`, { waitUntil: 'networkidle' });
   await caption(page, 'Ask AI — natural-language agent over a 50-module / 500-action CRM', 'A live walkthrough',
-    'Ask AI is a natural-language agent over a C R M with fifty modules and five hundred actions. Here is how it works.');
+    'Ask AI turns plain English into real C R M actions. Here is how it works.');
   await sleep(5500);
 
   // segment: fresh chat THEN caption (navigation reloads the page and would
@@ -148,7 +148,7 @@ async function main() {
     await ask(page, 'Archive all contacts with a lead score below 20', { confirm: 'deny', hold: 3800 });
 
     await seg('Feature · Search & manage sessions', 'Search across chats by title + message content',
-      'And you can search across every conversation, by title or by message content.');
+      'You can also search across every conversation.');
     const search = page.locator('.sidebar-search-input').first();
     if (await search.count()) {
       await search.click();
