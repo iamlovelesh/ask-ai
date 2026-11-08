@@ -96,7 +96,7 @@ flowchart LR
     end
     REG[(Action Registry<br/>500 ActionDefs)]
     MEM[(Durable user memory<br/>+ load-on-demand skills)]
-    LLM[LLM Client Layer<br/>@openai/agents -> OpenRouter]
+    LLM[LLM Client Layer<br/>@openai/agents → OpenRouter]
     EVT[(Event Log<br/>node:sqlite, append-only)]
     CRM[(CRM Store<br/>node:sqlite, ~50k rows<br/>standard profile)]
   end
@@ -144,26 +144,26 @@ sequenceDiagram
 
   U->>API: POST message
   API->>AG: turn.started
-  AG->>AG: fold(events) -> recent-turn memory; recall durable user memory
-  AG->>AG: retrieve shortlist -> bind ~20 action tools (full catalog in system prompt)
-  loop tool-calling loop (<=30 steps / 90s)
+  AG->>AG: fold(events) into recent-turn memory, recall durable user memory
+  AG->>AG: retrieve shortlist, bind ~20 action tools (full catalog in system prompt)
+  loop tool-calling loop (max 30 steps / 90s)
     AG->>L: model call (tools + context)
     L-->>AG: tool call(s) or final answer
     opt capability not yet bound
-      AG->>AG: catalog__search_actions -> bind more tools
+      AG->>AG: catalog__search_actions binds more tools
     end
     opt destructive / bulk / external / high-value write
       AG-->>U: SSE confirmation.required (plan-hash bound)
       U->>API: confirm / deny
     end
-    AG->>S: read/write via handler (rails: date-coerce -> re-validate -> firewall -> crm.tx)
+    AG->>S: read/write via handler (rails: date-coerce, re-validate, firewall, crm.tx)
     AG-->>U: SSE step.started / step.finished
   end
   opt zero-read data answer or unsupported figures
     AG->>L: one grounding / NumberCheck re-run
   end
   AG-->>U: SSE answer.delta (streamed) + answer.final
-  AG-->>U: SSE turn.completed {latency, tokens, cost}
+  AG-->>U: SSE turn.completed (latency, tokens, cost)
 ```
 
 ## The 500-action catalog
