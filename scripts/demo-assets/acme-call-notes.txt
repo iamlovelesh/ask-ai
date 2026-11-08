@@ -1,0 +1,10 @@
+Acme Corp — Discovery Call Notes (Nov 6)
+
+Attendees: Sarah Chen (VP Ops, Acme), us.
+
+- Acme is replacing a legacy system across 3 regional teams (~120 seats).
+- Budget approved for Q1; Sarah is the economic buyer.
+- Main concern: data migration risk and onboarding time.
+- Competitor (Zenith) quoted them last week; price-sensitive.
+- Wants a tailored demo focused on migration + reporting before Nov 20.
+- Next step: send a follow-up with migration timeline and a Q1 proposal.

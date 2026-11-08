@@ -1,0 +1,116 @@
+{
+  "fps": 30,
+  "intro": {
+    "title": "Ask AI",
+    "subtitle": "A natural-language agent over a 50-module / 500-action CRM",
+    "narration": "Ask AI turns plain English into real C R M actions, across fifty modules and five hundred actions. Here is a live walkthrough.",
+    "audioDur": 7.85
+  },
+  "outro": {
+    "title": "Ask AI",
+    "subtitle": "+19pp over baseline · prompt caching cut cost ~74% · all 50 modules covered",
+    "narration": "In the benchmark, the optimized agent beats the baseline by nineteen points, and prompt caching cut cost by about seventy four percent. That's Ask AI.",
+    "audioDur": 9.1
+  },
+  "clips": [
+    {
+      "id": "direct",
+      "chip": "1 · Direct request",
+      "title": "A single named action, executed",
+      "subtitle": "Search + aggregate, answered in seconds",
+      "narration": "A direct request. The agent searches opportunities and aggregates the total in one pass.",
+      "video": "clips/direct.mp4",
+      "audio": "audio/direct.wav",
+      "videoDur": 11.8,
+      "audioDur": 5.53
+    },
+    {
+      "id": "indirect",
+      "chip": "2 · Indirect request",
+      "title": "No action named — the agent infers intent",
+      "subtitle": "Infers \"at-risk\", investigates across the pipeline",
+      "narration": "An indirect request. No action is named, so the agent infers what at-risk means and investigates across the pipeline.",
+      "video": "clips/indirect.mp4",
+      "audio": "audio/indirect.wav",
+      "videoDur": 40.53,
+      "audioDur": 7.2
+    },
+    {
+      "id": "complex",
+      "chip": "3 · Complex workflow",
+      "title": "Three modules, one aggregate confirmation",
+      "subtitle": "Opportunity · Task · Note",
+      "narration": "A complex workflow across three modules — it creates an opportunity, a task, and a note, behind a single confirmation.",
+      "video": "clips/complex.mp4",
+      "audio": "audio/complex.wav",
+      "videoDur": 24,
+      "audioDur": 8.13
+    },
+    {
+      "id": "followup",
+      "chip": "4 · Follow-up",
+      "title": "Context carried across turns",
+      "subtitle": "\"the top one\" resolves from the prior turn",
+      "narration": "A follow-up that builds on the last answer. First it lists the biggest open deals. Then — who owns the top one, and when does it close — resolved entirely from the previous turn's context.",
+      "video": "clips/followup.mp4",
+      "audio": "audio/followup.wav",
+      "videoDur": 38.6,
+      "audioDur": 12.31
+    },
+    {
+      "id": "ambiguity",
+      "chip": "5 · Ambiguity",
+      "title": "Asks instead of guessing",
+      "subtitle": "A focused clarifying question",
+      "narration": "When a request is ambiguous, the agent asks one focused question instead of guessing.",
+      "video": "clips/ambiguity.mp4",
+      "audio": "audio/ambiguity.wav",
+      "videoDur": 7.2,
+      "audioDur": 4.41
+    },
+    {
+      "id": "failure",
+      "chip": "6 · Honest failure",
+      "title": "No fabrication on errors",
+      "subtitle": "Reports what it couldn't find",
+      "narration": "And when something doesn't exist, it says so honestly instead of pretending it worked.",
+      "video": "clips/failure.mp4",
+      "audio": "audio/failure.wav",
+      "videoDur": 9.57,
+      "audioDur": 4.27
+    },
+    {
+      "id": "attachments",
+      "chip": "Feature · Attachments & rich display",
+      "title": "Files in, rich answers out",
+      "subtitle": "Attach a file · tables become charts · clickable records",
+      "narration": "Attach a file, and the agent reads it — here it summarizes call notes and flags the single next step. Answers come back as rich tables and bar charts, not walls of text. And every record is a clickable chip that opens its full detail inline.",
+      "video": "clips/attachments.mp4",
+      "audio": "audio/attachments.wav",
+      "videoDur": 41.03,
+      "audioDur": 15.56
+    },
+    {
+      "id": "permissions",
+      "chip": "Feature · Permissions",
+      "title": "Role-aware capabilities",
+      "subtitle": "A viewer can read, never write",
+      "narration": "Permissions are role-aware. As a viewer, the agent can read, but write and delete tools are never even available to it.",
+      "video": "clips/permissions.mp4",
+      "audio": "audio/permissions.wav",
+      "videoDur": 8.33,
+      "audioDur": 7.01
+    },
+    {
+      "id": "memories",
+      "chip": "Feature · Memory",
+      "title": "Remembers across sessions",
+      "subtitle": "Teach it once · it recalls in a new chat",
+      "narration": "Tell it something once. The trace shows the memory being saved, and it lands on your memories page. Then, in a brand new conversation, it recalls your quarterly target — and answers in the bulleted style you asked for.",
+      "video": "clips/memories.mp4",
+      "audio": "audio/memories.wav",
+      "videoDur": 43.63,
+      "audioDur": 12.45
+    }
+  ]
+}

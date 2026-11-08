@@ -16,5 +16,10 @@ server/data/crm-evalrun-*
 results/
 results-archive/
 
-# auto-generated demo video (reproduce via scripts/demo-video.mjs)
-demo-out/
+# auto-generated demo intermediates (reproduce via scripts/demo-capture.mjs → demo-narrate-clips.mjs → video/)
+# — everything under demo-out/ is regenerable EXCEPT the final rendered video, which we ship.
+demo-out/*
+!demo-out/ask-ai-demo.mp4
+# Remotion-generated media (captured clips + narration audio; regenerable)
+video/public/clips/
+video/public/audio/

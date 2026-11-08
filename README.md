@@ -18,6 +18,16 @@ a baseline ReAct agent sharing the same handlers and gates, a 60-query retrieval
 and a benchmark harness that computes every published number from the same trace store the
 UI renders live.
 
+## Demo video
+
+A 2½-minute narrated walkthrough ships in the repo at
+[`demo-out/ask-ai-demo.mp4`](demo-out/ask-ai-demo.mp4): the six request types from the brief
+(direct, indirect, complex 3-module workflow, follow-up, ambiguity, honest failure) plus the
+distinctive features — file **attachments** + rich tables/charts/record-popovers, **role-based
+permissions**, and cross-session **memory**. It's composed from *real* app footage: Playwright
+drives the live app and Remotion stitches the clips with Cartesia narration — see
+[`video/README.md`](video/README.md) to reproduce.
+
 ## Quickstart
 
 ```bash
