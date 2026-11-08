@@ -500,7 +500,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       ...(memoryOn ? { memory: memoryStore, memoryWritable } : {}),
     });
 
-    // P1 (pattern): the full catalog rides in the (cacheable) system
+    // P1: the full catalog rides in the (cacheable) system
     // prompt so the model always knows what exists — retrieval misses can no
     // longer hide capabilities. Only for real-size registries; tiny test
     // registries already full-bind. Permission-pruned (#1) so a restricted

@@ -1,5 +1,5 @@
 /**
- * Value-based approval policies (#7, a common pattern): gate a write on
+ * Value-based approval policies (#7): gate a write on
  * WHAT it does, not just its risk class or record count. A $9,000 order edit or
  * a 75%-off discount is a single-record `write` that `shouldGate` would wave
  * through on count alone — these policies catch it by inspecting the arguments.

@@ -99,7 +99,7 @@ function adjustmentsLabel(count: number): string {
   <div class="agent-section">
     <div v-if="turn.goal" class="tracker-goal">{{ turn.goal }}</div>
 
-    <!-- Collapsible "thinking steps" summary (pattern). Collapsed by
+    <!-- Collapsible "thinking steps" summary. Collapsed by
          default; the header shimmers the active step while working and shows
          "Worked for Ns" once done. -->
     <button

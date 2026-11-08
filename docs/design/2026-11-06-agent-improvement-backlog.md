@@ -82,7 +82,7 @@ Each item: **what / source / what it buys / effort / where it lands in our code*
 ## P3 — strategic / product parity
 
 ### 10. Skills / workflows-as-tools  ⭐ product-parity feature  — ✅ v1 SHIPPED 2026-11-07
-> v1 landed: `server/src/loop/skills/` static registry + 5 CRM playbooks, `<available_skills>` prompt section, `session__load_skills` tool. Design: `docs/research/2026-11-07-oss-crm-output-and-skills.md`. Follow-ups: (a) adoption tuning — the model works simple cases directly and doesn't always load an obviously-matching skill; (b) admin-editable skills as persisted entities ( stores them in the workspace); (c) inline `[[skill:slug]]` user references.
+> v1 landed: `server/src/loop/skills/` static registry + 5 CRM playbooks, `<available_skills>` prompt section, `session__load_skills` tool. Design: `docs/research/the OSS-agent research notes`. Follow-ups: (a) adoption tuning — the model works simple cases directly and doesn't always load an obviously-matching skill; (b) admin-editable skills as persisted entities ( stores them in the workspace); (c) inline `[[skill:slug]]` user references.
 - **Source:** NocoBase (admin-authored workflows become typed tools; skill groups unlocked at runtime by `getSkill`), and a commercial CRM's Ask-AI product ships "Skills". Our Nov-4 research (`docs/research/2026-11-04-oss-agents-full-agent-machinery.md` §3) already specced the SKILL.md/playbook format and suggested 5–8 playbooks (`lead-follow-up-sweep`, `overdue-invoice-reminders`, `pipeline-review`).
 - **Do:** playbook files (name+description always in prompt; body loaded on match) exposed as tools or prompt-injected procedures; admin-editable.
 - **Effort:** M. **Lands in:** `server/src/playbooks/` (loader exists!), `loop/tools.ts` or prompt assembly.

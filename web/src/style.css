@@ -1027,7 +1027,7 @@ button {
 
 /* --- task tracker: vertical timeline spine --------------------------- */
 
-/* --- collapsible "thinking steps" summary (pattern) ----------- */
+/* --- collapsible "thinking steps" summary ----------- */
 .tracker-summary {
   display: inline-flex;
   align-items: center;

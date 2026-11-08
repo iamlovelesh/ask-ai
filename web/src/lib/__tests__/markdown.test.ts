@@ -60,7 +60,7 @@ describe('renderMarkdown', () => {
     expect((html.match(/<p class="answer-caution">/g) || []).length).toBe(2);
   });
 
-  it('renders [[record:entity:id:Name]] tokens as record chips (pattern)', () => {
+  it('renders [[record:entity:id:Name]] tokens as record chips', () => {
     const html = renderMarkdown('The oldest is [[record:invoices:inv_55:INV-2667]] from May.');
     expect(html).toContain('class="record-chip"');
     expect(html).toContain('INV-2667');

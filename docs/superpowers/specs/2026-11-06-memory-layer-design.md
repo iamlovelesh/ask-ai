@@ -359,7 +359,7 @@ HTTP endpoints (Fastify, alongside `server/src/api/sessions.ts`):
 
 **Web Memories panel** (`web/`): list grouped by category, inline edit, delete,
 a global memory on/off switch, and a per-session incognito toggle. Visual
-design follows the existing enterprise UI direction (-style) already
+design follows the existing enterprise UI direction already
 established in the web app. A mockup will be produced during planning/
 implementation.
 

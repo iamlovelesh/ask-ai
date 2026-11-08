@@ -1536,7 +1536,7 @@ describe('runLoopTurn — data__apply_to_ref bulk writes (round-4 billing)', () 
   });
 });
 
-describe('runLoopTurn — data__group_by_ref ( group_by pattern)', () => {
+describe('runLoopTurn — data__group_by_ref', () => {
   const rows = [
     { id: 'o1', stage: 'won', owner_id: 'u1', value_cents: 1000 },
     { id: 'o2', stage: 'won', owner_id: 'u2', value_cents: 3000 },
@@ -1601,7 +1601,7 @@ describe('runLoopTurn — data__group_by_ref ( group_by pattern)', () => {
   });
 });
 
-describe('runLoopTurn — apply_to_ref dry_run preview ( merge_many pattern)', () => {
+describe('runLoopTurn — apply_to_ref dry_run preview', () => {
   it('dry_run reports what WOULD happen without gating or writing', async () => {
     const rows = Array.from({ length: 10 }, (_, i) => ({ id: `inv_${i}` }));
     let handlerCalls = 0;
@@ -2230,7 +2230,7 @@ describe('runLoopTurn — injection defense: long free-text fields are capped', 
   });
 });
 
-describe('runLoopTurn — skills layer ( second-layer playbooks)', () => {
+describe('runLoopTurn — skills layer', () => {
   it('session__load_skills returns the requested skill body to the model', async () => {
     const registry = buildRegistry([[action('invoices.search_invoices', 'read', async () => ({ items: [], total: 0 }))]], []);
     const seen: Seen = { bodies: [] };

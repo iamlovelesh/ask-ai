@@ -4,7 +4,7 @@ import { buildLoopSystemPrompt, buildLoopUserPrompt } from '../src/loop/prompts'
 describe('buildLoopSystemPrompt', () => {
   const system = buildLoopSystemPrompt();
 
-  it('P1: embeds a full action catalog section when provided (pattern)', () => {
+  it('P1: embeds a full action catalog section when provided', () => {
     const withCatalog = buildLoopSystemPrompt('leads.search_leads: Search leads\ninvoices.send_reminder: Send a reminder');
     expect(withCatalog).toContain('<action_catalog>');
     expect(withCatalog).toContain('leads.search_leads: Search leads');
@@ -143,7 +143,7 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).toMatch(/overreach|beyond the .* set the user named/i);
   });
 
-  it('routes grouping questions to group_by and mandates record reference tokens (patterns)', () => {
+  it('routes grouping questions to group_by and mandates record reference tokens', () => {
     expect(system).toContain('data__group_by_ref');
     expect(system).toMatch(/by\/per\/top|per owner|breakdown/i);
     expect(system).toContain('[[record:');
@@ -195,7 +195,7 @@ describe('buildLoopSystemPrompt', () => {
     expect(system).not.toContain('## Overdue invoice reminders');
   });
 
-  it('the OSS reference CRM output rules: chip placement, fabricated-id negatives, gap disclosure, relevance ordering', () => {
+  it('output rules: chip placement, fabricated-id negatives, gap disclosure, relevance ordering', () => {
     expect(system).toMatch(/never inside a heading/i); // chip placement
     expect(system).toMatch(/rec-person-1|inv-123|placeholder id/i); // concrete negatives
     expect(system).toMatch(/could not (evaluate|check)|name what you could not/i); // gap disclosure

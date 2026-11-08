@@ -261,10 +261,10 @@ Answer style:
   why (missing data, a signal you had no tool for) — a review that hides
   its gaps is worse than a short one.`;
 
-/** `catalog`: the FULL action catalog as "slug: description" lines (
- * pattern — the model always KNOWS every capability; schemas load on demand
- * via catalog__search_actions). Deterministic per registry, so the prompt
- * prefix stays provider-cacheable across turns. */
+/** `catalog`: the FULL action catalog as "slug: description" lines — the model
+ * always KNOWS every capability; schemas load on demand via
+ * catalog__search_actions. Deterministic per registry, so the prompt prefix
+ * stays provider-cacheable across turns. */
 export function buildLoopSystemPrompt(catalog?: string, role?: string, adminInstructions?: string): string {
   const parts: string[] = [SYSTEM_PROMPT];
   // Workspace steering (admin-authored "Workspace Instructions"):

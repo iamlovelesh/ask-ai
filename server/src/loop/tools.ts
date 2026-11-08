@@ -1564,7 +1564,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
     },
   });
 
-  // createMany shape (pattern): the model builds an explicit array of
+  // createMany shape: the model builds an explicit array of
   // per-record params and writes them in ONE step — this is the shape the model
   // reaches for naturally ("create these N"), unlike the abstract apply_to_ref.
   // One confirmation; every id used is provenance-checked; schema-validated

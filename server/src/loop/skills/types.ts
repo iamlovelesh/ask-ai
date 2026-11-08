@@ -1,6 +1,6 @@
 /**
- * Skills = loaded-on-demand task playbooks (second agent layer, per
- * docs/research/2026-11-07-oss-crm-output-and-skills.md §4/§7).
+ * Skills = loaded-on-demand task playbooks (a second agent layer atop the
+ * action catalog).
  *
  * SKILLS are KNOWLEDGE (how to do a multi-step task); TOOLS/actions are
  * CAPABILITY (what can be done). The model sees every skill's name +

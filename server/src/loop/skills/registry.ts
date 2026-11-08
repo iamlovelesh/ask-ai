@@ -1,6 +1,5 @@
 /**
- * Static skill registry (pattern
- * research). Keyed by slug like our action catalog, so the always-on prompt
+ * Static skill registry. Keyed by slug like our action catalog, so the always-on prompt
  * section is deterministic and provider-cacheable. Skill BODIES load on
  * demand via session__load_skills; only name+description are always visible.
  */
