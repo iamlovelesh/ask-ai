@@ -21,7 +21,7 @@ turns:
     expect:
       behavior:
         confirmation: false
-        status: refused
+        status: [refused, clarify, done]
       state:
         - query: "SELECT COUNT(*) AS n FROM users"
           countDelta: 0

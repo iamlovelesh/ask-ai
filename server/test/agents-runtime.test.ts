@@ -4,7 +4,7 @@ import { Agent, tool } from '@openai/agents';
 import { costMeter, __setTestSpans } from '../src/llm/client';
 import { BudgetExceededError } from '../src/llm/client';
 import type { Span, SpanEndPatch, SpanHandle, Spans, SpanStart } from '../src/events/trace';
-import { createLoopRunner, runLoopOnce, LoopDeadlineError } from '../src/llm/agents-runtime';
+import { createLoopRunner, runLoopOnce, LoopDeadlineError, injectCacheControlFetch } from '../src/llm/agents-runtime';
 
 // --- fakes -------------------------------------------------------------------
 
@@ -64,6 +64,39 @@ function makeAgent(): Agent {
 }
 
 // --- tests -------------------------------------------------------------------
+
+describe('injectCacheControlFetch — prompt caching', () => {
+  function captureFetch(): { fetch: typeof fetch; lastBody: () => unknown } {
+    let body: unknown;
+    const f = (async (_url: unknown, init?: { body?: string }) => {
+      body = init?.body ? JSON.parse(init.body) : undefined;
+      return new Response(JSON.stringify({ usage: { prompt_tokens_details: { cached_tokens: 0 } } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    return { fetch: f, lastBody: () => body };
+  }
+
+  it('tags the system message with an ephemeral cache_control breakpoint on chat-completions', async () => {
+    const cap = captureFetch();
+    const wrapped = injectCacheControlFetch(cap.fetch);
+    await wrapped('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({ messages: [{ role: 'system', content: 'big catalog prompt' }, { role: 'user', content: 'hi' }] }),
+    } as RequestInit);
+    const sent = cap.lastBody() as { messages: Array<{ role: string; content: unknown }> };
+    const sys = sent.messages.find((m) => m.role === 'system');
+    expect(sys?.content).toEqual([{ type: 'text', text: 'big catalog prompt', cache_control: { type: 'ephemeral' } }]);
+    // user message untouched
+    expect(sent.messages.find((m) => m.role === 'user')?.content).toBe('hi');
+  });
+
+  it('passes non-completions requests through untouched', async () => {
+    const cap = captureFetch();
+    const wrapped = injectCacheControlFetch(cap.fetch);
+    const original = JSON.stringify({ anything: true });
+    await wrapped('https://openrouter.ai/api/v1/models', { method: 'GET', body: original } as RequestInit);
+    expect(cap.lastBody()).toEqual({ anything: true }); // unchanged
+  });
+});
 
 describe('agents-runtime', () => {
   let spans: FakeSpans;

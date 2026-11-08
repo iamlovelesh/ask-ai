@@ -369,22 +369,22 @@ capped at ≤10 scenarios.
 
 ## Results
 
-**<BENCH:status_line>** — see `docs/BENCHMARK.md` for the full report; the numbers below are
+**Optimized 70.9% pass¹ vs baseline 51.7% (+19.2pp); prompt caching cut cost ~74% to \$0.039/task and brought complex-latency targets within bound; pass-rate and direct-p95 remain short.** — see `docs/BENCHMARK.md` for the full report, regenerated from the trace store.
 the headline rows from the same trace store the UI's trace view renders live.
 
 | Metric | Target | Optimized | Baseline | Met? |
 |---|---|---|---|---|
-| Direct TTFUR, p50 | < 2s | `<BENCH:direct_ttfur_p50_opt>` | `<BENCH:direct_ttfur_p50_base>` | `<BENCH:direct_ttfur_p50_status>` |
-| Direct TTFUR, p95 | < 4s | `<BENCH:direct_ttfur_p95_opt>` | `<BENCH:direct_ttfur_p95_base>` | `<BENCH:direct_ttfur_p95_status>` |
-| Complex `plan.ready`, p50 | < 4s | `<BENCH:complex_plan_ready_p50>` | — | `<BENCH:complex_plan_ready_status>` |
-| Complex E2E, p50 | < 12s | `<BENCH:complex_e2e_p50>` | `<BENCH:complex_e2e_p50_base>` | `<BENCH:complex_e2e_p50_status>` |
-| Complex E2E, p95 | < 25s | `<BENCH:complex_e2e_p95>` | — | `<BENCH:complex_e2e_p95_status>` |
-| Task success, pass^1 | ≥ 85% | `<BENCH:pass1_optimized>` | `<BENCH:pass1_baseline>` | `<BENCH:pass1_status>` |
-| Task success, pass^3 | reported alongside pass^1 | `<BENCH:pass3_optimized>` | n/a (1 trial) | — |
-| Optimized vs baseline delta | ≥ +15pp | `<BENCH:delta_pp>` | — | `<BENCH:delta_status>` |
-| Cost / successful task (strict) | < $0.01 | `<BENCH:cost_per_success_strict>` | `<BENCH:cost_per_success_baseline>` | `<BENCH:cost_status>` |
-| Repair-rate, complex (assumption) | < 35% | `<BENCH:repair_rate_complex>` | — | `<BENCH:repair_rate_status>` |
-| Total benchmark spend | ≤ $8.50 | `<BENCH:total_spend>` | — | `<BENCH:spend_status>` |
+| Direct TTFUR, p50 | < 2s | `2004ms` | `2211ms` | `MISSED (≈target)` |
+| Direct TTFUR, p95 | < 4s | `7001ms` | `4790ms` | `MISSED` |
+| Complex `plan.ready`, p50 | < 4s | `2073ms` | — | `MET` |
+| Complex E2E, p50 | < 12s | `7992ms` | `7926ms` | `MET` |
+| Complex E2E, p95 | < 25s | `19440ms` | — | `MET` |
+| Task success, pass^1 | ≥ 85% | `70.9%` | `51.7%` | `MISSED` |
+| Task success, pass^3 | reported alongside pass^1 | `63.6% (all-3-consistent)` | n/a (1 trial) | — |
+| Optimized vs baseline delta | ≥ +15pp | `+19.2pp` | — | `MET` |
+| Cost / successful task (strict) | < $0.01 | `$0.0394` | `$0.0978` | `MISSED (−74% via caching)` |
+| Repair-rate, complex (assumption) | < 35% | `0.0%` | — | `MET` |
+| Total benchmark spend | ≤ $8.50 | `$12.84 (cached; ~$48 uncached)` | — | `MISSED` |
 
 ### Honest misses
 

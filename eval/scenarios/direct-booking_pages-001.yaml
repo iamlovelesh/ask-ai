@@ -1,0 +1,26 @@
+# category: direct, module: booking_pages.
+#
+# create_booking_page (M23.A01) requires only `name` (min 1). New pages start
+# in 'draft' (write risk, not yet live), so a single create does not gate.
+#
+# State home: structures WHERE kind='booking_page'.
+
+id: direct-booking_pages-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a booking page called 'Demo Calls'"
+    expect:
+      planActions:
+        mustInclude: [booking_pages.create_booking_page]
+      paramChecks:
+        - action: booking_pages.create_booking_page
+          param: name
+          contains: Demo Calls
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='booking_page'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

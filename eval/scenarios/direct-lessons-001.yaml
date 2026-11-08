@@ -1,0 +1,35 @@
+# category: direct, module: lessons.
+#
+# lessons.create_lesson (m41-lessons.ts) requires `course_id` + `title`
+# (duration_min/section optional). The course is referenced by its raw id
+# `course_1` on purpose: course titles are drawn from an 8-item pool
+# (COURSE_TOPICS) across ~50 seeded courses, so NO course title is unique
+# and a name-based ref would force a clarify. A raw parent id is the
+# deterministic, resolvable choice here (same precedent as
+# multistep-forms-001's con_1 / struct_136). `course_1` is the first
+# seeded course and always exists.
+#
+# JSON-BACKED: lessons live in courses.lessons (no per-lesson SQL table),
+# so `state` is omitted per the harness rule; planActions + paramChecks +
+# behavior carry the assertion. create_lesson exercises the real write
+# path (course_id resolves to a real row). risk:'write', single row →
+# shouldGate() = false.
+id: direct-lessons-001
+category: direct
+profile: standard
+turns:
+  - user: "Add a lesson titled 'Pricing Basics' to course course_1."
+    expect:
+      planActions:
+        mustInclude: [lessons.create_lesson]
+      paramChecks:
+        - action: lessons.create_lesson
+          param: course_id
+          equals: course_1
+        - action: lessons.create_lesson
+          param: title
+          contains: Pricing
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

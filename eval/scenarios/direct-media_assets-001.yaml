@@ -1,0 +1,27 @@
+# category: direct, module: media_assets.
+#
+# `media_assets.upload_media_asset` (m39-media_assets.ts A01) — only required
+# input param is `name` (z.string().min(1)); mime_type/size_bytes/folder are
+# optional and defaulted (synthetic url, no real file storage). A single
+# risk:'write' create of one `structures(kind='media_asset')` row, so it does
+# not gate.
+
+id: direct-media_assets-001
+category: direct
+profile: standard
+turns:
+  - user: "Upload a new hero image called 'Acme Homepage Hero'"
+    expect:
+      planActions:
+        mustInclude: [media_assets.upload_media_asset]
+      paramChecks:
+        - action: media_assets.upload_media_asset
+          param: name
+          contains: Acme
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='media_asset'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

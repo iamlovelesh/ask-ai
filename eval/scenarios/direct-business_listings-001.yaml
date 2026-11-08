@@ -1,0 +1,27 @@
+# category: direct, module: business_listings.
+#
+# `business_listings.create_business_listing` (m46-business_listings.ts A01)
+# — only required input param is `name` (z.string().min(1)); address/phone/
+# hours/categories start empty and are filled by later actions. A single
+# risk:'write' create of one `structures(kind='business_listing')` row, so it
+# does not gate.
+
+id: direct-business_listings-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a business listing for our downtown store called 'Acme Downtown'"
+    expect:
+      planActions:
+        mustInclude: [business_listings.create_business_listing]
+      paramChecks:
+        - action: business_listings.create_business_listing
+          param: name
+          contains: Acme Downtown
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='business_listing'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

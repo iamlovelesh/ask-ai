@@ -61,6 +61,12 @@ interface TurnCallContext {
    * repairs names here because the Runner's tool lookup map is captured
    * BEFORE the model call. */
   fixResponse?: (output: unknown[]) => void;
+  /** Cached input-token count from the MOST RECENT model call, stashed by the
+   * cache-control fetch middleware (OpenRouter returns it in
+   * `usage.prompt_tokens_details.cached_tokens`, but the @openai/agents SDK
+   * drops it from `response.usage`). MeteredModel reads it to price cached
+   * tokens at the cheaper rate. */
+  lastCachedIn?: number;
 }
 
 const turnContext = new AsyncLocalStorage<TurnCallContext>();
@@ -101,7 +107,8 @@ class MeteredModel implements Model {
       if (ctx?.fixResponse && Array.isArray(response.output)) ctx.fixResponse(response.output);
       const tokensIn = response.usage.inputTokens;
       const tokensOut = response.usage.outputTokens;
-      const costUsd = this.price(tokensIn, tokensOut);
+      const cachedIn = cachedInputOf(response.usage) || ctx?.lastCachedIn || 0;
+      const costUsd = this.price(tokensIn, tokensOut, cachedIn);
       meterLlmCost(costUsd);
       ctx?.onLlmCall?.({ tokensIn, tokensOut, costUsd });
       spans.end(handle, { tokensIn, tokensOut, costUsd, meta: { ms: performance.now() - startedAt } });
@@ -138,7 +145,8 @@ class MeteredModel implements Model {
           if (done.response.usage) {
             const tokensIn = done.response.usage.inputTokens ?? 0;
             const tokensOut = done.response.usage.outputTokens ?? 0;
-            const costUsd = this.price(tokensIn, tokensOut);
+            const cachedIn = cachedInputOf(done.response.usage) || ctx?.lastCachedIn || 0;
+            const costUsd = this.price(tokensIn, tokensOut, cachedIn);
             meterLlmCost(costUsd);
             ctx?.onLlmCall?.({ tokensIn, tokensOut, costUsd });
           }
@@ -152,9 +160,13 @@ class MeteredModel implements Model {
     }
   }
 
-  private price(tokensIn: number, tokensOut: number): number {
+  private price(tokensIn: number, tokensOut: number, cachedIn = 0): number {
     const price = priceFor(this.modelName);
-    const cost = (tokensIn / 1_000_000) * price.inPerM + (tokensOut / 1_000_000) * price.outPerM;
+    const fresh = Math.max(0, tokensIn - cachedIn);
+    const cost =
+      (fresh / 1_000_000) * price.inPerM +
+      (cachedIn / 1_000_000) * price.cachedPerM +
+      (tokensOut / 1_000_000) * price.outPerM;
     return Number.isFinite(cost) ? cost : 0;
   }
 }
@@ -189,16 +201,74 @@ export function __setLoopTestFetch(fn: typeof fetch | undefined): void {
   loopTestFetch = fn;
 }
 
+/** Wraps a fetch so every outgoing chat-completions request tags its system
+ * message with an Anthropic `cache_control: {type:'ephemeral'}` breakpoint —
+ * the stable, expensive prefix (system prompt + the full action catalog) is
+ * then cache-read on subsequent calls that share it. No-op for non-completions
+ * requests and for bodies without a string-content system message. */
+export function injectCacheControlFetch(baseFetch: typeof fetch): typeof fetch {
+  return (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    try {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
+      if (init && typeof init.body === 'string' && url.includes('/chat/completions')) {
+        const body = JSON.parse(init.body) as { messages?: Array<{ role: string; content: unknown }> };
+        const sys = body.messages?.find((m) => m.role === 'system');
+        if (sys && typeof sys.content === 'string' && sys.content.length > 0) {
+          sys.content = [{ type: 'text', text: sys.content, cache_control: { type: 'ephemeral' } }];
+          init = { ...init, body: JSON.stringify(body) };
+        }
+      }
+    } catch {
+      /* passthrough on any shape we don't recognize — never break the call */
+    }
+    const res = await baseFetch(input as never, init as never);
+    try {
+      // OpenRouter returns cached_tokens in the response usage, but the SDK
+      // drops it — read it off a clone and stash on the turn context so pricing
+      // can apply the cached rate (see MeteredModel.price / lastCachedIn).
+      const clone = (res as Response).clone();
+      const j = (await clone.json()) as { usage?: { prompt_tokens_details?: { cached_tokens?: number } } };
+      const cached = j?.usage?.prompt_tokens_details?.cached_tokens;
+      const ctx = turnContext.getStore();
+      if (ctx && typeof cached === 'number') ctx.lastCachedIn = cached;
+    } catch { /* non-JSON / streamed — leave lastCachedIn unset */ }
+    return res;
+  }) as typeof fetch;
+}
+
+/** Cached input-token count from a model response's usage, read from the
+ * `inputTokensDetails` map the SDK carries through from the provider
+ * (`prompt_tokens_details.cached_tokens` on OpenRouter/OpenAI). 0 when absent. */
+function cachedInputOf(usage: unknown): number {
+  const d = (usage as { inputTokensDetails?: Record<string, unknown> } | undefined)?.inputTokensDetails;
+  if (d && typeof d === 'object') {
+    for (const k of ['cached_tokens', 'cachedTokens', 'cached_input_tokens']) {
+      const v = (d as Record<string, unknown>)[k];
+      if (typeof v === 'number' && Number.isFinite(v)) return v;
+    }
+  }
+  return 0;
+}
+
 /** A Runner wired to OpenRouter with metering and tracing-off. One runner
  * can serve many runLoopOnce calls; per-call state (turnId, deadline)
  * travels with the call, not the runner. */
 export function createLoopRunner(opts: CreateLoopRunnerOptions = {}): Runner {
   const effectiveFetch = opts.testFetch ?? loopTestFetch;
+  // Prompt caching: Anthropic only caches a prefix when the request carries an
+  // explicit `cache_control` breakpoint (Gemini/GPT auto-cache; Anthropic does
+  // NOT). The @openai/agents → OpenAIProvider path never sends one, so the big
+  // catalog-in-prompt system message was re-billed at full price on every one
+  // of the ~3–4 model calls per turn. We inject the breakpoint at the fetch
+  // layer (spike-verified: 99.9% of the system prefix caches on the 2nd call),
+  // which is provider-format-agnostic. Only in production — tests supply their
+  // own mock fetch and don't exercise caching.
+  const fetchImpl = effectiveFetch ?? injectCacheControlFetch(globalThis.fetch);
   const client = new OpenAI({
     apiKey: process.env['OPENROUTER_API_KEY'] || 'test-key',
     baseURL: OPENROUTER_BASE_URL,
     maxRetries: 0, // withBackoff in MeteredModel is the single retry authority
-    ...(effectiveFetch !== undefined ? { fetch: effectiveFetch } : {}),
+    fetch: fetchImpl,
   });
   const provider = new OpenAIProvider({ openAIClient: client, useResponses: false });
   return new Runner({ modelProvider: new MeteredProvider(provider, opts.backoff), tracingDisabled: true });

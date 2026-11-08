@@ -242,9 +242,15 @@ export async function llmCall<T = string>(opts: LlmCallOptions<T>): Promise<LlmC
     const tokensOut = usageRaw.outputTokens ?? 0;
     const tokensCached = orUsage?.promptTokensDetails?.cachedTokens ?? usageRaw.cachedInputTokens ?? 0;
 
+    // Prefer OpenRouter's native cost, but ONLY when it's a positive number.
+    // Some responses/accounts return `usage.cost: 0` (cost reporting off for
+    // that provider/key) even though real tokens were spent — taking 0
+    // verbatim zeroed out the baseline agent's entire cost in the benchmark
+    // (7M tokens reported as $0.00). Fall back to table pricing whenever native
+    // cost is absent OR non-positive, so a real call is never costed at $0.
     const nativeCost = orUsage?.cost;
     const costUsd =
-      typeof nativeCost === 'number' && Number.isFinite(nativeCost)
+      typeof nativeCost === 'number' && Number.isFinite(nativeCost) && nativeCost > 0
         ? nativeCost
         : tablePriceCost(opts.model, tokensIn, tokensOut, tokensCached);
 

@@ -170,6 +170,11 @@ const communityView = z.object({
   archived: z.boolean(),
   created_at: z.number(),
   updated_at: z.number(),
+  /** Set ONLY by create_discussion_channel: the channel just created, surfaced
+   * at top level so a follow-up step ("post to the channel I just made") can
+   * grab its id directly instead of having to pluck it out of the full
+   * `channels` array (where it sits next to every pre-existing channel). */
+  created_channel: channelSchema.optional(),
 });
 
 const membershipView = z.object({
@@ -290,7 +295,9 @@ const createDiscussionChannel: ActionDef<z.infer<typeof createDiscussionChannelI
     }
     const channel: ChannelEntry = { id: nextSidecarId(config.channels.map((c) => c.id), input.id, 'ch'), name: input.name };
     writeConfig(ctx.db, input.id, { ...config, channels: [...config.channels, channel] }, ctx.clock.now());
-    return toView(ctx.db, getCommunityRow(ctx.db, input.id));
+    // Surface the just-created channel at top level so a downstream step can
+    // reference it unambiguously (see communityView.created_channel).
+    return { ...toView(ctx.db, getCommunityRow(ctx.db, input.id)), created_channel: channel };
   }),
 };
 

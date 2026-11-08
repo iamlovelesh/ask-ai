@@ -59,7 +59,13 @@ function planFromOutcome(outcome: PlanOutcome | undefined): Plan | undefined {
  * and tests both want ONE canonical implementation). */
 export function isComplexTurn(events: readonly Event[]): boolean {
   const plan = planFromOutcome(findPlanReady(events)?.outcome);
-  return plan !== undefined && plan.steps.length > 1;
+  // plandsl agent: complex iff the validated plan has >1 step.
+  if (plan !== undefined) return plan.steps.length > 1;
+  // Tool-loop agent (no plan.ready): it never emits a multi-step plan outcome,
+  // so bucket by what it actually DID — a turn that dispatched more than one
+  // action is a complex turn. Without this, every loop turn fell into "direct"
+  // and the complex-latency bucket was always empty (n=0).
+  return dispatchedActions(events).length > 1;
 }
 
 // --- planActions -------------------------------------------------------------
@@ -285,12 +291,28 @@ function checkState(db: SqlDb, checks: readonly StateCheck[], before: readonly (
 
 // --- response -----------------------------------------------------------------
 
+/** Removes thousands separators between digits ("3,372.33" -> "3372.33") so a
+ * `mustMention` figure matches the answer regardless of digit-group formatting.
+ * The figure IS mentioned — only the locale formatting differs — and the
+ * NumberCheck rail already validates figures against tool output, so this is a
+ * formatting-tolerant presence check, not a loosening of what must be said. */
+function normalizeFigures(s: string): string {
+  let prev = s;
+  // repeat to collapse multi-group numbers like "1,234,567"
+  for (let next = s.replace(/(\d),(\d)/g, '$1$2'); next !== prev; next = prev.replace(/(\d),(\d)/g, '$1$2')) {
+    prev = next;
+  }
+  return prev;
+}
+
 function checkResponse(events: readonly Event[], expect: NonNullable<TurnExpect['response']>): AssertFailure[] {
   const finalText = (findAnswerFinal(events)?.text ?? '').toLowerCase();
+  const finalTextNorm = normalizeFigures(finalText);
   const failures: AssertFailure[] = [];
 
   for (const phrase of expect.mustMention ?? []) {
-    if (!finalText.includes(phrase.toLowerCase())) {
+    const p = phrase.toLowerCase();
+    if (!finalText.includes(p) && !finalTextNorm.includes(normalizeFigures(p))) {
       failures.push({ kind: 'response', detail: `answer.final did not mention '${phrase}'` });
     }
   }
@@ -348,10 +370,11 @@ function checkBehavior(events: readonly Event[], expect: NonNullable<TurnExpect[
   // occurred.
   if (expect.status !== undefined) {
     const actualStatus = findTurnCompleted(events)?.status;
-    if (actualStatus !== expect.status) {
+    const allowed = Array.isArray(expect.status) ? expect.status : [expect.status];
+    if (actualStatus === undefined || !allowed.includes(actualStatus)) {
       failures.push({
         kind: 'behavior',
-        detail: `expected turn status '${expect.status}', got '${actualStatus ?? '(no turn.completed)'}'`,
+        detail: `expected turn status ${allowed.map((s) => `'${s}'`).join(' or ')}, got '${actualStatus ?? '(no turn.completed)'}'`,
       });
     }
   }

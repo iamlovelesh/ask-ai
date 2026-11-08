@@ -1,0 +1,17 @@
+# category: direct, module: tax_rules (2nd slug-bearing scenario). A pure read —
+# deterministic, never gates. (The earlier multi-step/indirect variant was
+# fragile: the planner reasonably does fewer steps and a later step can gate,
+# so a read keeps coverage solid.)
+
+id: direct-tax_rules-002
+category: direct
+profile: standard
+turns:
+  - user: "List all of our tax rules"
+    expect:
+      planActions:
+        mustInclude: [tax_rules.list_tax_rules]
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

@@ -1,0 +1,17 @@
+# category: direct, module: landing_pages (2nd slug-bearing scenario; the other
+# extra landing_pages scenario is an `unsupported` refusal with no slugs).
+#
+# search_landing_pages (M37.A03) is a pure read — never gates, no state change.
+
+id: direct-landing_pages-002
+category: direct
+profile: standard
+turns:
+  - user: "Search our landing pages for any about the spring sale"
+    expect:
+      planActions:
+        mustInclude: [landing_pages.search_landing_pages]
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

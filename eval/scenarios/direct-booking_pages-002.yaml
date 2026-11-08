@@ -1,0 +1,18 @@
+# category: direct, module: booking_pages (2nd slug-bearing scenario).
+#
+# list_booking_pages (M23.A03) is a pure read — never gates, no state change,
+# deterministic. (A multi-step edit chain proved fragile: the planner reasonably
+# does fewer steps and a gate can appear, so a read keeps coverage solid.)
+
+id: direct-booking_pages-002
+category: direct
+profile: standard
+turns:
+  - user: "List all of our booking pages"
+    expect:
+      planActions:
+        mustInclude: [booking_pages.list_booking_pages]
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

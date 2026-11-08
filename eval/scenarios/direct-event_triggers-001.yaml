@@ -1,0 +1,28 @@
+# category: direct, module: event_triggers.
+#
+# create_event_trigger (M17.A01) requires `name` (min 1); `event_type` is
+# optional but supplied here in-line so the request is fully resolvable with
+# no missing-param clarify. New triggers start 'inactive' (write risk, not
+# externally visible), so a single create does not gate.
+#
+# State home: structures WHERE kind='trigger'.
+
+id: direct-event_triggers-001
+category: direct
+profile: standard
+turns:
+  - user: "Create an event trigger called 'New lead welcome' that fires on contact.created events"
+    expect:
+      planActions:
+        mustInclude: [event_triggers.create_event_trigger]
+      paramChecks:
+        - action: event_triggers.create_event_trigger
+          param: name
+          contains: New lead welcome
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='trigger'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

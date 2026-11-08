@@ -191,6 +191,32 @@ describe('llmCall — cost fallback (Review Focus 5)', () => {
     expect(result.usage.costUsd).toBeCloseTo(1.0 * 1 + 0.5 * 5, 4);
   });
 
+  it('falls back to the price table when native usage.cost is 0 (reporting off) despite real tokens', async () => {
+    // Regression: OpenRouter returned usage.cost:0 for the baseline agent even
+    // though millions of tokens were spent — taken verbatim it zeroed out the
+    // entire baseline cost in the benchmark. A non-positive native cost must
+    // fall back to table pricing.
+    const { fetch: fakeFetch } = sequenceFetch([
+      {
+        status: 200,
+        body: chatSuccessBody({
+          usage: { prompt_tokens: 1_000_000, completion_tokens: 500_000, cost: 0 },
+        }),
+      },
+    ]);
+    __setTestFetch(fakeFetch);
+
+    const result = await llmCall({
+      stage: 'baseline',
+      model: 'anthropic/claude-haiku-4.5',
+      system: 'sys',
+      prompt: 'p',
+      turnId: `turn_${randomUUID()}`,
+    });
+
+    expect(result.usage.costUsd).toBeCloseTo(1.0 * 1 + 0.5 * 5, 4); // table, not 0
+  });
+
   it('never produces NaN even for a model that is not in the price table', async () => {
     const { fetch: fakeFetch } = sequenceFetch([
       {

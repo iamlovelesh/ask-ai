@@ -1,0 +1,19 @@
+# category: direct, module: event_triggers (2nd slug-bearing scenario so the
+# module has >= 2 attributable scenarios — the other extra is an `unsupported`
+# refusal, which carries no planActions slugs and so is not attributed here).
+#
+# list_event_triggers (M17.A03) is a pure read — no params required, no state
+# change, never gates.
+
+id: direct-event_triggers-002
+category: direct
+profile: standard
+turns:
+  - user: "Show me all the event triggers we have set up"
+    expect:
+      planActions:
+        mustInclude: [event_triggers.list_event_triggers]
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

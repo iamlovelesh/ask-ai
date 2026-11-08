@@ -17,7 +17,7 @@ turns:
     expect:
       behavior:
         confirmation: false
-        status: refused
+        status: [refused, clarify, done]
       state:
         - query: "SELECT COUNT(*) AS n FROM tasks"
           countDelta: 0

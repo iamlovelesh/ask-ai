@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { openEventLog, type EventLog, type SeqEvent } from '../src/events/log';
 import { openSpans, type Spans } from '../src/events/trace';
+import { openSessions } from '../src/store/sessions-db';
 import type { Event } from '../src/events/types';
 
 function tmpDbPath(name: string): string {
@@ -168,6 +169,41 @@ describe('EventLog session rows', () => {
     log.close();
   });
 
+  it('deleteSession removes the session row and its events', () => {
+    const log = freshLog();
+    const id = log.createSession('Doomed');
+    log.append(id, { t: 'turn.started', turnId: 't1', sessionId: id, userText: 'hi', ts: 1 });
+    expect(log.listSessions().map((r) => r.id)).toContain(id);
+
+    const removed = log.deleteSession(id);
+    expect(removed.changes).toBe(1);
+    expect(log.listSessions().map((r) => r.id)).not.toContain(id);
+    expect(log.list(id)).toHaveLength(0); // events gone too
+    // deleting a non-existent session is a harmless no-op (0 rows)
+    expect(log.deleteSession('sess_nope').changes).toBe(0);
+    log.close();
+  });
+
+  it('searchSessions matches by title and by event content, newest first', () => {
+    let t = 1_000_000;
+    const log = openEventLog(':memory:', () => (t += 1000));
+    const a = log.createSession('Acme pipeline review');
+    const b = log.createSession('Quarterly numbers');
+    log.append(b, { t: 'turn.started', turnId: 't1', sessionId: b, userText: 'how is the Acme deal doing?', ts: 1 });
+    const c = log.createSession('Unrelated');
+
+    const hits = log.searchSessions('acme'); // case-insensitive
+    const ids = hits.map((r) => r.id);
+    expect(ids).toContain(a); // title match
+    expect(ids).toContain(b); // event-content match
+    expect(ids).not.toContain(c);
+    // newest-active first: b was touched after a was created
+    expect(ids.indexOf(b)).toBeLessThan(ids.indexOf(a));
+
+    expect(log.searchSessions('   ')).toEqual([]); // blank query → no rows
+    log.close();
+  });
+
   it('touchSession accumulates deltas across multiple calls', () => {
     const log = freshLog();
     const id = log.createSession();
@@ -206,6 +242,126 @@ describe('EventLog session rows', () => {
     log.createSession('b');
     log.createSession('c');
     expect(log.listSessions(2).length).toBe(2);
+    log.close();
+  });
+});
+
+describe('EventLog.deleteSession', () => {
+  it('removes the session row, its events, and clears the seq cache', () => {
+    const log = freshLog();
+    const keep = log.createSession('keep');
+    const drop = log.createSession('drop');
+    log.append(keep, turnStarted('t1', keep, 'hello keep', 1));
+    log.append(drop, turnStarted('t2', drop, 'hello drop', 2));
+    log.append(drop, { t: 'answer.final', turnId: 't2', text: 'bye drop' });
+
+    const res = log.deleteSession(drop);
+    expect(res.changes).toBe(1);
+
+    const ids = log.listSessions().map((r) => r.id);
+    expect(ids).toContain(keep);
+    expect(ids).not.toContain(drop);
+    // Events for the dropped session are gone; the kept session is intact.
+    expect(log.list(drop)).toEqual([]);
+    expect(log.list(keep).length).toBe(1);
+
+    // seq cache cleared: a brand-new session reusing the id would start at 1.
+    // (createSession mints a fresh id, so prove the cache is gone by appending
+    // to the dropped id and seeing seq restart from 1.)
+    expect(log.append(drop, turnStarted('t3', drop, 're-use', 3))).toBe(1);
+    log.close();
+  });
+
+  it('returns changes: 0 for an unknown session (drives a 404)', () => {
+    const log = freshLog();
+    expect(log.deleteSession('sess_does_not_exist').changes).toBe(0);
+    log.close();
+  });
+
+  it('does NOT delete durable memories tied to the session', () => {
+    const path = tmpDbPath('mem');
+    openPaths.push(path);
+    const log = openEventLog(path);
+    const sessionId = log.createSession('has memory');
+    log.append(sessionId, turnStarted('t1', sessionId, 'remember me', 1));
+
+    // Insert a durable memory row referencing this session via a raw handle.
+    const raw = openSessions(path);
+    raw.run(
+      `INSERT INTO memories (id, user_id, category, kind, body, source, source_session, created_at, updated_at)
+       VALUES ('mem_1', 'user_1', 'profile', 'profile', 'likes concise replies', 'turn', ?, 1, 1)`,
+      [sessionId],
+    );
+
+    log.deleteSession(sessionId);
+
+    const survivors = raw.all(`SELECT id FROM memories WHERE id = 'mem_1'`);
+    expect(survivors.length).toBe(1);
+    raw.close();
+    log.close();
+  });
+});
+
+describe('EventLog.searchSessions', () => {
+  it('matches on title, user message text, and final answer text', () => {
+    const log = freshLog();
+    const byTitle = log.createSession('Refund workflow');
+    const byUserMsg = log.createSession('Untitled');
+    const byAnswer = log.createSession('Another');
+    const noMatch = log.createSession('Unrelated');
+
+    log.append(byUserMsg, turnStarted('t1', byUserMsg, 'please issue a refund', 1));
+    log.append(byAnswer, turnStarted('t2', byAnswer, 'hi', 2));
+    log.append(byAnswer, { t: 'answer.final', turnId: 't2', text: 'I issued the refund.' });
+    log.append(noMatch, turnStarted('t3', noMatch, 'weather today', 3));
+
+    const ids = log.searchSessions('refund').map((r) => r.id);
+    expect(ids).toContain(byTitle);
+    expect(ids).toContain(byUserMsg);
+    expect(ids).toContain(byAnswer);
+    expect(ids).not.toContain(noMatch);
+    log.close();
+  });
+
+  it('is case-insensitive and returns full SessionRow shape', () => {
+    const log = freshLog();
+    const id = log.createSession('Quarterly Report');
+    log.touchSession(id, { turns: 2, costUsd: 0.05 });
+    const rows = log.searchSessions('quarterly');
+    expect(rows.length).toBe(1);
+    expect(rows[0]).toMatchObject({ id, title: 'Quarterly Report', turns: 2 });
+    expect(rows[0]!.cost_usd).toBeCloseTo(0.05);
+    log.close();
+  });
+
+  it('treats LIKE wildcards literally so con_12018 does not match con112018', () => {
+    const log = freshLog();
+    const exact = log.createSession('Untitled');
+    const decoy = log.createSession('Untitled');
+    log.append(exact, turnStarted('t1', exact, 'refund for con_12018 please', 1));
+    log.append(decoy, turnStarted('t2', decoy, 'note about con112018 here', 2));
+
+    const ids = log.searchSessions('con_12018').map((r) => r.id);
+    expect(ids).toEqual([exact]);
+    log.close();
+  });
+
+  it('returns newest-first and respects the limit', () => {
+    let t = 1_000_000;
+    const log = openEventLog(':memory:', () => (t += 1000));
+    const a = log.createSession('alpha match');
+    const b = log.createSession('beta match');
+    const c = log.createSession('gamma match');
+    expect(log.searchSessions('match').map((r) => r.id)).toEqual([c, b, a]);
+    expect(log.searchSessions('match', 2).length).toBe(2);
+    log.close();
+  });
+
+  it('returns [] for an empty/whitespace query', () => {
+    const log = freshLog();
+    log.createSession('something');
+    expect(log.searchSessions('')).toEqual([]);
+    expect(log.searchSessions('   ')).toEqual([]);
     log.close();
   });
 });

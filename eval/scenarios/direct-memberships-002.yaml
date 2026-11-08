@@ -1,0 +1,17 @@
+# category: direct, module: memberships (2nd slug-bearing scenario; the other
+# extra memberships scenario is an `unsupported` refusal with no slugs).
+#
+# list_membership_plans (M44.A03) is a pure read — never gates, no state change.
+
+id: direct-memberships-002
+category: direct
+profile: standard
+turns:
+  - user: "List all of our membership plans"
+    expect:
+      planActions:
+        mustInclude: [memberships.list_membership_plans]
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

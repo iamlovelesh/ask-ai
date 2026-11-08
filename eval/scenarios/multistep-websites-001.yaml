@@ -1,0 +1,32 @@
+# category: multistep, module: websites.
+#
+# One request that decomposes into two dependent writes on the SAME newly
+# created website: create the site (create_website — required `name`), then
+# add a page to it (add_website_page — required `id` of the just-created
+# website + `title`). Both are plain risk:'write' and neither is externally
+# visible (the site stays a draft; publish is a separate step), so the chain
+# does not gate. The page row lands in content_items(kind='website_page'),
+# so exactly ONE new structures(kind='website') row is created regardless of
+# the follow-on page add.
+
+id: multistep-websites-001
+category: multistep
+profile: standard
+turns:
+  - user: "Create a website called 'Acme Storefront' and add a Home page to it"
+    expect:
+      planActions:
+        mustInclude:
+          - websites.create_website
+          - websites.add_website_page
+      paramChecks:
+        - action: websites.create_website
+          param: name
+          contains: Acme Storefront
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='website'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

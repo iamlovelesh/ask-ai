@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import type { PendingConfirm } from '../lib/fold.js';
 import { deriveGateReason } from '../lib/gate-reason.js';
+import { collectFormValues, isFormComplete } from '../lib/confirm-form.js';
 import { useCatalogStore } from '../stores/catalog.js';
 
 const props = defineProps<{ confirm: PendingConfirm }>();
@@ -97,23 +98,19 @@ const kind = computed(() => {
 });
 
 // session__request_form: a structured input form instead of an approval.
+// A `type="number"` input bound with v-model yields a NUMBER, so values are
+// not guaranteed strings — the confirm-form helpers coerce safely.
 const form = computed(() => props.confirm.scope.form);
-const formValues = reactive<Record<string, string>>({});
+const formValues = reactive<Record<string, string | number>>({});
 const formComplete = computed(() => {
   const f = form.value;
   if (!f) return false;
-  return f.fields.every((fld) => !fld.required || (formValues[fld.key] ?? '').trim() !== '');
+  return isFormComplete(f.fields, formValues);
 });
 function submitForm(): void {
   const f = form.value;
   if (!f) return;
-  const values: Record<string, unknown> = {};
-  for (const fld of f.fields) {
-    const raw = (formValues[fld.key] ?? '').trim();
-    if (raw === '') continue;
-    values[fld.key] = fld.type === 'number' ? Number(raw) : raw;
-  }
-  emit('resolve', props.confirm.confirmId, true, values);
+  emit('resolve', props.confirm.confirmId, true, collectFormValues(f.fields, formValues));
 }
 function cancelForm(): void {
   emit('resolve', props.confirm.confirmId, false);

@@ -1,0 +1,18 @@
+# category: direct, module: funnels (2nd slug-bearing scenario; the other extra
+# funnels scenario is an `unsupported` refusal with no planActions slugs).
+#
+# list_funnels (M36.A03) is a pure read — no required params, no state change,
+# never gates.
+
+id: direct-funnels-002
+category: direct
+profile: standard
+turns:
+  - user: "List all of our funnels"
+    expect:
+      planActions:
+        mustInclude: [funnels.list_funnels]
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

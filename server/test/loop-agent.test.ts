@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -494,6 +494,41 @@ describe('runLoopTurn — session__request_form (HITL)', () => {
     );
     expect(completedOf(events).status).toBe('clarify');
   });
+
+  it('excludes the form-fill wait from totalMs and records it as gateWaitMs', async () => {
+    // Regression: "Worked for Ns" (metrics.totalMs) wrongly included the time
+    // the user spent filling the form. A mocked monotonic clock lets a slow
+    // human (GATE ms) pass only while the broker is deciding — totalMs must be
+    // the ACTIVE time (≈0 here), and the wait must surface as gateWaitMs.
+    const GATE = 200_000;
+    let nowMs = 0;
+    const spy = vi.spyOn(performance, 'now').mockImplementation(() => nowMs);
+    try {
+      const slowBroker: ConfirmBroker = {
+        request: async () => {
+          nowMs += GATE; // the human takes GATE ms to submit
+          return { approved: true, editedParams: { a: 'x' } };
+        },
+      };
+      const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+      const events = await drive(
+        registry,
+        'add a contact',
+        [
+          toolCallResponse('session__request_form', { title: 'X', fields: [{ key: 'a', label: 'A' }] }),
+          textResponse('Done — added.'),
+        ],
+        { confirm: slowBroker },
+      );
+      const m = completedOf(events).metrics;
+      expect(m.gateWaitMs).toBeGreaterThanOrEqual(GATE);
+      // totalMs is active time only — the GATE wait is NOT counted.
+      expect(m.totalMs).toBeLessThan(GATE);
+      expect(m.ttfurMs).toBeLessThanOrEqual(m.totalMs);
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
 
 describe('runLoopTurn — scheduled follow-up (#8)', () => {
@@ -508,6 +543,25 @@ describe('runLoopTurn — scheduled follow-up (#8)', () => {
     expect(pending).toHaveLength(1);
     expect(pending[0]!.instruction).toContain('follow up with the new leads');
     expect(pending[0]!.dueAt).toBeGreaterThan(0);
+  });
+
+  it('false-promise rail: appends an honest correction when the answer promises future work but nothing was scheduled', async () => {
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const events = await drive(registry, 'can you chase these leads?', [
+      textResponse("Sure — I'll follow up with them next week to check in."),
+    ]);
+    expect(completedOf(events).status).toBe('done');
+    expect(finalOf(events)).toMatch(/haven't scheduled/i);
+  });
+
+  it('false-promise rail: stays silent when the promise is backed by a real scheduled follow-up', async () => {
+    const scheduler = openScheduledTasks(sessionsDb);
+    const registry = buildRegistry([[action('leads.search_leads', 'read', async () => ({ items: [], total: 0 }))]], []);
+    const events = await drive(registry, 'remind me next week to chase these leads', [
+      toolCallResponse('session__schedule_follow_up', { when: '+1w', instruction: 'chase these leads' }),
+      textResponse("Done — I'll follow up with them next week."),
+    ], { scheduler });
+    expect(finalOf(events)).not.toMatch(/haven't scheduled/i);
   });
 
   it('does not create a duplicate reminder when the schedule tool is re-invoked the same turn', async () => {

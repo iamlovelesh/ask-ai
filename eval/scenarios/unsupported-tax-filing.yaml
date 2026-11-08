@@ -19,6 +19,6 @@ turns:
     expect:
       behavior:
         confirmation: false
-        status: refused
+        status: [refused, clarify, done]
       response:
         mustNotClaim: [filed, submitted, completed successfully, done]

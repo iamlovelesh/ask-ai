@@ -160,6 +160,29 @@ export function registerSessionsRoutes(app: FastifyInstance, deps: AppDeps): voi
     reply.send(rows);
   });
 
+  // --- GET /api/sessions/search?q&limit -----------------------------------
+  // Registered BEFORE the `:id`-scoped routes; `search` is a static segment so
+  // it never collides with `/api/sessions/:id/...`.
+
+  app.get('/api/sessions/search', async (req, reply) => {
+    const query = req.query as Record<string, unknown>;
+    const q = typeof query['q'] === 'string' ? query['q'] : '';
+    const { limit } = parseLimitCursor(query);
+    reply.send(eventLog.searchSessions(q, limit));
+  });
+
+  // --- DELETE /api/sessions/:id -------------------------------------------
+
+  app.delete('/api/sessions/:id', async (req: FastifyRequest<{ Params: SessionParams }>, reply) => {
+    const { id } = req.params;
+    const { changes } = eventLog.deleteSession(id);
+    if (changes === 0) {
+      reply.code(404).send({ error: 'session_not_found' });
+      return;
+    }
+    reply.code(204).send();
+  });
+
   // --- GET /api/sessions/:id/events?afterSeq ------------------------------
 
   app.get('/api/sessions/:id/events', async (req: FastifyRequest<{ Params: SessionParams }>, reply) => {

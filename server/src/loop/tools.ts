@@ -105,6 +105,10 @@ export interface LoopExits {
    * shrank "how many open tickets in total" from 76 to 23) compares these
    * against the user's words when the answer claims totality. */
   appliedFilters: { action: string; key: string; value: string }[];
+  /** Set when a durable follow-up or briefing was actually scheduled this turn.
+   * The false-promise rail (loop/false-promise.ts) uses it: a "I'll follow up
+   * later" answer is only truthful if something was really scheduled. */
+  scheduledFollowUp?: boolean;
   /** Aborts the in-flight run immediately (exit tools, stuck-stop). */
   stop: () => void;
 }
@@ -405,6 +409,7 @@ function toolParameters(action: ActionDef): { parameters: unknown; strict: boole
   const jsonSchema: unknown = JSON.parse(JSON.stringify(z.toJSONSchema(schema as z.ZodType, { io: 'input', target: 'draft-7' })));
   return { parameters: jsonSchema, strict: false };
 }
+
 
 // --- buildTurnTools -----------------------------------------------------------
 
@@ -1803,7 +1808,13 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
       };
       markTtfur();
       emit({ t: 'confirmation.required', turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+      // Subtract the time the user spends filling the form from the turn
+      // deadline — exactly like the confirmation gates above. Without this the
+      // form wait counted as compute time and a slow fill tripped a spurious
+      // "ran out of time" the instant the user submitted (observed live).
+      const gateStartedAt = performance.now();
       const verdict = await confirm.request({ turnId, confirmId, planRev: 0, planHash: input.planHash, stepId, scope });
+      counters.gateWaitMs += performance.now() - gateStartedAt;
       const approved = typeof verdict === 'boolean' ? verdict : verdict.approved;
       emit({ t: 'confirmation.resolved', turnId, confirmId, approved });
       if (!approved) {
@@ -1946,6 +1957,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         scheduler.schedule({ id: `task_${randomUUID()}`, sessionId, dueAt, instruction, createdAt: now, role: principal.role, userId: principal.userId });
         const obs = `Scheduled a follow-up for ${new Date(dueAt).toISOString()}: ${instruction}`;
         counters.stepsOk += 1;
+        exits.scheduledFollowUp = true; // backs any "I'll follow up later" claim
         emit({ t: 'step.finished', turnId, stepId, summary: obs, ms: 0 });
         exits.toolOutputs.push(obs);
         return obs;
@@ -2004,6 +2016,7 @@ export function buildTurnTools(input: BuildTurnToolsInput): Tool[] {
         });
         const obs = `Scheduled a ${cadence} briefing, first running ${new Date(firstDue).toISOString()}. It will appear here each time it runs.`;
         counters.stepsOk += 1;
+        exits.scheduledFollowUp = true; // backs any "I'll keep you posted" claim
         emit({ t: 'step.finished', turnId, stepId, summary: obs, ms: 0 });
         exits.toolOutputs.push(obs);
         return obs;

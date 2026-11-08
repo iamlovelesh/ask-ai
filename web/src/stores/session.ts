@@ -142,6 +142,15 @@ export const useSessionStore = defineStore('session', {
     sessionsLoadingMore: false,
     toasts: [] as { id: number; text: string }[],
     toastSeq: 0,
+    /** Cross-session search: the current query, its results (same row shape as
+     * the sidebar list), and whether a request is in flight. Empty query =
+     * search inactive (the sidebar shows the normal grouped list). */
+    searchQuery: '',
+    searchResults: [] as SessionSummary[],
+    searchLoading: false,
+    /** Monotonic token so a slow, stale search response can't overwrite the
+     * results of a newer query that already resolved. */
+    searchSeq: 0,
     /** Model-picker: the tier allowlist from GET /api/models and the id the
      * user has chosen (sent with each message; '' = server default). */
     models: [] as ModelOption[],
@@ -259,6 +268,61 @@ export const useSessionStore = defineStore('session', {
 
     async retryServer(): Promise<void> {
       await this.loadSessions();
+    },
+
+    /** Runs a cross-session search (title + message text, server-side). A
+     * blank query clears the search locally without a round-trip. A stale
+     * response (one whose query has since been superseded) is discarded via
+     * the `searchSeq` token so results never flicker back to an old query. */
+    async runSearch(query: string): Promise<void> {
+      const trimmed = query.trim();
+      if (trimmed.length === 0) {
+        this.clearSearch();
+        return;
+      }
+      this.searchQuery = trimmed;
+      this.searchLoading = true;
+      const token = ++this.searchSeq;
+      try {
+        const res = await fetch(`/api/sessions/search?q=${encodeURIComponent(trimmed)}`);
+        if (token !== this.searchSeq) return; // superseded by a newer query
+        if (!res.ok) throw new Error(`GET /api/sessions/search failed: ${res.status}`);
+        this.searchResults = (await res.json()) as SessionSummary[];
+      } catch {
+        if (token === this.searchSeq) this.pushToast('Search failed — please try again.');
+      } finally {
+        if (token === this.searchSeq) this.searchLoading = false;
+      }
+    },
+
+    /** Clears the active search and its results (sidebar reverts to the
+     * normal grouped list). Bumps `searchSeq` so any in-flight request is
+     * discarded on arrival. */
+    clearSearch(): void {
+      this.searchSeq += 1;
+      this.searchQuery = '';
+      this.searchResults = [];
+      this.searchLoading = false;
+    },
+
+    /** Deletes a session server-side, then removes it from the list, the
+     * search results, and the in-memory chat cache. Returns `true` when the
+     * deleted session was the active one, so the caller can navigate away
+     * from the now-gone transcript. Best-effort: a failure surfaces a toast
+     * and leaves all local state untouched. */
+    async deleteSession(id: string): Promise<boolean> {
+      try {
+        const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`DELETE /api/sessions failed: ${res.status}`);
+      } catch {
+        this.pushToast('Could not delete the session.');
+        return false;
+      }
+      const wasActive = this.activeId === id;
+      this.sessions = this.sessions.filter((s) => s.id !== id);
+      this.searchResults = this.searchResults.filter((s) => s.id !== id);
+      delete this.chats[id];
+      return wasActive;
     },
 
     /** Creates a session server-side and returns its id (or `null` on

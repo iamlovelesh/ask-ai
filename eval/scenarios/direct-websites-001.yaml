@@ -1,0 +1,27 @@
+# category: direct, module: websites.
+#
+# `websites.create_website` (m35-websites.ts A01) — the only required input
+# param is `name` (z.string().min(1)); everything else is defaulted by the
+# handler. A single risk:'write' create of one `structures(kind='website')`
+# row: shouldGate (executor.ts) only fires for destructive/bulk/external or
+# >threshold fan-out, so a lone single-row write does NOT gate.
+
+id: direct-websites-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a new marketing website called 'Acme Launch Site'"
+    expect:
+      planActions:
+        mustInclude: [websites.create_website]
+      paramChecks:
+        - action: websites.create_website
+          param: name
+          contains: Acme
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='website'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

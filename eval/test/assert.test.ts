@@ -296,6 +296,20 @@ describe('assertTurn — response', () => {
     expect(result.pass).toBe(false);
     expect(result.failures[0]?.kind).toBe('response');
   });
+
+  it('mustMention matches a figure regardless of thousands-separator formatting', () => {
+    // The agent naturally writes "$3,372.33" / "1,757"; the scenario expects
+    // the plain-digit form. The figure IS mentioned — only formatting differs.
+    const events = [answerFinal('Order total: $3,372.33 USD across 1,757 line items.')];
+    const result = assertTurn(events, { response: { mustMention: ['$3372.33', '1757'] } }, fakeDb(undefined));
+    expect(result.pass).toBe(true);
+  });
+
+  it('mustMention still fails when the figure is genuinely absent', () => {
+    const events = [answerFinal('Order total: $99.00')];
+    const result = assertTurn(events, { response: { mustMention: ['$3372.33'] } }, fakeDb(undefined));
+    expect(result.pass).toBe(false);
+  });
 });
 
 // --- behavior ---------------------------------------------------------------
@@ -390,6 +404,16 @@ describe('isComplexTurn', () => {
 
   it('a non-plan outcome is NOT complex', () => {
     expect(isComplexTurn([clarifyReady('Which channel?')])).toBe(false);
+  });
+
+  it('tool-loop (no plan.ready): >1 dispatched action IS complex', () => {
+    expect(
+      isComplexTurn([stepStarted('s1', 'leads.search_leads'), stepStarted('s2', 'tasks.create_task')]),
+    ).toBe(true);
+  });
+
+  it('tool-loop (no plan.ready): a single dispatched action is NOT complex', () => {
+    expect(isComplexTurn([stepStarted('s1', 'contacts.create_contact')])).toBe(false);
   });
 });
 

@@ -1,0 +1,31 @@
+# category: direct, module: memberships.
+#
+# create_membership_plan (m44-memberships.ts) — required input: `name`
+# (min 1); `price_cents`/`interval` optional. The plan definition lands in
+# the shared `structures` table with kind='membership_plan', so the state
+# check counts that kind's rows.
+#
+# Single `write` action → does not gate → confirmation false.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM structures WHERE kind='membership_plan'; -> 15
+
+id: direct-memberships-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a membership plan called 'Gold Tier' priced at $49 billed monthly"
+    expect:
+      planActions:
+        mustInclude: [memberships.create_membership_plan]
+      paramChecks:
+        - action: memberships.create_membership_plan
+          param: name
+          contains: Gold
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='membership_plan'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

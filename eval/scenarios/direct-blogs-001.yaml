@@ -1,0 +1,27 @@
+# category: direct, module: blogs.
+#
+# blogs.create_blog_post (m38-blogs.ts) requires only `title` (min 1);
+# `website_id` is OPTIONAL and omitted here, so no unresolvable ref is
+# introduced. risk:'write', single row → shouldGate() = false.
+#
+# Data home: content_items, kind='blog_post'. One new draft row →
+# countDelta 1.
+id: direct-blogs-001
+category: direct
+profile: standard
+turns:
+  - user: "Write a new blog post titled 'Q4 Product Launch Recap'."
+    expect:
+      planActions:
+        mustInclude: [blogs.create_blog_post]
+      paramChecks:
+        - action: blogs.create_blog_post
+          param: title
+          contains: Launch
+      state:
+        - query: "SELECT COUNT(*) AS n FROM content_items WHERE kind='blog_post'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

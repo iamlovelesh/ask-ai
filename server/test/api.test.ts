@@ -379,6 +379,55 @@ describe('GET /api/sessions/:id/events — replay', () => {
   });
 });
 
+describe('DELETE /api/sessions/:id', () => {
+  it('deletes an existing session (204) and removes it from the list', async () => {
+    const app = buildApp({ registry: buildRegistry([[]], coreOps) });
+    const sessionId = await createSession(app);
+
+    const del = await app.inject({ method: 'DELETE', url: `/api/sessions/${sessionId}` });
+    expect(del.statusCode).toBe(204);
+
+    const list = await app.inject({ method: 'GET', url: '/api/sessions' });
+    const ids = (list.json() as { id: string }[]).map((r) => r.id);
+    expect(ids).not.toContain(sessionId);
+
+    // A follow-up read of the gone session's events 404s.
+    const events = await app.inject({ method: 'GET', url: `/api/sessions/${sessionId}/events` });
+    expect(events.statusCode).toBe(404);
+  });
+
+  it('404s for an unknown session', async () => {
+    const app = buildApp({ registry: buildRegistry([[]], coreOps) });
+    const del = await app.inject({ method: 'DELETE', url: '/api/sessions/sess_nope' });
+    expect(del.statusCode).toBe(404);
+  });
+});
+
+describe('GET /api/sessions/search', () => {
+  it('matches title and message text across all sessions, newest first', async () => {
+    const app = buildApp({ registry: buildRegistry([[]], coreOps) });
+    const byTitle = eventLog.createSession('Refund escalation');
+    const byMsg = eventLog.createSession('Untitled');
+    const noMatch = eventLog.createSession('Weather chat');
+    eventLog.append(byMsg, { t: 'turn.started', turnId: 't1', sessionId: byMsg, userText: 'issue a refund', ts: 1 });
+
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/search?q=refund' });
+    expect(res.statusCode).toBe(200);
+    const ids = (res.json() as { id: string }[]).map((r) => r.id);
+    expect(ids).toContain(byTitle);
+    expect(ids).toContain(byMsg);
+    expect(ids).not.toContain(noMatch);
+  });
+
+  it('returns [] for an empty query', async () => {
+    const app = buildApp({ registry: buildRegistry([[]], coreOps) });
+    eventLog.createSession('anything');
+    const res = await app.inject({ method: 'GET', url: '/api/sessions/search?q=' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual([]);
+  });
+});
+
 describe('GET /api/models + model picker', () => {
   it('lists the selectable model allowlist and a default', async () => {
     const app = buildApp({ registry: buildRegistry([[]], coreOps) });

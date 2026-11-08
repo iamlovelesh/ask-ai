@@ -1,0 +1,28 @@
+# category: direct, module: tax_rules.
+#
+# create_tax_rule (M34.A01) requires `name` (min 1); `rate` (a fraction
+# 0..1 — 20% = 0.2), `region`, and `description` are optional and supplied
+# in-line so the request is fully resolvable. New rules start 'active' but
+# creating one is a plain `write`, not externally visible, so no gate.
+#
+# State home: structures WHERE kind='tax_rule'.
+
+id: direct-tax_rules-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a tax rule named 'EU VAT' at 20% for the EU region"
+    expect:
+      planActions:
+        mustInclude: [tax_rules.create_tax_rule]
+      paramChecks:
+        - action: tax_rules.create_tax_rule
+          param: name
+          contains: EU VAT
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='tax_rule'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

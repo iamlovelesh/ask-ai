@@ -39,6 +39,15 @@ export interface EventLog {
   subscribe(sessionId: string, cb: (seqEv: SeqEvent) => void): () => void;
   createSession(title?: string): string;
   listSessions(limit?: number, cursor?: string): SessionRow[];
+  /** Cross-session full-text-ish search: matches sessions whose title OR whose
+   * user-message / final-answer text contains `query`. Newest-first, capped at
+   * `limit`. An empty/whitespace query returns `[]`. */
+  searchSessions(query: string, limit?: number): SessionRow[];
+  /** Hard-deletes a session and everything derived from it (events, refs,
+   * spans, memory flags) — but NOT durable `memories`, which are user-scoped
+   * facts the memory layer soft-invalidates, never hard-deletes. `changes` is
+   * 1 when a row was removed, 0 for an unknown id (drives a 404). */
+  deleteSession(sessionId: string): { changes: number };
   touchSession(sessionId: string, deltas: TouchSessionDeltas): void;
   close(): void;
 }
@@ -47,6 +56,24 @@ type Subscriber = (seqEv: SeqEvent) => void;
 
 function rowToSeqEvent(row: Record<string, unknown>): SeqEvent {
   return { seq: Number(row['seq']), event: JSON.parse(String(row['payload'])) as Event };
+}
+
+function rowToSessionRow(row: Record<string, unknown>): SessionRow {
+  return {
+    id: String(row['id']),
+    title: row['title'] == null ? null : String(row['title']),
+    updated_at: Number(row['updated_at']),
+    turns: Number(row['turns']),
+    cost_usd: Number(row['cost_usd']),
+  };
+}
+
+/** Escapes the LIKE metacharacters (`%`, `_`, and the escape char itself) so a
+ * query is matched literally — critical for CRM ids like `con_12018`, where a
+ * raw `_` would otherwise act as a single-char wildcard. Pairs with
+ * `ESCAPE '\'` in the query. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
 class EventLogImpl implements EventLog {
@@ -146,13 +173,40 @@ class EventLogImpl implements EventLog {
           [limit],
         );
 
-    return rows.map((row) => ({
-      id: String(row['id']),
-      title: row['title'] == null ? null : String(row['title']),
-      updated_at: Number(row['updated_at']),
-      turns: Number(row['turns']),
-      cost_usd: Number(row['cost_usd']),
-    }));
+    return rows.map(rowToSessionRow);
+  }
+
+  searchSessions(query: string, limit = 50): SessionRow[] {
+    const trimmed = query.trim();
+    if (trimmed.length === 0) return [];
+    const pattern = `%${escapeLike(trimmed)}%`;
+    const rows = this.db.all(
+      `SELECT s.id, s.title, s.updated_at, s.turns, s.cost_usd FROM sessions s
+       WHERE s.title LIKE ? ESCAPE '\\'
+          OR EXISTS (
+            SELECT 1 FROM events e
+            WHERE e.session_id = s.id
+              AND e.type IN ('turn.started', 'answer.final')
+              AND e.payload LIKE ? ESCAPE '\\'
+          )
+       ORDER BY s.updated_at DESC, s.id DESC
+       LIMIT ?`,
+      [pattern, pattern, limit],
+    );
+    return rows.map(rowToSessionRow);
+  }
+
+  deleteSession(sessionId: string): { changes: number } {
+    // Clear the per-session seq cache so a future append to a (re-created) id
+    // doesn't resume from a stale counter.
+    this.nextSeq.delete(sessionId);
+    // Drop everything derived from the session first, then the row itself.
+    // Durable `memories` are intentionally untouched (soft-invalidate design).
+    this.db.run(`DELETE FROM events WHERE session_id = ?`, [sessionId]);
+    this.db.run(`DELETE FROM refs WHERE session_id = ?`, [sessionId]);
+    this.db.run(`DELETE FROM spans WHERE session_id = ?`, [sessionId]);
+    this.db.run(`DELETE FROM session_memory_flags WHERE session_id = ?`, [sessionId]);
+    return this.db.run(`DELETE FROM sessions WHERE id = ?`, [sessionId]);
   }
 
   touchSession(sessionId: string, deltas: TouchSessionDeltas): void {

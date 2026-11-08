@@ -317,4 +317,105 @@ describe('useSessionStore', () => {
       vi.useRealTimers();
     }
   });
+
+  // --- deleteSession -------------------------------------------------------
+
+  it('deleteSession() removes the row + its chat state and reports whether it was active', async () => {
+    const store = useSessionStore();
+    store.sessions = [
+      { id: 'sess_a', title: 'A', updated_at: 2, turns: 0, cost_usd: 0 },
+      { id: 'sess_b', title: 'B', updated_at: 1, turns: 0, cost_usd: 0 },
+    ];
+    store.ensureChat('sess_a');
+    store.activeId = 'sess_a';
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })));
+
+    const wasActive = await store.deleteSession('sess_a');
+
+    expect(wasActive).toBe(true);
+    expect(store.sessions.map((s) => s.id)).toEqual(['sess_b']);
+    expect(store.chats['sess_a']).toBeUndefined();
+  });
+
+  it('deleteSession() also drops the row from search results and returns false for a non-active session', async () => {
+    const store = useSessionStore();
+    store.sessions = [{ id: 'sess_b', title: 'B', updated_at: 1, turns: 0, cost_usd: 0 }];
+    store.searchResults = [{ id: 'sess_b', title: 'B', updated_at: 1, turns: 0, cost_usd: 0 }];
+    store.activeId = 'sess_a';
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })));
+
+    const wasActive = await store.deleteSession('sess_b');
+
+    expect(wasActive).toBe(false);
+    expect(store.sessions).toEqual([]);
+    expect(store.searchResults).toEqual([]);
+  });
+
+  it('deleteSession() leaves state intact and toasts on a failed delete', async () => {
+    const store = useSessionStore();
+    store.sessions = [{ id: 'sess_a', title: 'A', updated_at: 1, turns: 0, cost_usd: 0 }];
+
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(500, { error: 'boom' })));
+
+    const wasActive = await store.deleteSession('sess_a');
+
+    expect(wasActive).toBe(false);
+    expect(store.sessions.map((s) => s.id)).toEqual(['sess_a']); // untouched
+    expect(store.toasts.length).toBeGreaterThan(0);
+  });
+
+  // --- search --------------------------------------------------------------
+
+  it('runSearch() populates results for a non-empty query', async () => {
+    const store = useSessionStore();
+    const hits = [{ id: 'sess_x', title: 'Refund', updated_at: 3, turns: 1, cost_usd: 0 }];
+
+    const fetchMock = vi.fn(async (..._args: unknown[]) => jsonResponse(200, hits));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await store.runSearch('refund');
+
+    expect(store.searchQuery).toBe('refund');
+    expect(store.searchResults).toEqual(hits);
+    expect(store.searchLoading).toBe(false);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/sessions/search?q=refund');
+  });
+
+  it('runSearch() with a blank query clears results without fetching', async () => {
+    const store = useSessionStore();
+    store.searchResults = [{ id: 'sess_x', title: 'X', updated_at: 1, turns: 0, cost_usd: 0 }];
+    store.searchQuery = 'old';
+
+    const fetchMock = vi.fn(async () => jsonResponse(200, []));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await store.runSearch('   ');
+
+    expect(store.searchQuery).toBe('');
+    expect(store.searchResults).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('runSearch() ignores a stale response that resolves after a newer query', async () => {
+    const store = useSessionStore();
+    // First call resolves slowly with "old" results; second resolves fast.
+    let resolveSlow: (r: Response) => void = () => {};
+    const slow = new Promise<Response>((res) => { resolveSlow = res; });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => slow)
+      .mockImplementationOnce(async () => jsonResponse(200, [{ id: 'new', title: 'new', updated_at: 2, turns: 0, cost_usd: 0 }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const p1 = store.runSearch('aaa');
+    const p2 = store.runSearch('bbb');
+    await p2;
+    // Now let the stale first request resolve — it must NOT clobber the newer result.
+    resolveSlow(jsonResponse(200, [{ id: 'old', title: 'old', updated_at: 1, turns: 0, cost_usd: 0 }]));
+    await p1;
+
+    expect(store.searchResults.map((s) => s.id)).toEqual(['new']);
+  });
 });

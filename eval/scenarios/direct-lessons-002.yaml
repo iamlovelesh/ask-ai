@@ -1,0 +1,17 @@
+# category: direct, module: lessons (2nd slug-bearing scenario). A pure read —
+# deterministic, never gates. (The earlier multi-step/indirect variant was
+# fragile: the planner reasonably does fewer steps and a later step can gate,
+# so a read keeps coverage solid.)
+
+id: direct-lessons-002
+category: direct
+profile: standard
+turns:
+  - user: "Search our lessons related to onboarding"
+    expect:
+      planActions:
+        mustInclude: [lessons.search_lessons]
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

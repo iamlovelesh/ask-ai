@@ -1,0 +1,26 @@
+# category: direct, module: funnels.
+#
+# `funnels.create_funnel` (m36-funnels.ts A01) — only required input param is
+# `name` (z.string().min(1)); the funnel is created with no steps yet. A
+# single risk:'write' create of one `structures(kind='funnel')` row, so it
+# does not gate.
+
+id: direct-funnels-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a webinar signup funnel called 'Acme Webinar Funnel'"
+    expect:
+      planActions:
+        mustInclude: [funnels.create_funnel]
+      paramChecks:
+        - action: funnels.create_funnel
+          param: name
+          contains: Acme
+      state:
+        - query: "SELECT COUNT(*) AS n FROM structures WHERE kind='funnel'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

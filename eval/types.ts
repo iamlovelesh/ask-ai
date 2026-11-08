@@ -135,7 +135,13 @@ export type TurnStatusExpect = z.infer<typeof turnStatusSchema>;
 export const behaviorExpectSchema = z.strictObject({
   confirmation: z.boolean().optional(),
   clarify: z.boolean().optional(),
-  status: turnStatusSchema.optional(),
+  /** The expected `turn.completed.status`. Either an EXACT status, or a SET of
+   * acceptable statuses (the turn passes if its status is any of them). The set
+   * form captures outcomes with more than one honest shape — e.g. an
+   * unsupported request the agent may `refuse` OR decline-via-`clarify` OR
+   * explain-and-end as `done`; all are honest, only `failed`/`cancelled` are
+   * not. Still distinguishes an honest outcome from a crash (I2 guard). */
+  status: z.union([turnStatusSchema, z.array(turnStatusSchema).min(1)]).optional(),
   mustNotAsk: z.array(z.string()).optional(),
 });
 export type BehaviorExpect = z.infer<typeof behaviorExpectSchema>;

@@ -1,0 +1,19 @@
+# category: direct, module: reviews.
+#
+# search_reviews (M45.A06) is a pure read — no refs to resolve, no required
+# params beyond the query intent, so the planner acts without clarifying.
+# (Recording a simulated review needs a resolved contact + target, which the
+# planner reasonably clarifies on; the read keeps this scenario deterministic.)
+
+id: direct-reviews-001
+category: direct
+profile: standard
+turns:
+  - user: "Show me our most recent customer reviews"
+    expect:
+      planActions:
+        mustInclude: [reviews.search_reviews]
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

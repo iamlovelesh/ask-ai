@@ -1,0 +1,36 @@
+# category: multistep, module: prices.
+#
+# Two chained price actions on the SAME product (referenced by its unique
+# SKU `SKU-prod_5` = 'Starter Suite'): first create_product_price (a new
+# monthly entry), then list_product_prices to read back the product's price
+# list. Both are single, non-destructive, non-external actions, so neither
+# gates — confirmation stays false.
+#
+# JSON-BACKED: prices live inside `products.prices` (JSON), not a SQL table,
+# so `state` is OMITTED — planActions ordering + a paramCheck carry the
+# assertion.
+#
+# Derivation (template copy):
+#   SELECT name,sku FROM products WHERE sku='SKU-prod_5'; -> Starter Suite
+
+id: multistep-prices-001
+category: multistep
+profile: standard
+turns:
+  - user: >-
+      Add a monthly $29 price to the product with SKU SKU-prod_5, then show
+      me all the price options that product now has.
+    expect:
+      planActions:
+        mustInclude:
+          - prices.create_product_price
+          - prices.list_product_prices
+        mustNotInclude: [prices.archive_price]
+      paramChecks:
+        - action: prices.create_product_price
+          param: interval
+          equals: month
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

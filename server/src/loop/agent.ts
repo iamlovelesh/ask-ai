@@ -49,6 +49,7 @@ import { rescueToolCalls } from './tool-call-rescue.js';
 import { unsanctionedFilters } from './scope-check.js';
 import { unreadRequestedIds } from './coverage-check.js';
 import { countReconciliationNote, writeCountReconcileNote } from './count-reconcile.js';
+import { falsePromiseNote } from './false-promise.js';
 import { stripMonologue } from './strip-monologue.js';
 import {
   collectRecordIds,
@@ -399,9 +400,17 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     eventLog.append(sessionId, finalEv);
     yield finalEv;
 
+    // "Worked for" / "Answered in" is ACTIVE compute time: the wall-clock span
+    // MINUS the time the turn sat idle waiting on a human (confirmation gates
+    // and request_form fills). Charging that idle wait to totalMs made a slow
+    // form fill read as a 2.5-min "worked for" (and is what the deadline, which
+    // already subtracts gateWaitMs, treats as not-working). gateWaitMs is
+    // recorded alongside so the wait is still visible, and omitted when zero.
+    const gateWaitMs = counters.gateWaitMs;
+    const wallMs = performance.now() - startedAtMs;
     const metrics: TurnMetrics = {
       ttfurMs: (ttfurAtMs as number) - startedAtMs,
-      totalMs: performance.now() - startedAtMs,
+      totalMs: Math.max(0, wallMs - gateWaitMs),
       llmCalls,
       repairs: 0,
       replans: 0,
@@ -412,6 +421,7 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
       stepsOk: counters.stepsOk,
       stepsFailed: counters.stepsFailed,
       model: turnModel,
+      ...(gateWaitMs > 0 ? { gateWaitMs } : {}),
     };
     const completedEv: Event = { t: 'turn.completed', turnId, status, metrics };
     eventLog.append(sessionId, completedEv);
@@ -762,6 +772,12 @@ export async function* runLoopTurn(input: RunLoopTurnInput): AsyncGenerator<Even
     if (status === 'done' || status === 'clarify') {
       finalText = stripMonologue(finalText);
       finalText = resolveNamesInText(finalText, crm);
+      // False-promise rail (#8): the agent can't act on its own after the turn
+      // ends, so an "I'll follow up later" answer is a trust failure UNLESS a
+      // durable follow-up/briefing was actually scheduled this turn. Deterministic
+      // (no extra LLM call) — appends an honest correction when unbacked.
+      const promiseNote = falsePromiseNote(finalText, { scheduled: exits.scheduledFollowUp === true });
+      if (promiseNote !== null) finalText += `\n\n${promiseNote}`;
     }
     return yield* finalize(status, finalText);
   } catch (err) {

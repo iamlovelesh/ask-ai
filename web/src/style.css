@@ -159,13 +159,110 @@ button {
 /* --- session rail ---------------------------------------------------- */
 
 .sidebar {
-  width: 260px;
+  width: var(--sidebar-width, 260px);
   flex-shrink: 0;
   border-right: 1px solid var(--hair);
   background: var(--rail);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: width 160ms ease;
+}
+
+/* No width animation while actively dragging the handle — the pointer drives
+ * the width directly and a transition would make it feel laggy. */
+.app-layout.sidebar-resizing .sidebar {
+  transition: none;
+}
+
+/* Collapsed (desktop): the rail folds away entirely; a floating » button
+ * (rendered by App.vue) brings it back. */
+.app-layout.sidebar-collapsed .sidebar {
+  width: 0;
+  border-right: none;
+}
+
+/* Edge-drag resize handle: a thin hit-area straddling the rail/main seam.
+ * Transparent at rest, petrol on hover/drag. Hidden when collapsed (App.vue
+ * v-show) and on mobile (media query below). */
+.sidebar-resizer {
+  flex: 0 0 auto;
+  width: 6px;
+  margin-left: -3px;
+  margin-right: -3px;
+  z-index: 5;
+  cursor: col-resize;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.sidebar-resizer:hover,
+.sidebar-resizer:focus-visible,
+.app-layout.sidebar-resizing .sidebar-resizer {
+  background: color-mix(in srgb, var(--petrol) 55%, transparent);
+  outline: none;
+}
+
+/* While dragging, kill text selection and force the resize cursor everywhere
+ * so a fast drag that outruns the 6px handle still feels solid. */
+.app-layout.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* Hide-sidebar button, tucked to the right of the brand wordmark. */
+.sidebar-collapse-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--slate-soft);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.sidebar-collapse-btn:hover {
+  background: var(--sunken);
+  color: var(--ink);
+}
+
+/* Floating re-open button shown only when the rail is collapsed (desktop). */
+.sidebar-reopen {
+  position: absolute;
+  top: 14px;
+  left: 10px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--hair-strong);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--slate);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--ink) 10%, transparent);
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.sidebar-reopen:hover {
+  color: var(--petrol);
+  border-color: var(--petrol);
+}
+
+/* When collapsed, reserve space at the start of every view's header so the
+ * floating » button never overlaps the title (all main views share
+ * .transcript-head, whose .nav-toggle is hidden on desktop). */
+.app-layout.sidebar-collapsed .transcript-head {
+  padding-left: 56px;
 }
 
 .sidebar-header {
@@ -250,16 +347,11 @@ button {
 }
 
 .sidebar-item {
+  position: relative;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
   width: 100%;
-  text-align: left;
-  padding: 6px 16px;
-  border: none;
-  background: transparent;
   color: var(--ink);
-  border-radius: 0;
   border-left: 2px solid transparent;
   font-size: 13px;
   line-height: 1.4;
@@ -278,6 +370,23 @@ button {
   font-weight: 500;
 }
 
+/* The clickable label area — grows to fill the row; the delete affordance
+ * sits on top of its right edge, revealed on hover. */
+.sidebar-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  text-align: left;
+  padding: 6px 16px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
 .sidebar-item-title {
   flex: 1;
   min-width: 0;
@@ -291,6 +400,173 @@ button {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--slate-soft);
+  /* Reserve room equal to the overlaid delete button so the title's ellipsis
+   * budget is identical whether or not the row is hovered — the time and the
+   * trash icon share this slot and cross-fade (see below), never collide. */
+  min-width: 24px;
+  text-align: right;
+  transition: opacity 120ms ease;
+}
+
+/* On hover/focus the time fades out and the trash button fades in over the
+ * exact same slot — so they swap cleanly instead of overlapping. */
+.sidebar-item:hover .sidebar-item-time,
+.sidebar-item:focus-within .sidebar-item-time {
+  opacity: 0;
+}
+
+/* Hover-revealed trash button, overlaid on the row's right edge (where the
+ * time sits) so it never shifts the title layout. Hidden and non-interactive
+ * until the row is hovered or the button is keyboard-focused. */
+.sidebar-item-delete {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--slate-soft);
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.sidebar-item:hover .sidebar-item-delete,
+.sidebar-item:focus-within .sidebar-item-delete,
+.sidebar-item-delete:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sidebar-item-delete:hover {
+  color: var(--red);
+  background: var(--red-wash);
+}
+
+/* Inline "Delete this chat? ✓ ✕" confirm state — replaces the row label. */
+.sidebar-item.confirming {
+  padding: 4px 10px 4px 16px;
+  gap: 8px;
+  background: var(--red-wash);
+}
+
+.sidebar-item-confirm-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--red);
+}
+
+.sidebar-item-confirm-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 4px;
+}
+
+.sidebar-confirm-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--hair-strong);
+  border-radius: 5px;
+  background: var(--raised);
+  color: var(--slate);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.sidebar-confirm-btn:hover {
+  border-color: var(--slate);
+  color: var(--ink);
+}
+
+.sidebar-confirm-btn.delete {
+  color: var(--petrol-contrast);
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.sidebar-confirm-btn.delete:hover {
+  background: color-mix(in srgb, var(--red) 85%, black);
+  color: var(--petrol-contrast);
+}
+
+/* --- sidebar search --------------------------------------------------- */
+
+.sidebar-search {
+  position: relative;
+  margin-top: 10px;
+}
+
+.sidebar-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--slate-soft);
+  pointer-events: none;
+}
+
+.sidebar-search-input {
+  width: 100%;
+  padding: 7px 28px 7px 30px;
+  border: 1px solid var(--hair-strong);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.sidebar-search-input::placeholder {
+  color: var(--slate-soft);
+}
+
+.sidebar-search-input:focus-visible {
+  outline: none;
+  border-color: var(--petrol);
+  box-shadow: 0 0 0 2px var(--petrol-wash);
+}
+
+/* Hide the native clear/search decorations — we provide our own clear button. */
+.sidebar-search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.sidebar-search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--slate-soft);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sidebar-search-clear:hover {
+  color: var(--ink);
+  background: var(--sunken);
 }
 
 .sidebar-empty {
@@ -2297,7 +2573,18 @@ button {
     display: inline-flex;
   }
 
-  .sidebar {
+  /* The desktop-only rail affordances (drag-resize, collapse/reopen) are
+   * meaningless for the mobile slide-over — hide them and pin a comfortable
+   * fixed drawer width regardless of the persisted desktop width/collapse. */
+  .sidebar-resizer,
+  .sidebar-collapse-btn,
+  .sidebar-reopen {
+    display: none;
+  }
+
+  .sidebar,
+  .app-layout.sidebar-collapsed .sidebar {
+    width: min(85vw, 320px);
     position: fixed;
     top: 0;
     left: 0;
@@ -2305,6 +2592,7 @@ button {
     z-index: 51;
     transform: translateX(-100%);
     transition: transform 200ms ease;
+    border-right: 1px solid var(--hair);
     box-shadow: 8px 0 28px color-mix(in srgb, var(--ink) 16%, transparent);
   }
 

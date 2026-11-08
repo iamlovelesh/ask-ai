@@ -1,0 +1,30 @@
+# category: indirect, module: reviews.
+#
+# "How are our product reviews looking?" states an informational GOAL, not
+# a named action — the planner must infer the remedy is the real GROUP BY
+# aggregation get_review_rating_summary (m45-reviews.ts, A10), scoped to
+# target_type='product'. It is a `read` action (no write), so it does not
+# gate → confirmation false. No state delta to assert (read-only), so the
+# planActions + paramCheck carry the assertion.
+#
+# Derivation (template copy):
+#   SELECT COUNT(*) FROM reviews WHERE status='published' AND rating IS NOT
+#     NULL AND target_type='product'; -> 66 published product reviews exist
+
+id: indirect-reviews-001
+category: indirect
+profile: standard
+turns:
+  - user: "How are our product reviews looking overall? What's the average star rating?"
+    expect:
+      planActions:
+        mustInclude: [reviews.get_review_rating_summary]
+        mustNotInclude: [reviews.record_simulated_customer_review]
+      paramChecks:
+        - action: reviews.get_review_rating_summary
+          param: target_type
+          equals: product
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

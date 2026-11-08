@@ -1,0 +1,26 @@
+# category: direct, module: courses.
+#
+# courses.create_course (m40-courses.ts) requires only `title` (min 1);
+# category/price_cents/description are OPTIONAL. No refs to resolve.
+# risk:'write', single row → shouldGate() = false.
+#
+# Data home: typed `courses` table. One new course row → countDelta 1.
+id: direct-courses-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a new course titled 'Advanced Onboarding for New Reps'."
+    expect:
+      planActions:
+        mustInclude: [courses.create_course]
+      paramChecks:
+        - action: courses.create_course
+          param: title
+          contains: Onboarding
+      state:
+        - query: "SELECT COUNT(*) AS n FROM courses"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

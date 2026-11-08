@@ -1,0 +1,32 @@
+# category: direct, module: prices.
+#
+# create_product_price (m26-prices.ts) — required inputs: `product_id`
+# (plain `products` table, resolved via testing.ts DEFAULT_HINTS) and
+# `amount_cents`; `currency`/`interval` are optional. The product is
+# referenced by its UNIQUE SKU (`SKU-prod_2` = 'Analytics Core' — SKUs are
+# 1:1 per row, unlike names which repeat e.g. 'Pro Growth').
+#
+# JSON-BACKED: a price lives inside `products.prices` (a JSON array), NOT a
+# SQL table — there is no `price_id` row to COUNT, so `state` is OMITTED
+# per the module's known storage shape; planActions + paramChecks carry the
+# assertion instead.
+#
+# Derivation (template copy):
+#   SELECT name,sku FROM products WHERE sku='SKU-prod_2'; -> Analytics Core
+
+id: direct-prices-001
+category: direct
+profile: standard
+turns:
+  - user: "Add a yearly price option of $99 to the product with SKU SKU-prod_2"
+    expect:
+      planActions:
+        mustInclude: [prices.create_product_price]
+      paramChecks:
+        - action: prices.create_product_price
+          param: interval
+          equals: year
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]

@@ -11,3 +11,7 @@ web/node_modules
 *.log
 .DS_Store
 server/data/crm-evalrun-*
+
+# benchmark run data (regenerable; see docs/BENCHMARK.md for the report)
+results/
+results-archive/

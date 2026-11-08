@@ -1,0 +1,29 @@
+# category: direct, module: landing_pages.
+#
+# landing_pages.create_landing_page (m37-landing_pages.ts) requires only
+# `title` (min 1); `funnel_id` is OPTIONAL, so it is omitted here — no
+# unresolvable ref is introduced and the planner has every required param
+# from the request text, so it acts without clarifying. risk:'write',
+# single row → shouldGate() returns false (confirmation: false).
+#
+# Data home: content_items, kind='landing_page'. A fresh page inserts one
+# new row, so countDelta 1 on that kind.
+id: direct-landing_pages-001
+category: direct
+profile: standard
+turns:
+  - user: "Create a landing page titled 'Spring Sale Launch'."
+    expect:
+      planActions:
+        mustInclude: [landing_pages.create_landing_page]
+      paramChecks:
+        - action: landing_pages.create_landing_page
+          param: title
+          contains: Launch
+      state:
+        - query: "SELECT COUNT(*) AS n FROM content_items WHERE kind='landing_page'"
+          countDelta: 1
+      behavior:
+        confirmation: false
+      response:
+        mustNotClaim: [failed, error]
